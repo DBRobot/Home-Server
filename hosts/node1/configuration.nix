@@ -6,6 +6,7 @@
     boot.loader.efi.canTouchEfiVariables = true;
     boot.supportedFilesystems = [ "zfs" ];
     boot.zfs.forceImportRoot = false;
+    boot.zfs.extraPools = [ "tank" ];
 
     networking.hostName = "node1";
     networking.hostId = "0195f284";
