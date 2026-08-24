@@ -1,0 +1,29 @@
+name: nix_builder
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  nix_check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: flake check
+        run: nix flake check --show-trace
+
+      - name: build node1
+        run: nix build .#nixosConfigurations.node1.config.system.build.toplevel
+
+      - name: formatting
+        run: nix run nixpkgs#nixfmt-rfc-style -- --check .
