@@ -15,6 +15,23 @@
   networking.hostId = "0195f284";
   networking.networkmanager.enable = true;
 
+  networking.networkmanager.ensureProfiles.profiles.direct-link = {
+    connection = {
+      id = "direct-link";
+      type = "ethernet";
+      autoconnect = true;
+      autoconnect-priority = -999;
+    };
+    ethernet.mac-address = "44:ED:57:10:00:40"; # not interface-name; that encodes the USB port
+    ipv4 = {
+      method = "manual";
+      address1 = "10.10.10.2/24";
+      gateway = "10.10.10.1"; # NATed out the Legion's wifi until home internet exists
+      dns = "1.1.1.1;9.9.9.9;";
+    };
+    ipv6.method = "link-local";
+  };
+
   time.timeZone = "America/New_York";
 
   users.users.admin = {
