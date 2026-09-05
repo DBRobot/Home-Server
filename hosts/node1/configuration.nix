@@ -11,6 +11,12 @@
   boot.zfs.forceImportRoot = false;
   boot.zfs.extraPools = [ "tank" ];
 
+  # default c_max is ~all of RAM (measured 61.5G); with no swap that collides
+  # with the model's mlocked 23G. Raise once photos land on the HDD pool.
+  boot.extraModprobeConfig = ''
+    options zfs zfs_arc_max=8589934592
+  '';
+
   networking.hostName = "node1";
   networking.hostId = "0195f284";
   networking.networkmanager.enable = true;
