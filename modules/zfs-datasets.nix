@@ -4,8 +4,11 @@
 { pkgs, lib, ... }:
 let
   datasets = {
-    "tank/photos" = {
-      "com.sun:auto-snapshot" = "true";
+    "tank/models" = {
+      recordsize = "1M"; # large sequential reads of GGUF weights
+      compression = "off"; # zstd is inherited pool-wide; weights are incompressible
+      primarycache = "metadata"; # llama-server mlocks the weights; ARC caching them is waste
+      "com.sun:auto-snapshot" = "false"; # a snapshot of a 23G model costs 23G
     };
   };
 
