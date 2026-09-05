@@ -3,6 +3,7 @@
   imports = [
     ./hardware-configuration.nix
     ../../modules/zfs-datasets.nix
+    ../../modules/llama-cpp.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
