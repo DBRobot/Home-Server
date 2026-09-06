@@ -9,11 +9,13 @@
     secrets = {
       duckdns-token = { };
       garage-rpc-secret = { };
-      garage-key-id = { };
-      garage-key-secret = { };
-      ente-key-encryption = { };
-      ente-key-hash = { };
-      ente-jwt-secret = { };
+      # ente's pre-start reads these as the ente user; sops defaults to
+      # root-only, which made museum fail with "Permission denied"
+      garage-key-id.owner = "ente";
+      garage-key-secret.owner = "ente";
+      ente-key-encryption.owner = "ente";
+      ente-key-hash.owner = "ente";
+      ente-jwt-secret.owner = "ente";
     };
 
     # several consumers want an EnvironmentFile rather than a bare value
