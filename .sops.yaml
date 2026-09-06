@@ -1,0 +1,13 @@
+# Public age recipients, derived from SSH keys that already exist.
+# node1 decrypts at boot with its host key; david edits with his own.
+# Nothing private lives here - these encrypt, they cannot decrypt.
+keys:
+  - &node1 age1dn3jhfmr8se645k3v2ar2wv69ayk0ts2kx3udp90u63ej7yfhyssla9f9t
+  - &david age18cw3l0s8w85spjne4u7sfvedpdwgqvkw626yqjl9lar9drtlqvps4jdd7x
+
+creation_rules:
+  - path_regex: secrets/[^/]+\.yaml$
+    key_groups:
+      - age:
+          - *node1
+          - *david
