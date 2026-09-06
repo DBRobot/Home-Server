@@ -21,6 +21,8 @@
       "duckdns.env".content = ''
         DUCKDNS_TOKEN=${config.sops.placeholder.duckdns-token}
       '';
+      # readable by the garage user so the CLI works for admin, not just the unit
+      "garage.env".owner = "garage";
       "garage.env".content = ''
         GARAGE_RPC_SECRET=${config.sops.placeholder.garage-rpc-secret}
       '';
