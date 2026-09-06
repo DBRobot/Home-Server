@@ -82,6 +82,9 @@ in
       "8" # llama-bench: 5.00 vs 4.82 tok/s at 4 threads
       "-c"
       "8192" # bounds the KV cache, which is the real OOM vector
+      "--reasoning"
+      "off" # default off: measured 0.8s vs 16.5s for the same answer.
+      # per-request opt-in with chat_template_kwargs {"enable_thinking": true}
     ];
   };
 
