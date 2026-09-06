@@ -1,5 +1,21 @@
 { pkgs, lib, ... }:
 let
+  # nixpkgs ships a baseline x86-64 build so it runs anywhere, which means no
+  # SIMD at all: system_info reported LLAMAFILE/OPENMP/REPACK and no AVX line,
+  # while this CPU has avx512f/bw/vl + avx512_vnni. Prefill was running scalar.
+  # Hardcoding -DGGML_AVX512=ON does not work: the derivation runs llama-server
+  # at build time to generate shell completions, so it SIGILLs on any builder
+  # without AVX-512 (GitHub runners are a mix). ALL_VARIANTS builds every
+  # microarchitecture as a loadable backend and picks the best at runtime, so
+  # the build is portable and node1 still gets the icelake path.
+  llamaCppTuned = pkgs.llama-cpp.overrideAttrs (o: {
+    cmakeFlags = (o.cmakeFlags or [ ]) ++ [
+      "-DGGML_NATIVE=OFF"
+      "-DGGML_BACKEND_DL=ON"
+      "-DGGML_CPU_ALL_VARIANTS=ON"
+    ];
+  });
+
   repo = "unsloth/Qwen3.6-35B-A3B-GGUF";
   rev = "a483e9e6cbd595906af30beda3187c2663a1118c";
   upstream = "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf";
@@ -20,6 +36,8 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
       TimeoutStartSec = "8h"; # 22G over a lossy hotspot
+      Restart = "on-failure";
+      RestartSec = 60;
       IOSchedulingClass = "idle";
       ExecStartPost = "${pkgs.systemd}/bin/systemctl start --no-block llama-cpp.service";
     };
@@ -52,6 +70,7 @@ in
 
   services.llama-cpp = {
     enable = true;
+    package = llamaCppTuned;
     inherit model;
     host = "0.0.0.0";
     port = 8080;
@@ -60,7 +79,7 @@ in
       "--no-mmap"
       "--mlock" # weights resident; ARC is capped to 8G to leave room
       "-t"
-      "4"
+      "8" # llama-bench: 5.00 vs 4.82 tok/s at 4 threads
       "-c"
       "8192" # bounds the KV cache, which is the real OOM vector
     ];
