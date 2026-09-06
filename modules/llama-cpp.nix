@@ -73,7 +73,7 @@ in
     package = llamaCppTuned;
     inherit model;
     host = "0.0.0.0";
-    port = 8080;
+    port = 8081; # 8080 is taken by ente's museum
     openFirewall = true;
     extraFlags = [
       "--no-mmap"
