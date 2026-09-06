@@ -6,6 +6,7 @@
     ../../modules/llama-cpp.nix
     ../../modules/secrets.nix
     ../../modules/garage.nix
+    ../../modules/ente.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
