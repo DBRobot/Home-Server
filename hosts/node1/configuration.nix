@@ -52,6 +52,15 @@
     ];
   };
 
+  services.tailscale = {
+    enable = true;
+    openFirewall = true;
+    permitCertUid = "nginx"; # so nginx can fetch *.ts.net certs without root
+  };
+
+  # tailscale0 is the trusted side; the direct cable stays as it is
+  networking.firewall.trustedInterfaces = [ "tailscale0" ];
+
   services.openssh = {
     enable = true;
     settings.PasswordAuthentication = false;
