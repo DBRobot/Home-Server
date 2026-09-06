@@ -19,6 +19,22 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
+      - name: join the tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: use node1 as a binary cache
+        run: |
+          sudo tee -a /etc/nix/nix.conf >/dev/null <<'CONF'
+          extra-substituters = http://node1.tail92cae0.ts.net:5000
+          extra-trusted-public-keys = node1.tail92cae0.ts.net-1:0y9M/Gk1pKTr/cBuaW1tJU10NYVRnWjzNeCNJC8mBQg=
+          CONF
+          sudo systemctl restart nix-daemon 2>/dev/null || true
+          curl -sf --max-time 20 http://node1.tail92cae0.ts.net:5000/nix-cache-info
+
       - name: flake check
         run: nix flake check --show-trace
 
