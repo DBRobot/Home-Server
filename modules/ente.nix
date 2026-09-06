@@ -49,6 +49,10 @@ in
           hash._secret = config.sops.secrets.ente-key-hash.path;
         };
         jwt.secret._secret = config.sops.secrets.ente-jwt-secret.path;
+
+        # self-hosted has no billing; admins grant storage directly with
+        # `ente admin update-subscription`, which defaults to 100TB/100yr
+        internal.admins = [ 1580559962386438 ];
       };
     };
   };
