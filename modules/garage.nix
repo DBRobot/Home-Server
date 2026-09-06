@@ -22,8 +22,25 @@ in
     };
   };
 
+  # The module defaults to DynamicUser, which allocates a UID at runtime - so
+  # there is no stable owner for data on /vault, and garage cannot write there.
+  # A static user is the normal answer for persistent data on an external path.
+  users.users.garage = {
+    isSystemUser = true;
+    group = "garage";
+    home = "/var/lib/garage";
+  };
+  users.groups.garage = { };
+
+  systemd.services.garage.serviceConfig = {
+    DynamicUser = false;
+    User = "garage";
+    Group = "garage";
+  };
+
   systemd.tmpfiles.rules = [
     "d /vault/photos 0750 garage garage -"
+    "d /var/lib/garage 0750 garage garage -"
     "d /var/lib/garage/meta 0700 garage garage -"
   ];
 
