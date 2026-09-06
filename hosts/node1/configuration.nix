@@ -10,7 +10,10 @@
   boot.loader.efi.canTouchEfiVariables = true;
   boot.supportedFilesystems = [ "zfs" ];
   boot.zfs.forceImportRoot = false;
-  boot.zfs.extraPools = [ "tank" ];
+  boot.zfs.extraPools = [
+    "tank"
+    "vault"
+  ];
 
   # default c_max is ~all of RAM (measured 61.5G); with no swap that collides
   # with the model's mlocked 23G. Raise once photos land on the HDD pool.

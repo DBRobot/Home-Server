@@ -4,6 +4,11 @@
 { pkgs, lib, ... }:
 let
   datasets = {
+    "vault/photos" = {
+      recordsize = "1M"; # photos are large sequential reads
+      "com.sun:auto-snapshot" = "true"; # cheap on immutable files, saves you from rm -rf
+    };
+
     "tank/models" = {
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible
