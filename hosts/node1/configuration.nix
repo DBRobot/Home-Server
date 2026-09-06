@@ -5,6 +5,7 @@
     ../../modules/zfs-datasets.nix
     ../../modules/llama-cpp.nix
     ../../modules/secrets.nix
+    ../../modules/garage.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

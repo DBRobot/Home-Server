@@ -8,10 +8,9 @@
 
     secrets = {
       duckdns-token = { };
-      minio-root-user = { };
-      minio-root-password = { };
-      ente-s3-key = { };
-      ente-s3-secret = { };
+      garage-rpc-secret = { };
+      garage-key-id = { };
+      garage-key-secret = { };
       ente-key-encryption = { };
       ente-key-hash = { };
       ente-jwt-secret = { };
@@ -22,9 +21,12 @@
       "duckdns.env".content = ''
         DUCKDNS_TOKEN=${config.sops.placeholder.duckdns-token}
       '';
-      "minio.env".content = ''
-        MINIO_ROOT_USER=${config.sops.placeholder.minio-root-user}
-        MINIO_ROOT_PASSWORD=${config.sops.placeholder.minio-root-password}
+      "garage.env".content = ''
+        GARAGE_RPC_SECRET=${config.sops.placeholder.garage-rpc-secret}
+      '';
+      "garage-key.env".content = ''
+        GARAGE_KEY_ID=${config.sops.placeholder.garage-key-id}
+        GARAGE_KEY_SECRET=${config.sops.placeholder.garage-key-secret}
       '';
     };
   };
