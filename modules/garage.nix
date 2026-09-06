@@ -69,10 +69,14 @@ in
       for i in $(seq 1 60); do garage status >/dev/null 2>&1 && break; sleep 2; done
 
       NODE=$(garage node id -q | cut -d@ -f1)
-      if ! garage layout show 2>/dev/null | grep -q "$NODE.*home"; then
+      if ! garage layout show 2>/dev/null | grep -q "$NODE"; then
         garage layout assign -z home -c 3T "$NODE"
-        VER=$(garage layout show 2>/dev/null | grep -oE 'version [0-9]+' | head -1 | grep -oE '[0-9]+')
-        garage layout apply --version $((''${VER:-0} + 1))
+      fi
+      # garage prints the version to apply; computing it ourselves gets
+      # "Invalid new layout version"
+      VER=$(garage layout show 2>/dev/null | grep -oE -- "--version [0-9]+" | grep -oE "[0-9]+" | head -1)
+      if [ -n "$VER" ]; then
+        garage layout apply --version "$VER"
       fi
 
       garage bucket create ente 2>/dev/null || true
