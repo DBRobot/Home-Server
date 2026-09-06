@@ -7,6 +7,7 @@
     ../../modules/secrets.nix
     ../../modules/garage.nix
     ../../modules/ente.nix
+    ../../modules/harmonia.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
