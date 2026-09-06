@@ -29,11 +29,12 @@ jobs:
       - name: use node1 as a binary cache
         run: |
           sudo tee -a /etc/nix/nix.conf >/dev/null <<'CONF'
-          extra-substituters = http://node1.tail92cae0.ts.net:5000
+          extra-substituters = http://100.95.31.105:5000
           extra-trusted-public-keys = node1.tail92cae0.ts.net-1:0y9M/Gk1pKTr/cBuaW1tJU10NYVRnWjzNeCNJC8mBQg=
           CONF
           sudo systemctl restart nix-daemon 2>/dev/null || true
-          curl -sf --max-time 20 http://node1.tail92cae0.ts.net:5000/nix-cache-info
+          # tailnet IP, not MagicDNS: runners do not get DNS from the tailnet
+          curl -sf --max-time 20 http://100.95.31.105:5000/nix-cache-info
 
       - name: flake check
         run: nix flake check --show-trace
