@@ -26,15 +26,19 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: what does the runner see on the tailnet?
+      - name: assert we actually joined the tailnet
         run: |
-          echo "--- our tailnet identity ---"
-          tailscale status --json | head -c 600 || true
-          echo
-          echo "--- peers we can see ---"
-          tailscale status || true
-          echo "--- can we ping node1 over the tailnet? ---"
-          tailscale ping --timeout 10s 100.95.31.105 || true
+          # the action can report success without authenticating, which
+          # then looks like an unreachable cache rather than a failed login
+          STATE=$(tailscale status --json | jq -r .BackendState)
+          echo "backend state: $STATE"
+          if [ "$STATE" != "Running" ]; then
+            echo "::error::tailscale did not authenticate (state=$STATE)."
+            echo "The OAuth client probably cannot mint tagged auth keys."
+            tailscale status || true
+            exit 1
+          fi
+          tailscale status
 
       - name: use node1 as a binary cache
         run: |
