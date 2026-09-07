@@ -1,61 +1,40 @@
 { config, pkgs, lib, ... }:
 let
   dir = "/vault/backups/postgres";
-  keep = 48; # hourly, so two days of dumps; zfs snapshots hold the longer tail
+  # services.postgresqlBackup writes <db>.sql.zstd and keeps one .prev. History
+  # beyond that comes from zfs snapshots on the dataset, which is a mechanism
+  # already trusted with the photos.
+  dump = "${dir}/ente.sql.zstd";
 
-  # A dump nobody has read is a rumour. pg_restore --list parses the archive
-  # header and TOC, so a truncated or corrupt file fails here rather than in
-  # six months when it is the only copy left.
-  backup = pkgs.writeShellScript "pg-backup" ''
-    set -euo pipefail
-    umask 077
-    mkdir -p ${dir}
-    stamp=$(date -u +%Y%m%dT%H%M%SZ)
-    tmp=${dir}/.ente-$stamp.dump.partial
-    out=${dir}/ente-$stamp.dump
-
-    ${config.services.postgresql.package}/bin/pg_dump -Fc -Z6 ente > "$tmp"
-
-    ${config.services.postgresql.package}/bin/pg_restore --list "$tmp" > /dev/null
-
-    # only becomes a real backup once it has been verified
-    mv "$tmp" "$out"
-    rm -f ${dir}/.ente-*.dump.partial || true
-
-    # keep the newest N, never delete if the count looks wrong
-    n=$(ls -1 ${dir}/ente-*.dump 2>/dev/null | wc -l)
-    if [ "$n" -gt ${toString keep} ]; then
-      ls -1t ${dir}/ente-*.dump | tail -n +$((${toString keep} + 1)) | xargs -r rm -f
-    fi
-
-    echo "ok: $out ($(stat -c%s "$out") bytes), $n dumps retained"
-  '';
-
-  # Restoring into a scratch database is the only thing that proves a dump is
-  # restorable rather than merely well-formed.
+  # The upstream module does the dump. These add the things it does not do, and
+  # they are deliberately additive: if verification breaks, the backup still runs.
   verify = pkgs.writeShellScript "pg-backup-verify" ''
     set -euo pipefail
-    latest=$(ls -1t ${dir}/ente-*.dump 2>/dev/null | head -1)
-    [ -n "$latest" ] || { echo "no dump to verify"; exit 1; }
     psql=${config.services.postgresql.package}/bin/psql
+    [ -s ${dump} ] || { echo "no dump at ${dump}"; exit 1; }
 
-    $psql -c 'drop database if exists ente_restore_test' postgres
-    $psql -c 'create database ente_restore_test' postgres
-    ${config.services.postgresql.package}/bin/pg_restore \
-      --dbname ente_restore_test --no-owner --no-privileges "$latest" 2>/dev/null || true
+    # restoring into a scratch database is the only thing that proves a dump is
+    # restorable rather than merely present
+    $psql -q -c 'drop database if exists ente_restore_test' postgres
+    $psql -q -c 'create database ente_restore_test' postgres
+    # belt and braces: never feed a dump containing \connect into psql
+    if ${pkgs.zstd}/bin/zstd -dc ${dump} | ${pkgs.gnugrep}/bin/grep -qE '^\\connect'; then
+      echo "dump contains \\connect - refusing to restore, it would target the live db"
+      exit 1
+    fi
+    ${pkgs.zstd}/bin/zstd -dc ${dump} | $psql -q -v ON_ERROR_STOP=1 -d ente_restore_test >/dev/null
 
-    # the key hierarchy is the thing worth asserting on
-    rows=$($psql -tAd ente_restore_test -c 'select count(*) from key_attributes')
-    $psql -c 'drop database ente_restore_test' postgres
-    [ "$rows" -ge 1 ] || { echo "restore produced $rows key_attributes rows"; exit 1; }
-    echo "ok: $latest restored, key_attributes=$rows"
+    # the key hierarchy is the thing worth asserting on: without these rows the
+    # blobs on vault cannot be decrypted by anyone
+    keys=$($psql -tAd ente_restore_test -c 'select count(*) from key_attributes')
+    files=$($psql -tAd ente_restore_test -c 'select count(*) from collection_files')
+    $psql -q -c 'drop database ente_restore_test' postgres
+
+    [ "$keys" -ge 1 ] || { echo "restored dump has $keys key_attributes rows"; exit 1; }
+    echo "ok: key_attributes=$keys collection_files=$files"
   '';
 
-  # Silent failure is the usual way backups die, so failures are mailed out
-  # through the same relay ente uses.
-  # Silent failure is the usual way backups die, so failures are mailed out
-  # through the same relay ente uses. Headers must start at column zero and the
-  # heredoc terminator must not be indented.
+  # Backups usually die silently rather than loudly.
   alert = pkgs.writeShellScript "pg-backup-alert" ''
     set -eu
     unit="$1"
@@ -66,7 +45,7 @@ Subject: node1: $unit FAILED
 
 $unit failed on node1.
 
-Check: journalctl -u $unit -n 50
+  journalctl -u $unit -n 50
 
 These dumps are the only copy of the ente key hierarchy. Without them the
 photo blobs on vault cannot be decrypted by anyone, recovery key included.
@@ -74,6 +53,54 @@ EOF
   '';
 in
 {
+  # The dump itself is upstream's, not ours. It writes atomically via an
+  # .in-progress file and runs as the postgres user.
+  services.postgresqlBackup = {
+    enable = true;
+    databases = [ "ente" ];
+    location = dir;
+    # NOT the default "-C". That emits CREATE DATABASE + \connect ente, so
+    # restoring the dump into a scratch database would follow the \connect and
+    # replay it into the LIVE one. Without -C the dump is portable and lands
+    # wherever psql is pointed.
+    pgdumpOptions = "--no-owner --no-privileges";
+    compression = "zstd";
+    compressionLevel = 6;
+    startAt = "hourly";
+  };
+
+  systemd.services.postgresqlBackup-ente = {
+    onFailure = [ "postgres-backup-alert@postgresqlBackup-ente.service" ];
+    unitConfig.RequiresMountsFor = "/vault";
+    serviceConfig.ExecStartPre = [
+      # "+" runs as root despite User=postgres, so it can create the directory
+      # inside the root-owned dataset mountpoint. Doing it here rather than via
+      # tmpfiles avoids racing zfs-datasets on first boot.
+      "+${pkgs.coreutils}/bin/install -d -o postgres -g postgres -m 0700 ${dir}"
+    ];
+  };
+
+  systemd.services.postgres-backup-verify = {
+    description = "Restore the newest dump into a scratch database and check it";
+    after = [ "postgresql.service" ];
+    requires = [ "postgresql.service" ];
+    onFailure = [ "postgres-backup-alert@postgres-backup-verify.service" ];
+    startAt = "weekly";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "postgres";
+      ExecStart = verify;
+    };
+  };
+
+  systemd.services."postgres-backup-alert@" = {
+    description = "Mail out a backup failure for %i";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${alert} %i";
+    };
+  };
+
   programs.msmtp = {
     enable = true;
     accounts.default = {
@@ -87,58 +114,4 @@ in
       passwordeval = "${pkgs.coreutils}/bin/cat ${config.sops.secrets.ente-smtp-password.path}";
     };
   };
-
-  systemd.services.postgres-backup = {
-    description = "Dump and verify the ente database";
-    after = [ "postgresql.service" "zfs-datasets.service" ];
-    requires = [ "postgresql.service" ];
-    onFailure = [ "postgres-backup-alert@postgres-backup.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      User = "postgres";
-      # "+" runs this as root regardless of User=, so it can create the
-      # directory inside the root-owned dataset mountpoint. Doing it here
-      # rather than via tmpfiles avoids racing zfs-datasets on first boot.
-      ExecStartPre = "+${pkgs.coreutils}/bin/install -d -o postgres -g postgres -m 0700 ${dir}";
-      ExecStart = backup;
-    };
-  };
-
-  systemd.timers.postgres-backup = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "hourly";
-      Persistent = true; # catch up after downtime rather than silently skipping
-      RandomizedDelaySec = "5m";
-    };
-  };
-
-  systemd.services.postgres-backup-verify = {
-    description = "Prove the newest dump actually restores";
-    after = [ "postgresql.service" ];
-    requires = [ "postgresql.service" ];
-    onFailure = [ "postgres-backup-alert@postgres-backup-verify.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      User = "postgres";
-      ExecStart = verify;
-    };
-  };
-
-  systemd.timers.postgres-backup-verify = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "weekly";
-      Persistent = true;
-    };
-  };
-
-  systemd.services."postgres-backup-alert@" = {
-    description = "Mail out a backup failure for %i";
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${alert} %i";
-    };
-  };
-
 }
