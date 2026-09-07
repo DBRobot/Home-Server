@@ -8,6 +8,7 @@
     ../../modules/garage.nix
     ../../modules/ente.nix
     ../../modules/harmonia.nix
+    ../../modules/postgres-backup.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
