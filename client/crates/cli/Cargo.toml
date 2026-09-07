@@ -1,4 +1,3 @@
-# A BINARY crate: has main(), and is one consumer of the library.
 [package]
 name = "dd"
 version.workspace = true
@@ -7,3 +6,8 @@ license.workspace = true
 
 [dependencies]
 ente = { path = "../ente" }
+# the async runtime. The library is runtime-agnostic; the binary picks one.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# anyhow in the binary, thiserror in the library: a binary just wants to print
+# something useful, a library wants callers able to match on specific errors.
+anyhow = "1"

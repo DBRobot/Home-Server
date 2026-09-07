@@ -1,6 +1,3 @@
-# A workspace: several crates built together, sharing one Cargo.lock and one
-# target/ directory. Same bargain as flake.lock - loose requirements here,
-# exact versions pinned in the lock file.
 [workspace]
 resolver = "3"
 members = ["crates/ente", "crates/cli"]
