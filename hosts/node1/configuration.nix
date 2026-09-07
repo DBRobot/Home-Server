@@ -8,6 +8,7 @@
     ../../modules/garage.nix
     ../../modules/ente.nix
     ../../modules/harmonia.nix
+    ../../modules/peergos.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
