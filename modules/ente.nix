@@ -49,6 +49,18 @@ in
           hash._secret = config.sops.secrets.ente-key-hash.path;
         };
         jwt.secret._secret = config.sops.secrets.ente-jwt-secret.path;
+        # gomail does STARTTLS on its own unless SSL is set, so 587/tls rather
+        # than 465/ssl. Gmail rewrites From to the authenticated account, so
+        # the sender address cannot be one of our own subdomains.
+        smtp = {
+          host = "smtp.gmail.com";
+          port = 587;
+          encryption = "tls";
+          username = "distributed.datacenter@gmail.com";
+          email = "distributed.datacenter@gmail.com";
+          sender-name = "Ente";
+          password._secret = config.sops.secrets.ente-smtp-password.path;
+        };
       };
     };
   };
