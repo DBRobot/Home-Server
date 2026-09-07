@@ -1,0 +1,9 @@
+# A BINARY crate: has main(), and is one consumer of the library.
+[package]
+name = "dd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ente = { path = "../ente" }

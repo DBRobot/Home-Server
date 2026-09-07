@@ -1,0 +1,10 @@
+# A LIBRARY crate: no main(), no printing, no argv. This is the artifact a
+# browser, phone or desktop shell imports. Keeping it unable to do I/O of its
+# own is what stops it growing CLI-shaped assumptions.
+[package]
+name = "ente"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
