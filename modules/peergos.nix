@@ -12,18 +12,24 @@ let
   # puts cmd into a unit file in the world readable nix store. Build the argument
   # list inside the container instead, from an EnvironmentFile, so the secrets stay
   # in /run/secrets like everything else here.
+  # Peergos picks its S3 addressing mode from the endpoint hostname:
+  #   useHttps = ! host.endsWith("localhost") && ! host.contains("localhost:")
+  #   folder   = (useHttps ? "" : bucket + "/")            (S3BlockStorage.java)
+  # and builds the host as bucket + "." + endpoint. Pointing it at
+  # "localhost:3900" therefore gives http and PATH style, which is what garage
+  # wants. An https endpoint would give virtual host style against
+  # peergos.s3.<base>, and the wildcard cert only covers one label deep.
   entry = pkgs.writeText "peergos-entry.sh" ''
     exec /opt/peergos/docker-entrypoint.sh daemon \
-      -peergos.path /var/lib/peergos \
       -listen-host 127.0.0.1 \
       -port 8000 \
       -public-domain ${host} \
       -public-server true \
+      -generate-token true \
       -useIPFS false \
-      -use-s3 true \
       -s3.bucket peergos \
       -s3.region us-east-1 \
-      -s3.region.endpoint http://127.0.0.1:3900 \
+      -s3.region.endpoint localhost:3900 \
       -s3.accessKey "$PEERGOS_S3_KEY_ID" \
       -s3.secretKey "$PEERGOS_S3_KEY_SECRET" \
       -authed-s3-reads false \
@@ -44,10 +50,15 @@ in
       "/var/lib/peergos:/var/lib/peergos"
       "${entry}:/entry.sh:ro"
     ];
+    environment.PEERGOS_PATH = "/var/lib/peergos";
     environmentFiles = [ config.sops.templates."peergos.env".path ];
   };
 
   systemd.tmpfiles.rules = [ "d /var/lib/peergos 0700 root root -" ];
+
+  # bucket + "." + endpoint, so peergos connects to peergos.localhost:3900.
+  # Nothing resolves that by default.
+  networking.hosts."127.0.0.1" = [ "peergos.localhost" ];
 
   systemd.services.podman-peergos = {
     after = [ "garage-setup.service" ];
