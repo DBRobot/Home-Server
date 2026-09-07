@@ -8,6 +8,7 @@
     ../../modules/garage.nix
     ../../modules/ente.nix
     ../../modules/harmonia.nix
+    ../../modules/monitoring.nix
     ../../modules/postgres-backup.nix
     ../../modules/podman.nix
     ../../modules/peergos.nix

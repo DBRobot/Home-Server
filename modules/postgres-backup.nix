@@ -100,18 +100,4 @@ in
       ExecStart = "${alert} %i";
     };
   };
-
-  programs.msmtp = {
-    enable = true;
-    accounts.default = {
-      host = "smtp.gmail.com";
-      port = 587;
-      tls = true;
-      tls_starttls = true;
-      auth = "login";
-      from = "distributed.datacenter@gmail.com";
-      user = "distributed.datacenter@gmail.com";
-      passwordeval = "${pkgs.coreutils}/bin/cat ${config.sops.secrets.ente-smtp-password.path}";
-    };
-  };
 }
