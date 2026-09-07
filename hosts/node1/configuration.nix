@@ -14,6 +14,8 @@
     ../../modules/metrics.nix
     ../../modules/grafana.nix
     ../../modules/postgres-backup.nix
+    ../../modules/media-tier.nix
+    ../../modules/jellyfin.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

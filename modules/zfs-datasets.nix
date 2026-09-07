@@ -21,6 +21,15 @@ let
       "com.sun:auto-snapshot" = "true";
     };
 
+    # Media is the one dataset where losing the single vdev costs only time:
+    # it is all re-rippable. No snapshots either - a snapshot of a library is
+    # the size of the library.
+    "vault/media" = {
+      recordsize = "1M"; # large sequential reads
+      compression = "off"; # h264/hevc is already compressed
+      "com.sun:auto-snapshot" = "false";
+    };
+
     "tank/models" = {
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible
