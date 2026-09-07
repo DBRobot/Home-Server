@@ -8,10 +8,11 @@
     ../../modules/garage.nix
     ../../modules/ente.nix
     ../../modules/harmonia.nix
-    ../../modules/monitoring.nix
+    ../../modules/acme.nix
+    ../../modules/mail.nix
+    ../../modules/alerting.nix
+    ../../modules/metrics.nix
     ../../modules/postgres-backup.nix
-    ../../modules/podman.nix
-    ../../modules/peergos.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

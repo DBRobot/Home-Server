@@ -84,11 +84,6 @@ in
       garage key import "$GARAGE_KEY_ID" "$GARAGE_KEY_SECRET" --yes -n ente 2>/dev/null || true
       garage bucket allow --read --write --owner ente --key "$GARAGE_KEY_ID" 2>/dev/null || true
 
-      # peergos gets its own bucket and key, so a compromise of one app's
-      # credentials cannot read the other's blobs
-      garage bucket create peergos 2>/dev/null || true
-      garage key import "$PEERGOS_S3_KEY_ID" "$PEERGOS_S3_KEY_SECRET" --yes -n peergos 2>/dev/null || true
-      garage bucket allow --read --write --owner peergos --key "$PEERGOS_S3_KEY_ID" 2>/dev/null || true
 
       # Browsers upload blobs straight to garage, so the bucket needs CORS or
       # every upload fails the preflight with "This CORS request is not
@@ -115,5 +110,19 @@ in
           ];
         }}' 2>/dev/null || true
     '';
+  };
+
+  # garage's public face. Lives here rather than in ente.nix, where it ended up
+  # only because ente needed it first; every future s3 consumer wants it too.
+  services.nginx.virtualHosts."s3.${base}" = {
+    useACMEHost = base;
+    forceSSL = true;
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:3900";
+      extraConfig = ''
+        client_max_body_size 0;
+        proxy_request_buffering off;
+      '';
+    };
   };
 }
