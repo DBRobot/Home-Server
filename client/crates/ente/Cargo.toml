@@ -5,11 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# rustls rather than the default native-tls: no system openssl to link against,
-# and it is the TLS stack that survives compiling to wasm later.
-reqwest = { version = "0.12", default-features = false, features = [
-  "json",
-  "rustls-tls",
-] }
-serde = { version = "1", features = ["derive"] }
-thiserror = "2"
+# Their crypto and protocol, not ours. Not on crates.io, so pinned by commit -
+# there is no semver contract here.
+ente-accounts = { git = "https://github.com/ente-io/ente", rev = "d28c3462e70bf63f8323700ce77797237a0fd1b4" }

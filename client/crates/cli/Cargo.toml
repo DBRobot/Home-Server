@@ -6,8 +6,7 @@ license.workspace = true
 
 [dependencies]
 ente = { path = "../ente" }
-# the async runtime. The library is runtime-agnostic; the binary picks one.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-# anyhow in the binary, thiserror in the library: a binary just wants to print
-# something useful, a library wants callers able to match on specific errors.
 anyhow = "1"
+rpassword = "7"
+zeroize = "1"
