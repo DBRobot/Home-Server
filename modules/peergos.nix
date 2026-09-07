@@ -31,9 +31,6 @@ let
   '';
 in
 {
-  virtualisation.podman.enable = true;
-  virtualisation.oci-containers.backend = "podman";
-
   virtualisation.oci-containers.containers.peergos = {
     inherit image;
     # Host networking so the container reaches garage on 127.0.0.1:3900 without
