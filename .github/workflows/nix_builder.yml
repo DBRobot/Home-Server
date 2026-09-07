@@ -19,6 +19,10 @@ jobs:
       # A docs-only PR cannot change the system closure, but the job still has
       # to run and report: main requires nix_check, so skipping the whole
       # workflow with paths-ignore would leave the check pending forever.
+      # Allowlist, not denylist: build the system only when something that can
+      # affect the system closure changed. A denylist means every new directory
+      # silently triggers an 18 minute build until someone remembers to exclude
+      # it. If this list is ever wrong the push build on main still catches it.
       - name: does anything nix-relevant change?
         id: relevant
         run: |
@@ -28,13 +32,11 @@ jobs:
           fi
           changed=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD)
           echo "changed files:"; echo "$changed" | sed 's/^/  /'
-          # client/** is rust: it cannot change the system closure, so it
-          # skips the nixos build and is covered by the rust job instead.
-          if echo "$changed" | grep -qvE '^(LICENSE|.*\.md|.*\.txt|client/.*)$'; then
+          if echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|hosts/|modules/|secrets/|\.github/workflows/)'; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "docs only - skipping the build"
+            echo "nothing nix-relevant changed - skipping the build"
           fi
 
       - uses: cachix/install-nix-action@v31
