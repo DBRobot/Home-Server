@@ -59,6 +59,12 @@ in
     + lib.concatMapStrings mkDir mediaUsers;
   };
 
+  # smbd binds at start, so the tailnet address has to exist by then
+  systemd.services.samba-smbd = {
+    after = [ "tailscaled.service" ];
+    wants = [ "tailscaled.service" ];
+  };
+
   services.samba = {
     enable = true;
     openFirewall = false; # tailscale0 is already a trusted interface
@@ -67,8 +73,12 @@ in
         security = "user";
         "server min protocol" = "SMB3";
         "server smb encrypt" = "required";
-        # Never on the wifi or the direct cable, only the tailnet.
-        interfaces = "tailscale0 lo";
+        # Never on the wifi or the direct cable, only the tailnet. Matched by
+        # network range, not by name: tailscale0 carries a /32, and samba
+        # silently skips interfaces it cannot derive a subnet from - naming it
+        # here leaves smbd bound to loopback with nothing logged.
+        # 100.64.0.0/10 is the CGNAT range tailscale allocates from.
+        interfaces = "lo 100.64.0.0/10";
         "bind interfaces only" = "yes";
         "invalid users" = [ "root" ];
         "guest ok" = "no";
