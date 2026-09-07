@@ -27,6 +27,8 @@ let
       -public-server true \
       -generate-token true \
       -useIPFS true \
+      -ipfs-api-address /ip4/127.0.0.1/tcp/5001 \
+      -ipfs-gateway-address /ip4/127.0.0.1/tcp/8090 \
       -s3.bucket peergos \
       -s3.region us-east-1 \
       -s3.region.endpoint localhost:3900 \
@@ -56,6 +58,11 @@ in
 
   systemd.tmpfiles.rules = [ "d /var/lib/peergos 0700 root root -" ];
 
+  # The embedded ipfs gateway defaults to /ip4/127.0.0.1/tcp/8080 (Main.java),
+  # which museum has held since day one - the same collision that pushed
+  # llama-server to 8081. It fails as a BindException from IpfsWrapper.launch
+  # with no mention of which port, so it is worth pinning both explicitly.
+  #
   # -useIPFS true is NOT optional. With it false the daemon dies immediately in
   # startPeergos with a ConnectException from JavaPoster: it still talks to an
   # IPFS API that nothing is then serving. Verified by running the daemon
