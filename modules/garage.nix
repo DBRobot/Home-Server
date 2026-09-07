@@ -84,6 +84,12 @@ in
       garage key import "$GARAGE_KEY_ID" "$GARAGE_KEY_SECRET" --yes -n ente 2>/dev/null || true
       garage bucket allow --read --write --owner ente --key "$GARAGE_KEY_ID" 2>/dev/null || true
 
+      # peergos gets its own bucket and key, so a compromise of one app's
+      # credentials cannot read the other's blobs
+      garage bucket create peergos 2>/dev/null || true
+      garage key import "$PEERGOS_S3_KEY_ID" "$PEERGOS_S3_KEY_SECRET" --yes -n peergos 2>/dev/null || true
+      garage bucket allow --read --write --owner peergos --key "$PEERGOS_S3_KEY_ID" 2>/dev/null || true
+
       # Browsers upload blobs straight to garage, so the bucket needs CORS or
       # every upload fails the preflight with "This CORS request is not
       # allowed". garage has no CLI for this - it is an S3 API call.

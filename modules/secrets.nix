@@ -18,6 +18,8 @@
       ente-key-hash.owner = "ente";
       ente-jwt-secret.owner = "ente";
       ente-smtp-password.owner = "ente";
+      peergos-s3-key-id = { };   # read by podman as root
+      peergos-s3-key-secret = { };
     };
 
     # several consumers want an EnvironmentFile rather than a bare value
@@ -33,6 +35,12 @@
       "garage-key.env".content = ''
         GARAGE_KEY_ID=${config.sops.placeholder.garage-key-id}
         GARAGE_KEY_SECRET=${config.sops.placeholder.garage-key-secret}
+        PEERGOS_S3_KEY_ID=${config.sops.placeholder.peergos-s3-key-id}
+        PEERGOS_S3_KEY_SECRET=${config.sops.placeholder.peergos-s3-key-secret}
+      '';
+      "peergos.env".content = ''
+        PEERGOS_S3_KEY_ID=${config.sops.placeholder.peergos-s3-key-id}
+        PEERGOS_S3_KEY_SECRET=${config.sops.placeholder.peergos-s3-key-secret}
       '';
     };
   };
