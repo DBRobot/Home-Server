@@ -12,6 +12,7 @@
     ../../modules/mail.nix
     ../../modules/alerting.nix
     ../../modules/metrics.nix
+    ../../modules/grafana.nix
     ../../modules/postgres-backup.nix
   ];
 

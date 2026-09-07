@@ -18,6 +18,7 @@
       ente-key-hash.owner = "ente";
       ente-jwt-secret.owner = "ente";
       ente-smtp-password.owner = "ente";
+      grafana-secret-key.owner = "grafana";
     };
 
     # several consumers want an EnvironmentFile rather than a bare value
