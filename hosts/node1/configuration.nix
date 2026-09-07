@@ -16,6 +16,7 @@
     ../../modules/postgres-backup.nix
     ../../modules/media-tier.nix
     ../../modules/jellyfin.nix
+    ../../modules/archive-catalog.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
@@ -58,7 +59,10 @@
 
   users.users.admin = {
     isNormalUser = true;
-    extraGroups = [ "wheel" ];
+    extraGroups = [
+      "wheel"
+      "media" # copy files into /srv/media without sudo
+    ];
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOR0kI8YSFB9JwqTJJMB+h4EJCSscpdnnGGGaBNRqXj david-bascom@david-bascom-Legion-Pro-5-16ADR10"
     ];

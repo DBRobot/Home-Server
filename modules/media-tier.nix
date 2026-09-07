@@ -46,11 +46,33 @@ in
   users.groups.media = { };
 
   systemd.tmpfiles.rules = [
-    "d ${hot} 2775 media media -"
+    # NOT ${hot}: that is a zfs dataset, and tmpfiles runs before zfs mounts
+    # it, so anything set here ends up hidden under the mount. media-dirs
+    # below owns it instead.
     "d ${cold} 0755 media media -"
     "d ${union} 0755 media media -"
     "d ${cache} 0700 media media -" # nvme, not the media pool
   ];
+
+  systemd.services.media-dirs = {
+    description = "Own the hot media tier after zfs has mounted it";
+    after = [
+      "zfs-mount.service"
+      "zfs-datasets.service"
+    ];
+    requires = [ "zfs-datasets.service" ];
+    before = [ "media-union.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      mkdir -p ${hot}
+      chown media:media ${hot}
+      chmod 2775 ${hot}
+    '';
+  };
 
   # The cold tier. Today it loops back to garage on this same disk, which buys
   # no capacity - the point is that the ciphertext is real and the mount works,
@@ -66,6 +88,9 @@ in
       "garage-setup.service" # creates the bucket the crypt remote writes into
     ];
     wantedBy = [ "multi-user.target" ];
+    # fusermount3 must be the setuid wrapper; the one in the store is not, and
+    # an unprivileged mount fails with EPERM without it.
+    path = [ "/run/wrappers" ];
     serviceConfig = {
       Type = "notify";
       User = "media";
@@ -85,7 +110,7 @@ in
           --dir-cache-time 72h \
           --poll-interval 0
       '';
-      ExecStop = "${pkgs.fuse}/bin/fusermount -u ${cold}";
+      ExecStop = "/run/wrappers/bin/fusermount -u ${cold}";
       Restart = "on-failure";
       RestartSec = 10;
     };
@@ -96,9 +121,16 @@ in
   # deliberately.
   systemd.services.media-union = {
     description = "mergerfs union of the hot and cold media tiers";
-    after = [ "rclone-cold.service" ];
-    requires = [ "rclone-cold.service" ];
+    after = [
+      "rclone-cold.service"
+      "media-dirs.service"
+    ];
+    requires = [
+      "rclone-cold.service"
+      "media-dirs.service"
+    ];
     wantedBy = [ "multi-user.target" ];
+    path = [ "/run/wrappers" ]; # setuid fusermount3, as above
     serviceConfig = {
       Type = "simple";
       User = "media";
@@ -110,7 +142,7 @@ in
           ${hot}=RW:${cold}=NC ${union}
       '';
       ExecStartPost = waitForMount;
-      ExecStop = "${pkgs.fuse}/bin/fusermount -u ${union}";
+      ExecStop = "/run/wrappers/bin/fusermount -u ${union}";
       Restart = "on-failure";
       RestartSec = 5;
     };
