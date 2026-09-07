@@ -17,6 +17,7 @@
     ../../modules/media-tier.nix
     ../../modules/jellyfin.nix
     ../../modules/archive-catalog.nix
+    ../../modules/smb-media.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
