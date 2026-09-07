@@ -66,6 +66,9 @@ in
       "garage-setup.service" # creates the bucket the crypt remote writes into
     ];
     wantedBy = [ "multi-user.target" ];
+    # fusermount3 must be the setuid wrapper; the one in the store is not, and
+    # an unprivileged mount fails with EPERM without it.
+    path = [ "/run/wrappers" ];
     serviceConfig = {
       Type = "notify";
       User = "media";
@@ -85,7 +88,7 @@ in
           --dir-cache-time 72h \
           --poll-interval 0
       '';
-      ExecStop = "${pkgs.fuse}/bin/fusermount -u ${cold}";
+      ExecStop = "/run/wrappers/bin/fusermount -u ${cold}";
       Restart = "on-failure";
       RestartSec = 10;
     };
@@ -99,6 +102,7 @@ in
     after = [ "rclone-cold.service" ];
     requires = [ "rclone-cold.service" ];
     wantedBy = [ "multi-user.target" ];
+    path = [ "/run/wrappers" ]; # setuid fusermount3, as above
     serviceConfig = {
       Type = "simple";
       User = "media";
@@ -110,7 +114,7 @@ in
           ${hot}=RW:${cold}=NC ${union}
       '';
       ExecStartPost = waitForMount;
-      ExecStop = "${pkgs.fuse}/bin/fusermount -u ${union}";
+      ExecStop = "/run/wrappers/bin/fusermount -u ${union}";
       Restart = "on-failure";
       RestartSec = 5;
     };
