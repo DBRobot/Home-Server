@@ -53,4 +53,39 @@ in
       { device = "/dev/nvme0n1"; } # root + postgres
     ];
   };
+
+  # Metrics are SAMPLES, not events: zed and smartd shout when something breaks,
+  # this notices the gradual things - filling up, heating up, slowing down. The
+  # reason to start it now rather than when a dashboard is wanted is that history
+  # cannot be backfilled.
+  services.prometheus = {
+    enable = true;
+    port = 9090;
+    listenAddress = "127.0.0.1"; # tailnet only, via nginx if ever wanted
+    retentionTime = "180d"; # a few hundred MB; enough to answer "when did this start"
+
+    exporters.node = {
+      enable = true;
+      listenAddress = "127.0.0.1";
+      port = 9100;
+      enabledCollectors = [
+        "systemd" # unit states: catches a failed backup even without the mail
+        "zfs" # pool state, arc stats, per-dataset space
+        "hwmon" # drive and cpu temperatures
+        "textfile"
+      ];
+    };
+
+    scrapeConfigs = [
+      {
+        job_name = "node";
+        static_configs = [ { targets = [ "127.0.0.1:9100" ]; } ];
+      }
+      {
+        # garage already exports; nothing to install
+        job_name = "garage";
+        static_configs = [ { targets = [ "127.0.0.1:2112" ]; } ];
+      }
+    ];
+  };
 }
