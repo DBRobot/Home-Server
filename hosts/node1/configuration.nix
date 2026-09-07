@@ -16,6 +16,7 @@
     ../../modules/postgres-backup.nix
     ../../modules/media-tier.nix
     ../../modules/jellyfin.nix
+    ../../modules/archive-catalog.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
