@@ -13,14 +13,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need history to diff against the base
+
+      # A docs-only PR cannot change the system closure, but the job still has
+      # to run and report: main requires nix_check, so skipping the whole
+      # workflow with paths-ignore would leave the check pending forever.
+      - name: does anything nix-relevant change?
+        id: relevant
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"   # always build main
+            exit 0
+          fi
+          changed=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD)
+          echo "changed files:"; echo "$changed" | sed 's/^/  /'
+          if echo "$changed" | grep -qvE '^(LICENSE|.*\.md|.*\.txt)$'; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "docs only - skipping the build"
+          fi
 
       - uses: cachix/install-nix-action@v31
+        if: steps.relevant.outputs.build == 'true'
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
       - name: flake check
+        if: steps.relevant.outputs.build == 'true'
         run: nix flake check --show-trace
 
       - name: build node1
+        if: steps.relevant.outputs.build == 'true'
         run: nix build .#nixosConfigurations.node1.config.system.build.toplevel
