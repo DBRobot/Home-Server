@@ -26,7 +26,7 @@ let
       -public-domain ${host} \
       -public-server true \
       -generate-token true \
-      -useIPFS false \
+      -useIPFS true \
       -s3.bucket peergos \
       -s3.region us-east-1 \
       -s3.region.endpoint localhost:3900 \
@@ -56,6 +56,11 @@ in
 
   systemd.tmpfiles.rules = [ "d /var/lib/peergos 0700 root root -" ];
 
+  # -useIPFS true is NOT optional. With it false the daemon dies immediately in
+  # startPeergos with a ConnectException from JavaPoster: it still talks to an
+  # IPFS API that nothing is then serving. Verified by running the daemon
+  # locally both ways. It binds 4001, which the firewall does not expose.
+  #
   # bucket + "." + endpoint, so peergos connects to peergos.localhost:3900.
   # Nothing resolves that by default.
   networking.hosts."127.0.0.1" = [ "peergos.localhost" ];
