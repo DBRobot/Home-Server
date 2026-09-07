@@ -19,19 +19,6 @@ let
   };
 in
 {
-  # One wildcard cert for every subdomain. DNS-01 needs no inbound ports,
-  # which is why nothing here opens 80/443 - tailscale0 is already trusted.
-  security.acme = {
-    acceptTerms = true;
-    defaults.email = "davidsprojects7@gmail.com";
-    certs.${base} = {
-      domain = "*.${base}";
-      dnsProvider = "duckdns";
-      environmentFile = config.sops.templates."duckdns.env".path;
-      group = "nginx";
-    };
-  };
-
   services.ente = {
     web = {
       enable = true;
@@ -79,35 +66,19 @@ in
     };
   };
 
-  services.nginx = {
-    enable = true;
-    recommendedProxySettings = true;
-    virtualHosts =
-      lib.genAttrs entePorts (_: {
+  services.nginx.virtualHosts =
+    lib.genAttrs entePorts (_: {
+      useACMEHost = base;
+      forceSSL = true;
+    })
+    // {
+      ${d "locker"} = {
         useACMEHost = base;
         forceSSL = true;
-      })
-      // {
-        ${d "locker"} = {
-          useACMEHost = base;
-          forceSSL = true;
-          locations."/" = {
-            root = lockerPkg;
-            tryFiles = "$uri $uri.html /index.html";
-          };
-        };
-
-        ${d "s3"} = {
-          useACMEHost = base;
-          forceSSL = true;
-          locations."/" = {
-            proxyPass = "http://127.0.0.1:3900";
-            extraConfig = ''
-              client_max_body_size 0;
-              proxy_request_buffering off;
-            '';
-          };
+        locations."/" = {
+          root = lockerPkg;
+          tryFiles = "$uri $uri.html /index.html";
         };
       };
-  };
+    };
 }
