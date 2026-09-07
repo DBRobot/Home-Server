@@ -9,6 +9,18 @@ let
       "com.sun:auto-snapshot" = "true"; # cheap on immutable files, saves you from rm -rf
     };
 
+    # The ente key hierarchy lives in postgres on the ext4 root: no snapshots,
+    # no checksums, no redundancy. Without it the 78G of blobs on vault cannot
+    # be decrypted by anyone, including with the recovery key, because
+    # master_key_encrypted_with_recovery_key is itself a row in that database.
+    # Dumps land here: different physical disk to the source, and they inherit
+    # snapshots and any future replication.
+    "vault/backups" = {
+      recordsize = "128K"; # small compressible dumps, not media
+      compression = "zstd";
+      "com.sun:auto-snapshot" = "true";
+    };
+
     "tank/models" = {
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible
