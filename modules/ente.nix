@@ -3,6 +3,20 @@ let
   base = "distributed-datacenter.duckdns.org";
   d = sub: "${sub}.${base}";
   entePorts = map d [ "api" "accounts" "albums" "cast" "photos" ];
+
+  # Locker is a fourth ente app - notes, credentials, physical records and
+  # documents - sharing the account and museum that photos already uses. The
+  # nixos module only knows about accounts/albums/cast/photos, so it is built
+  # and served here with the same overrides the module applies to those.
+  lockerPkg = pkgs.ente-web.override {
+    enteApp = "locker";
+    enteMainUrl = "https://${d "photos"}";
+    extraBuildEnv = {
+      NEXT_PUBLIC_ENTE_ENDPOINT = "https://${d "api"}";
+      NEXT_PUBLIC_ENTE_ALBUMS_ENDPOINT = "https://${d "albums"}";
+      NEXT_TELEMETRY_DISABLED = "1";
+    };
+  };
 in
 {
   # One wildcard cert for every subdomain. DNS-01 needs no inbound ports,
@@ -74,6 +88,15 @@ in
         forceSSL = true;
       })
       // {
+        ${d "locker"} = {
+          useACMEHost = base;
+          forceSSL = true;
+          locations."/" = {
+            root = lockerPkg;
+            tryFiles = "$uri $uri.html /index.html";
+          };
+        };
+
         ${d "s3"} = {
           useACMEHost = base;
           forceSSL = true;
