@@ -26,7 +26,10 @@ let
     # the size of the library.
     "vault/media" = {
       recordsize = "1M"; # large sequential reads
-      compression = "off"; # h264/hevc is already compressed
+      # h264/hevc is already compressed, so this should do nothing - but
+      # vault/photos gets 1.93x on blobs that "should" be incompressible too,
+      # and lz4 early-aborts on the ones that really are. Costs nothing to try.
+      compression = "lz4";
       "com.sun:auto-snapshot" = "false";
     };
 
