@@ -19,6 +19,11 @@
       ente-jwt-secret.owner = "ente";
       ente-smtp-password.owner = "ente";
       grafana-secret-key.owner = "grafana";
+      # read only through sops templates below, so root-only is fine
+      garage-media-key-id = { };
+      garage-media-key-secret = { };
+      rclone-crypt-password = { };
+      rclone-crypt-salt = { };
     };
 
     # several consumers want an EnvironmentFile rather than a bare value
@@ -34,6 +39,24 @@
       "garage-key.env".content = ''
         GARAGE_KEY_ID=${config.sops.placeholder.garage-key-id}
         GARAGE_KEY_SECRET=${config.sops.placeholder.garage-key-secret}
+        GARAGE_MEDIA_KEY_ID=${config.sops.placeholder.garage-media-key-id}
+        GARAGE_MEDIA_KEY_SECRET=${config.sops.placeholder.garage-media-key-secret}
+      '';
+      # rclone takes its whole config from the environment, so no config file
+      # is written anywhere. PASSWORD/PASSWORD2 are rclone-obscured, which is
+      # obfuscation not encryption - sops is what actually protects them.
+      "rclone.env".owner = "media";
+      "rclone.env".content = ''
+        RCLONE_CONFIG_GARAGE_TYPE=s3
+        RCLONE_CONFIG_GARAGE_PROVIDER=Other
+        RCLONE_CONFIG_GARAGE_ENDPOINT=http://127.0.0.1:3900
+        RCLONE_CONFIG_GARAGE_REGION=us-east-1
+        RCLONE_CONFIG_GARAGE_ACCESS_KEY_ID=${config.sops.placeholder.garage-media-key-id}
+        RCLONE_CONFIG_GARAGE_SECRET_ACCESS_KEY=${config.sops.placeholder.garage-media-key-secret}
+        RCLONE_CONFIG_COLD_TYPE=crypt
+        RCLONE_CONFIG_COLD_REMOTE=garage:media
+        RCLONE_CONFIG_COLD_PASSWORD=${config.sops.placeholder.rclone-crypt-password}
+        RCLONE_CONFIG_COLD_PASSWORD2=${config.sops.placeholder.rclone-crypt-salt}
       '';
     };
   };
