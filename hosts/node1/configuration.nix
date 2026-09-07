@@ -9,6 +9,8 @@
     ../../modules/ente.nix
     ../../modules/harmonia.nix
     ../../modules/postgres-backup.nix
+    ../../modules/podman.nix
+    ../../modules/peergos.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
