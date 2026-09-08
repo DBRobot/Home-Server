@@ -61,6 +61,10 @@ async fn main() -> Result<()> {
                 .clone()
                 .unwrap_or_else(|| session.subject.clone());
             println!("signed in to kanidm as {who}");
+            match &session.refresh_token {
+                Some(_) => println!("refresh token: received (renewals need no browser)"),
+                None => println!("refresh token: NONE - every expiry needs a new login"),
+            }
             // Shape only, never the token: whether it is a jwt decides how
             // a proxy in front of the llm can validate it.
             // testing hook: write the token where a curl can pick it up
@@ -80,7 +84,10 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| "<undecodable>".into());
                 println!("access token: JWT, header {hdr}");
             } else {
-                println!("access token: opaque ({parts} segment(s), {} chars)", at.len());
+                println!(
+                    "access token: opaque ({parts} segment(s), {} chars)",
+                    at.len()
+                );
             }
         }
 

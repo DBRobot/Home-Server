@@ -12,6 +12,10 @@ use crate::{Error, Result};
 /// these tokens authorise services, they do not decrypt anything.
 pub struct Session {
     pub access_token: Zeroizing<String>,
+    /// Long-lived and only ever sent back to kanidm, which checks it live.
+    /// This is what lets an expired access token be replaced without a
+    /// browser, and what makes revocation take effect.
+    pub refresh_token: Option<Zeroizing<String>>,
     pub id_token: Option<String>,
     pub subject: String,
     pub preferred_username: Option<String>,
@@ -61,6 +65,9 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<Session> {
         .add_scope(Scope::new("profile".to_string()))
         .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("groups".to_string()))
+        // without this kanidm issues no refresh token, and a 15-minute
+        // access token expiry would mean another browser round trip
+        .add_scope(Scope::new("offline_access".to_string()))
         .set_pkce_challenge(challenge)
         .url();
 
@@ -89,6 +96,9 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<Session> {
 
     Ok(Session {
         access_token: Zeroizing::new(tokens.access_token().secret().to_string()),
+        refresh_token: tokens
+            .refresh_token()
+            .map(|t| Zeroizing::new(t.secret().to_string())),
         id_token: id_token.map(|t| t.to_string()),
         subject: claims
             .map(|c| c.subject().to_string())
