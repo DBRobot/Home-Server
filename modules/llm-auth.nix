@@ -18,7 +18,7 @@ in
     oidcIssuerUrl = "${idm}/oauth2/openid/llm";
     clientID = "llm";
     clientSecretFile = config.sops.secrets.llm-oauth-secret.path;
-    keyFile = config.sops.secrets.llm-cookie-secret.path;
+    keyFile = config.sops.templates."oauth2-proxy.env".path;
     httpAddress = "http://127.0.0.1:4180";
     email.domains = [ "*" ];
     setXauthrequest = true;
