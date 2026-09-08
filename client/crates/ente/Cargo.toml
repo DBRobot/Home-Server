@@ -1,0 +1,10 @@
+[package]
+name = "ente"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Their crypto and protocol, not ours. Not on crates.io, so pinned by commit -
+# there is no semver contract here.
+ente-accounts = { git = "https://github.com/ente-io/ente", rev = "d28c3462e70bf63f8323700ce77797237a0fd1b4" }
