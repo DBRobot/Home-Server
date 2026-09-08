@@ -41,6 +41,10 @@ in
       # legitimate source.
       trusted-proxy-ip = "127.0.0.1/32";
       skip-provider-button = "true";
+      # X-Auth-Request-User otherwise carries the `sub` uuid, and the webdav
+      # endpoint uses it as a directory name - nginx tried to mkdir
+      # /srv/users/bb02d34e-... instead of /srv/users/david
+      oidc-email-claim = "preferred_username";
     };
   };
 

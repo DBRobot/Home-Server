@@ -54,6 +54,10 @@ in
     };
   };
 
+  # nginx's unit is sandboxed with a read-only /srv, so every PUT failed
+  # with "mkdir() ... (30: Read-only file system)" despite correct auth.
+  systemd.services.nginx.serviceConfig.ReadWritePaths = [ root ];
+
   # nginx writes the upload here before moving it into place; without a
   # temp path on the same filesystem every PUT is a cross-device copy
   systemd.tmpfiles.rules = [

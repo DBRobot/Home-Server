@@ -24,6 +24,10 @@ let
     install -d -m 0750 -o ${name} -g ${name} ${root}/${name}
     setfacl -m u:jellyfin:r-x ${root}/${name}
     setfacl -d -m u:jellyfin:r-x ${root}/${name}
+    # nginx needs write for the webdav endpoint in modules/webdav-media.nix;
+    # jellyfin only ever reads
+    setfacl -m u:nginx:rwx ${root}/${name}
+    setfacl -d -m u:nginx:rwx ${root}/${name}
     setfacl -d -m u:${name}:rwx ${root}/${name}
   '';
 in
