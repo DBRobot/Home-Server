@@ -62,7 +62,10 @@ in
 
       systems.oauth2.jellyfin = {
         displayName = "Jellyfin";
-        originUrl = "https://jellyfin.${base}/sso/OID/redirect/kanidm";
+        # /r/ not /redirect/: the plugin config has NewPath=false, so it uses
+        # the old short path. Must be an exact match or kanidm rejects
+        # the authorise with invalid_origin.
+        originUrl = "https://jellyfin.${base}/sso/OID/r/kanidm";
         originLanding = "https://jellyfin.${base}/";
         basicSecretFile = config.sops.secrets.jellyfin-oauth-secret.path;
         preferShortUsername = true;

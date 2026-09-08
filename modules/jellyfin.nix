@@ -132,6 +132,7 @@ in
                 <FolderRoleMappings />
                 <OidScopes />
                 <PortOverride xsi:nil="true" />
+                <SchemeOverride>https</SchemeOverride>
                 <NewPath>false</NewPath>
                 <CanonicalLinks />
                 <DisableHttps>false</DisableHttps>
