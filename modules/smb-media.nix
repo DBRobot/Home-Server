@@ -7,8 +7,9 @@
 let
   root = "/srv/users";
 
-  # Add a name here and the account, directory, acl and share all follow.
-  # A samba password still has to be set once: sudo smbpasswd -a <name>
+  # Add a name here and the account, directory, acl, share and password all
+  # follow from a rebuild. The password comes from the sops key
+  # smb-password-<name>, which has to exist before the switch.
   mediaUsers = [ "david" ];
 
   # Each user gets their OWN primary group, not a shared one - a shared group
@@ -27,6 +28,8 @@ let
   '';
 in
 {
+  sops.secrets = lib.genAttrs (map (n: "smb-password-${n}") mediaUsers) (_: { });
+
   users.users = lib.genAttrs mediaUsers (name: {
     isNormalUser = true;
     group = name;
@@ -63,6 +66,27 @@ in
   systemd.services.samba-smbd = {
     after = [ "tailscaled.service" ];
     wants = [ "tailscaled.service" ];
+  };
+
+  # Samba keeps passwords in its own tdb, which no nixos option writes to, so
+  # this is the declarative equivalent: set them from sops on every rebuild.
+  # Idempotent - re-setting the same password is a no-op, and rotating the
+  # secret takes effect on the next switch.
+  systemd.services.samba-passwords = {
+    description = "Apply samba passwords from sops";
+    after = [ "samba-smbd.service" ];
+    requires = [ "samba-smbd.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = lib.concatMapStrings (name: ''
+      pw=$(cat ${config.sops.secrets."smb-password-${name}".path})
+      printf '%s\n%s\n' "$pw" "$pw" \
+        | ${config.services.samba.package}/bin/smbpasswd -s -a ${name}
+      ${config.services.samba.package}/bin/smbpasswd -e ${name} >/dev/null
+    '') mediaUsers;
   };
 
   services.samba = {
