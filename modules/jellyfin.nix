@@ -80,15 +80,21 @@ in
   # as <OidConfig>.
   systemd.services.jellyfin-sso-config = {
     description = "Seed the jellyfin sso provider config";
-    after = [ "jellyfin.service" ];
-    requires = [ "jellyfin.service" ];
+    # Before jellyfin, not after. The first version ended with
+    # "systemctl restart jellyfin" while declaring Requires=jellyfin.service,
+    # so restarting jellyfin tore this unit down mid-write; the retry then
+    # matched its own half-written file and skipped, and jellyfin persisted
+    # its empty in-memory config over the remains.
+    before = [ "jellyfin.service" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
     };
     script = ''
-      cfg=${config.services.jellyfin.dataDir}/plugins/configurations/SSO-Auth.xml
+      dir=${config.services.jellyfin.dataDir}/plugins/configurations
+      mkdir -p "$dir"
+      cfg=$dir/SSO-Auth.xml
       if [ -f "$cfg" ] && ${pkgs.gnugrep}/bin/grep -q "<string>kanidm</string>" "$cfg"; then
         echo "kanidm provider already present; leaving config alone"
         exit 0
@@ -131,7 +137,6 @@ in
       ${pkgs.gnused}/bin/sed -i "s/^      //" "$cfg"
       chown jellyfin:${config.services.jellyfin.group} "$cfg"
       chmod 0600 "$cfg"
-      systemctl restart jellyfin
     '';
   };
 
