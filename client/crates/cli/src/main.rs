@@ -35,6 +35,10 @@ enum Command {
         origin: String,
         #[arg(long)]
         email: String,
+        /// Read the password from stdin instead of prompting. rpassword needs
+        /// a controlling terminal, so the prompt cannot work when piped.
+        #[arg(long)]
+        password_stdin: bool,
     },
     /// What is cached on this machine.
     Status,
@@ -58,12 +62,22 @@ async fn main() -> Result<()> {
             println!("signed in to kanidm as {who}");
         }
 
-        Command::Unlock { origin, email } => {
+        Command::Unlock {
+            origin,
+            email,
+            password_stdin,
+        } => {
             if keys.get("ente")?.is_some() {
                 println!("already unlocked on this machine - `dd lock` first to redo it");
                 return Ok(());
             }
-            let password = Zeroizing::new(rpassword::prompt_password("ente password: ")?);
+            let password = if password_stdin {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                Zeroizing::new(line.trim_end_matches(['\n', '\r']).to_string())
+            } else {
+                Zeroizing::new(rpassword::prompt_password("ente password: ")?)
+            };
             let client = ente::client(&origin)?;
             let mut ui = ui::Term;
             let mut flow = ente::AuthFlow::new(&client, &mut ui);
