@@ -72,6 +72,10 @@ in
     };
     script = ''
       install -d -m 0755 -o root -g root ${root}
+      # where modules/webdav-media.nix sends a request whose token carried no
+      # usable username. Root-owned and unwritable on purpose: nginx gets
+      # EACCES and returns 403 rather than 500.
+      install -d -m 0555 -o root -g root ${root}/__denied__
     ''
     + lib.concatMapStrings mkDir mediaUserNames;
   };

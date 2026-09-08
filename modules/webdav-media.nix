@@ -10,6 +10,14 @@ in
   # kanidm tokens. The same directories and acls samba writes to, so a file
   # arriving either way is indistinguishable to jellyfin.
   #
+  # Present the ID TOKEN here, not the access token. oauth2-proxy's bearer
+  # mode is built for id tokens - providers/oidc.go names the function
+  # "CreateSessionFromToken converts Bearer IDTokens into sessions" and
+  # explicitly skips the profile url in that path ("we can't hit the
+  # ProfileURL"). Kanidm's access token carries nothing but `sub`, so an
+  # access token authenticates fine and then has no name to build a path
+  # from. Verified: access token 500, id token 201.
+  #
   # Not mountable in Finder or Explorer: those speak basic auth only and
   # cannot present a bearer token. Use rclone or `dd upload`.
   services.nginx.virtualHosts.${host} = {
@@ -68,7 +76,11 @@ in
   # an empty string. Map variables are evaluated where they are used.
   services.nginx.appendHttpConfig = ''
     map $dav_user $dav_dir {
-      default            "__invalid__";
+      # __denied__ is a real 0555 root-owned directory created by
+      # media-user-dirs in modules/smb-media.nix. Pointing the alias at
+      # something that exists but is unwritable turns what would be a 500 on
+      # a missing path into the 403 this actually is.
+      default            "__denied__";
       "~^[a-zA-Z0-9._-]+$" $dav_user;
     }
   '';

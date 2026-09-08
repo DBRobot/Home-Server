@@ -67,11 +67,16 @@ async fn main() -> Result<()> {
             }
             // Shape only, never the token: whether it is a jwt decides how
             // a proxy in front of the llm can validate it.
-            // testing hook: write the token where a curl can pick it up
-            // without it passing through stdout
+            // testing hook: write the tokens where a curl can pick them up
+            // without them passing through stdout. The id token is the one a
+            // gateway wants - see the note on Session::id_token.
             if let Ok(dest) = std::env::var("DD_WRITE_TOKEN") {
                 std::fs::write(&dest, session.access_token.as_bytes()).ok();
                 println!("access token written to {dest}");
+                if let Some(idt) = &session.id_token {
+                    std::fs::write(format!("{dest}.id"), idt.as_bytes()).ok();
+                    println!("id token written to {dest}.id");
+                }
             }
             let at: &str = &session.access_token;
             let parts = at.split('.').count();

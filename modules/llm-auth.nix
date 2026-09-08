@@ -41,16 +41,10 @@ in
       # legitimate source.
       trusted-proxy-ip = "127.0.0.1/32";
       skip-provider-button = "true";
-      # kanidm does not put `email` in the access token, and oauth2-proxy
-      # rejects a session with no email. This does NOT affect
-      # X-Auth-Request-User, which is hardcoded to `sub` upstream - see the
-      # note in modules/webdav-media.nix.
-      oidc-email-claim = "preferred_username";
-      # The access token carries little more than `sub`; preferred_username
-      # lives in userinfo. oauth2-proxy backfills claims it did not find in
-      # the token from here, which is what makes both the email above and
-      # X-Auth-Request-Preferred-Username resolve to "david".
-      profile-url = "${idm}/oauth2/openid/dd/userinfo";
+      # No oidc-email-claim or profile-url here on purpose. Clients present
+      # an ID token (see modules/webdav-media.nix), which already carries
+      # `email` and `preferred_username`, and the bearer path never calls the
+      # profile url anyway - providers/oidc.go says so in as many words.
     };
   };
 
