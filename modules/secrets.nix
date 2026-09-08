@@ -61,7 +61,8 @@
       "litellm.env".content = ''
         LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
         LITELLM_SALT_KEY=${config.sops.placeholder.litellm-salt-key}
-        DATABASE_URL=postgresql:///litellm?host=/run/postgresql
+        JWT_PUBLIC_KEY_URL=https://idm.distributed-datacenter.duckdns.org/oauth2/openid/litellm/public_key.jwk
+        JWT_AUDIENCE=litellm
         GENERIC_CLIENT_ID=litellm
         GENERIC_CLIENT_SECRET=${config.sops.placeholder.litellm-oauth-secret}
         GENERIC_AUTHORIZATION_ENDPOINT=https://idm.distributed-datacenter.duckdns.org/ui/oauth2

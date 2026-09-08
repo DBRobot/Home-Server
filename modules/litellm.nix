@@ -5,17 +5,13 @@ let
   user = "litellm";
 in
 {
-  # Peer auth over the socket, same as ente and kanidm - no db password
-  # exists. ensureDBOwnership needs the db name to match the role.
-  services.postgresql = {
-    ensureDatabases = [ user ];
-    ensureUsers = [
-      {
-        name = user;
-        ensureDBOwnership = true;
-      }
-    ];
-  };
+  # Deliberately NO database. nixpkgs' litellm ships without the prisma
+  # package at all, so any db-backed feature dies on `from prisma import
+  # Prisma`. JWT auth does not need it - handle_jwt.py takes prisma_client as
+  # Optional, because validation is against the provider's jwks, not a table.
+  #
+  # The cost is that there are no virtual keys: identity comes from a kanidm
+  # token on every request rather than from a key litellm minted.
 
   services.litellm = {
     enable = true;
@@ -36,9 +32,16 @@ in
         }
       ];
       general_settings = {
-        # Kanidm signs the tokens; litellm checks them against the jwks the
-        # provider publishes, so no shared secret is involved in verification.
         master_key = "os.environ/LITELLM_MASTER_KEY";
+        # Kanidm signs; litellm verifies against the jwks kanidm publishes.
+        # No shared secret takes part in verification.
+        enable_jwt_auth = true;
+        litellm_jwtauth = {
+          user_id_jwt_field = "preferred_username";
+          team_id_default = "default";
+          # kanidm puts group SPNs here, e.g. users@idm.<domain>
+          user_roles_jwt_field = "groups";
+        };
       };
       litellm_settings = {
         drop_params = true;

@@ -1,4 +1,9 @@
-{ pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   # nixpkgs ships a baseline x86-64 build so it runs anywhere, which means no
   # SIMD at all: system_info reported LLAMAFILE/OPENMP/REPACK and no AVX line,
@@ -79,8 +84,8 @@ in
     package = llamaCppTuned;
     inherit model;
     # localhost only: litellm in modules/litellm.nix is the front door and
-    # holds the per-user keys. Before this, 8081 was the one service open on
-    # every interface with no authentication at all.
+    # does the kanidm jwt check. Before this, 8081 was the one service open
+    # on every interface with no authentication at all.
     host = "127.0.0.1";
     port = 8081; # 8080 is taken by ente's museum
     openFirewall = false;
