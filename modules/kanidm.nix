@@ -44,6 +44,22 @@ in
       groups.users = { };
       groups.admins = { };
 
+      systems.oauth2.grafana = {
+        displayName = "Grafana";
+        originUrl = "https://grafana.${base}/login/generic_oauth";
+        originLanding = "https://grafana.${base}/";
+        # the secret is ours, not kanidm's: provisioning it from sops means
+        # both sides read one source instead of copying a generated value
+        basicSecretFile = config.sops.secrets.grafana-oauth-secret.path;
+        preferShortUsername = true; # "david", not the full spn
+        scopeMaps.users = [
+          "openid"
+          "profile"
+          "email"
+          "groups"
+        ];
+      };
+
       persons.david = {
         displayName = "David";
         mailAddresses = [ "davidsprojects7@gmail.com" ];

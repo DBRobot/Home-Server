@@ -19,6 +19,10 @@
       ente-jwt-secret.owner = "ente";
       ente-smtp-password.owner = "ente";
       grafana-secret-key.owner = "grafana";
+      # read by kanidm to provision the client, and by grafana to use it
+      grafana-oauth-secret.owner = "grafana";
+      grafana-oauth-secret.mode = "0440";
+      grafana-oauth-secret.group = "kanidm";
       # read only through sops templates below, so root-only is fine
       garage-media-key-id = { };
       garage-media-key-secret = { };
