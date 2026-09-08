@@ -19,10 +19,15 @@ in
     locations."/" = {
       extraConfig = ''
         auth_request /oauth2/auth;
-        # oauth2-proxy hands back the identity from the token; the upload is
-        # scoped to that user's directory rather than a path they choose
-        auth_request_set $dav_user $upstream_http_x_auth_request_user;
-        alias ${root}/$dav_user/;
+        # NOT x_auth_request_user: oauth2-proxy fills that from the `sub`
+        # claim and there is no flag to change it - providers/provider_data.go
+        # hardcodes UserClaim to "sub". It is the account uuid, so nginx built
+        # /srv/users/bb02d34e-... and every PUT landed nowhere. The
+        # preferred-username header is the same identity as a name.
+        auth_request_set $dav_user $upstream_http_x_auth_request_preferred_username;
+        # $dav_dir is $dav_user filtered through the map below, so a missing
+        # or malformed header cannot name a directory
+        alias ${root}/$dav_dir/;
 
         dav_methods PUT DELETE MKCOL COPY MOVE;
         dav_ext_methods PROPFIND OPTIONS;
@@ -53,6 +58,20 @@ in
       '';
     };
   };
+
+  # An empty $dav_user would make the alias /srv/users/ - the root itself,
+  # shared by everyone - and create_full_put_path would happily mkdir in it.
+  # Kanidm will not issue a name with a slash in it, but the directory name
+  # here comes from a header, so it gets whitelisted rather than trusted.
+  # This is a map and not `if ($dav_user = "")` because if runs in the rewrite
+  # phase, before auth_request has set the variable: the test would always see
+  # an empty string. Map variables are evaluated where they are used.
+  services.nginx.appendHttpConfig = ''
+    map $dav_user $dav_dir {
+      default            "__invalid__";
+      "~^[a-zA-Z0-9._-]+$" $dav_user;
+    }
+  '';
 
   # nginx's unit is sandboxed with a read-only /srv, so every PUT failed
   # with "mkdir() ... (30: Read-only file system)" despite correct auth.

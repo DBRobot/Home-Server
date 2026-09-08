@@ -41,10 +41,16 @@ in
       # legitimate source.
       trusted-proxy-ip = "127.0.0.1/32";
       skip-provider-button = "true";
-      # X-Auth-Request-User otherwise carries the `sub` uuid, and the webdav
-      # endpoint uses it as a directory name - nginx tried to mkdir
-      # /srv/users/bb02d34e-... instead of /srv/users/david
+      # kanidm does not put `email` in the access token, and oauth2-proxy
+      # rejects a session with no email. This does NOT affect
+      # X-Auth-Request-User, which is hardcoded to `sub` upstream - see the
+      # note in modules/webdav-media.nix.
       oidc-email-claim = "preferred_username";
+      # The access token carries little more than `sub`; preferred_username
+      # lives in userinfo. oauth2-proxy backfills claims it did not find in
+      # the token from here, which is what makes both the email above and
+      # X-Auth-Request-Preferred-Username resolve to "david".
+      profile-url = "${idm}/oauth2/openid/dd/userinfo";
     };
   };
 

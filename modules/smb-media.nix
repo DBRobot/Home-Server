@@ -10,7 +10,16 @@ let
   # Add a name here and the account, directory, acl, share and password all
   # follow from a rebuild. The password comes from the sops key
   # smb-password-<name>, which has to exist before the switch.
-  mediaUsers = [ "david" ];
+  #
+  # The uid is pinned rather than left to nixos to allocate. /srv/users is
+  # meant to become shared storage across nodes, and a file carries the
+  # number, not the name - two nodes that allocate in a different order would
+  # hand each other's directories to the wrong person. gid is set to match.
+  # 1001 is what node1 already allocated, so pinning it changes nothing here.
+  mediaUsers = {
+    david = 1001;
+  };
+  mediaUserNames = lib.attrNames mediaUsers;
 
   # Each user gets their OWN primary group, not a shared one - a shared group
   # would let every media user read every other's files. Jellyfin gets in via
@@ -32,16 +41,17 @@ let
   '';
 in
 {
-  sops.secrets = lib.genAttrs (map (n: "smb-password-${n}") mediaUsers) (_: { });
+  sops.secrets = lib.genAttrs (map (n: "smb-password-${n}") mediaUserNames) (_: { });
 
-  users.users = lib.genAttrs mediaUsers (name: {
+  users.users = lib.mapAttrs (name: uid: {
     isNormalUser = true;
+    inherit uid;
     group = name;
     home = "${root}/${name}";
     createHome = false; # the oneshot below owns this, after zfs mounts
     shell = "${pkgs.shadow}/bin/nologin"; # smb only, no shell
-  });
-  users.groups = lib.genAttrs mediaUsers (_: { });
+  }) mediaUsers;
+  users.groups = lib.mapAttrs (_: uid: { gid = uid; }) mediaUsers;
 
   systemd.services.media-user-dirs = {
     description = "Per-user media directories, readable by jellyfin alone";
@@ -63,7 +73,7 @@ in
     script = ''
       install -d -m 0755 -o root -g root ${root}
     ''
-    + lib.concatMapStrings mkDir mediaUsers;
+    + lib.concatMapStrings mkDir mediaUserNames;
   };
 
   # smbd binds at start, so the tailnet address has to exist by then
@@ -90,7 +100,7 @@ in
       printf '%s\n%s\n' "$pw" "$pw" \
         | ${config.services.samba.package}/bin/smbpasswd -s -a ${name}
       ${config.services.samba.package}/bin/smbpasswd -e ${name} >/dev/null
-    '') mediaUsers;
+    '') mediaUserNames;
   };
 
   services.samba = {
@@ -132,7 +142,7 @@ in
           "create mask" = "0640";
           "directory mask" = "0750";
         };
-      }) mediaUsers
+      }) mediaUserNames
     );
   };
 }

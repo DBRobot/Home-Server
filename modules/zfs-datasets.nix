@@ -33,6 +33,17 @@ let
       "com.sun:auto-snapshot" = "false";
     };
 
+    # Per-user uploads. These were on the ext4 root partition, which is the
+    # small disk and has no snapshots or checksums - user data belongs on the
+    # pool with everything else. Snapshots are on: unlike vault/media this is
+    # not re-rippable, and they cost nothing until a file changes.
+    "vault/users" = {
+      mountpoint = "/srv/users";
+      recordsize = "1M";
+      compression = "lz4";
+      "com.sun:auto-snapshot" = "true";
+    };
+
     "tank/models" = {
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible
