@@ -36,6 +36,25 @@
         RUST_BACKTRACE = "1";
       };
 
+      # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
+      # fetched by hash from Cargo.lock, so the binary is as reproducible as
+      # the nixos closure. ente-accounts is a git dep and carries no checksum
+      # in the lockfile, so its hash has to be stated.
+      packages.${system}.dd = pkgs.rustPlatform.buildRustPackage {
+        pname = "dd";
+        version = "0.1.0";
+        src = ./client;
+        cargoLock = {
+          lockFile = ./client/Cargo.lock;
+          outputHashes = {
+            "ente-accounts-0.0.0" = "sha256-3oQcxIAQ6H2IUXU20T/+ZTsOD1oyrFsM29Pynq8nttw=";
+          };
+        };
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        # keyring talks to the secret service over dbus at runtime, not build
+        # time, so nothing extra is needed here.
+      };
+
       nixosConfigurations.node1 = nixpkgs.lib.nixosSystem {
         modules = [
           ./hosts/node1/configuration.nix

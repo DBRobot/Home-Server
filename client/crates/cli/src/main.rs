@@ -1,74 +1,94 @@
-use anyhow::Result;
-use ente::{AuthFlow, AuthFlowUi, LoginParams, OtpPurpose, SecondFactorMethod, TotpPurpose};
+mod ui;
+mod vault;
+
+use anyhow::{Context, Result};
+use auth::{KeyStore, OsKeyring};
+use clap::{Parser, Subcommand};
+use ente::LoginParams;
+use vault::Vault;
 use zeroize::Zeroizing;
 
-struct Cli;
+const SERVICE: &str = "distributed-datacenter";
+const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2/openid/dd";
+const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
 
-fn prompt(label: &str) -> ente::Result<String> {
-    use std::io::Write;
-    print!("{label}: ");
-    std::io::stdout().flush().ok();
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line).ok();
-    Ok(line.trim().to_string())
+#[derive(Parser)]
+#[command(name = "dd", about = "distributed datacenter client")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
 }
 
-impl AuthFlowUi for Cli {
-    fn read_email_otp(
-        &mut self,
-        email: &str,
-        _purpose: OtpPurpose,
-        _resent: bool,
-    ) -> ente::Result<String> {
-        prompt(&format!("code emailed to {email}"))
-    }
-
-    fn read_totp_code(&mut self, _purpose: TotpPurpose) -> ente::Result<String> {
-        prompt("authenticator code")
-    }
-
-    fn report_retryable_error(&mut self, message: &str) -> ente::Result<()> {
-        eprintln!("retrying: {message}");
-        Ok(())
-    }
-
-    fn choose_second_factor(
-        &mut self,
-        methods: &[SecondFactorMethod],
-    ) -> ente::Result<SecondFactorMethod> {
-        Ok(methods[0])
-    }
-
-    fn present_passkey_verification(&mut self, url: &str) -> ente::Result<()> {
-        println!("open to verify: {url}");
-        Ok(())
-    }
-
-    fn wait_for_passkey_verification(&mut self) -> ente::Result<()> {
-        prompt("press enter once verified").map(|_| ())
-    }
-
-    fn present_totp_secret(&mut self, secret_code: &str, _qr: &str) -> ente::Result<()> {
-        println!("totp secret: {secret_code}");
-        Ok(())
-    }
+#[derive(Subcommand)]
+enum Command {
+    /// Sign in to kanidm. Proves who you are to services; touches no keys.
+    Login {
+        #[arg(long, default_value = DEFAULT_IDM)]
+        issuer: String,
+        #[arg(long, default_value = "dd")]
+        client_id: String,
+    },
+    /// Unlock ente. Asks for the ente password once, then stores the derived
+    /// keys in the OS credential store so it is not asked again.
+    Unlock {
+        #[arg(long, default_value = DEFAULT_ENTE)]
+        origin: String,
+        #[arg(long)]
+        email: String,
+    },
+    /// What is cached on this machine.
+    Status,
+    /// Forget the stored ente keys on this machine.
+    Lock,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    let origin = args
-        .next()
-        .unwrap_or_else(|| "https://api.distributed-datacenter.duckdns.org".to_string());
-    let email = args.next().unwrap_or_default();
-    let password = Zeroizing::new(rpassword::prompt_password("ente password: ")?);
+    let cli = Cli::parse();
+    let keys = OsKeyring::new(SERVICE);
 
-    let client = ente::client(&origin)?;
-    let mut ui = Cli;
-    let mut flow = AuthFlow::new(&client, &mut ui);
+    match cli.command {
+        Command::Login { issuer, client_id } => {
+            let session = auth::login(&issuer, &client_id)
+                .await
+                .context("kanidm login failed")?;
+            let who = session
+                .preferred_username
+                .unwrap_or_else(|| session.subject.clone());
+            println!("signed in to kanidm as {who}");
+        }
 
-    let account = flow.login(LoginParams { email, password }).await?;
+        Command::Unlock { origin, email } => {
+            if keys.get("ente")?.is_some() {
+                println!("already unlocked on this machine - `dd lock` first to redo it");
+                return Ok(());
+            }
+            let password = Zeroizing::new(rpassword::prompt_password("ente password: ")?);
+            let client = ente::client(&origin)?;
+            let mut ui = ui::Term;
+            let mut flow = ente::AuthFlow::new(&client, &mut ui);
+            let account = flow.login(LoginParams { email, password }).await?;
 
-    println!("logged in, user_id {}", account.user_id);
+            let v = Vault::from_secrets(account.user_id, &account.secrets);
+            keys.set("ente", &v.to_json()?)?;
+            println!("unlocked and stored for user_id {}", account.user_id);
+        }
+
+        Command::Status => {
+            match keys.get("ente")? {
+                Some(raw) => {
+                    let v = Vault::from_json(&raw)?;
+                    println!("ente:   unlocked (user_id {})", v.user_id);
+                }
+                None => println!("ente:   locked - run `dd unlock --email you@example.com`"),
+            }
+            println!("kanidm: `dd login` each session; no token is persisted yet");
+        }
+
+        Command::Lock => {
+            keys.clear("ente")?;
+            println!("ente keys removed from this machine's credential store");
+        }
+    }
     Ok(())
 }
