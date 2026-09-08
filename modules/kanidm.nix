@@ -66,7 +66,10 @@ in
         # the old short path. Must be an exact match or kanidm rejects
         # the authorise with invalid_origin.
         originUrl = "https://jellyfin.${base}/sso/OID/r/kanidm";
-        originLanding = "https://jellyfin.${base}/";
+        # the sso entrypoint, not the root: jellyfin's root is its own
+        # login form, so landing there from kanidm's app list asks for
+        # a password instead of starting the sso flow
+        originLanding = "https://jellyfin.${base}/sso/OID/p/kanidm";
         basicSecretFile = config.sops.secrets.jellyfin-oauth-secret.path;
         preferShortUsername = true;
         scopeMaps.users = [
