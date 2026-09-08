@@ -36,6 +36,10 @@ in
       # auth_request returns 202
       upstream = "static://202";
       reverse-proxy = "true";
+      # without this every connecting ip is trusted to supply X-Forwarded-*,
+      # which oauth2-proxy warns about. nginx on this host is the only
+      # legitimate source.
+      trusted-proxy-ip = "127.0.0.1/32";
       skip-provider-button = "true";
     };
   };

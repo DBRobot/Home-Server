@@ -63,6 +63,12 @@ async fn main() -> Result<()> {
             println!("signed in to kanidm as {who}");
             // Shape only, never the token: whether it is a jwt decides how
             // a proxy in front of the llm can validate it.
+            // testing hook: write the token where a curl can pick it up
+            // without it passing through stdout
+            if let Ok(dest) = std::env::var("DD_WRITE_TOKEN") {
+                std::fs::write(&dest, session.access_token.as_bytes()).ok();
+                println!("access token written to {dest}");
+            }
             let at: &str = &session.access_token;
             let parts = at.split('.').count();
             if parts == 3 {
