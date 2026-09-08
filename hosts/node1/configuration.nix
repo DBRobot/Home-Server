@@ -19,6 +19,7 @@
     ../../modules/archive-catalog.nix
     ../../modules/smb-media.nix
     ../../modules/kanidm.nix
+    ../../modules/litellm.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

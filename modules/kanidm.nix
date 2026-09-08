@@ -51,6 +51,22 @@ in
       # The cli binds 127.0.0.1:0 so concurrent logins cannot collide, which
       # means the port is not known ahead of time - enableLocalhostRedirects
       # is what permits that rather than pinning one port.
+      # Confidential, not public: unlike the cli this is a server-side web
+      # app on a machine we control, so it can actually keep a secret.
+      systems.oauth2.litellm = {
+        displayName = "LLM";
+        originUrl = "https://llm.${base}/sso/callback";
+        originLanding = "https://llm.${base}/";
+        basicSecretFile = config.sops.secrets.litellm-oauth-secret.path;
+        preferShortUsername = true;
+        scopeMaps.users = [
+          "openid"
+          "profile"
+          "email"
+          "groups"
+        ];
+      };
+
       systems.oauth2.dd = {
         displayName = "Distributed Datacenter CLI";
         public = true;

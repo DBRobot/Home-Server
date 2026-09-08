@@ -28,9 +28,15 @@ in
 {
   systemd.services.fetch-model = {
     description = "Fetch ${upstream} into ${dir}";
-    after = [ "network-online.target" "zfs-mount.service" ];
+    after = [
+      "network-online.target"
+      "zfs-mount.service"
+    ];
     wants = [ "network-online.target" ];
-    path = with pkgs; [ curl coreutils ];
+    path = with pkgs; [
+      curl
+      coreutils
+    ];
     unitConfig.RequiresMountsFor = dir;
     serviceConfig = {
       Type = "oneshot";
@@ -72,9 +78,12 @@ in
     enable = true;
     package = llamaCppTuned;
     inherit model;
-    host = "0.0.0.0";
+    # localhost only: litellm in modules/litellm.nix is the front door and
+    # holds the per-user keys. Before this, 8081 was the one service open on
+    # every interface with no authentication at all.
+    host = "127.0.0.1";
     port = 8081; # 8080 is taken by ente's museum
-    openFirewall = true;
+    openFirewall = false;
     extraFlags = [
       "--no-mmap"
       "--mlock" # weights resident; ARC is capped to 8G to leave room
