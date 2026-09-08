@@ -56,7 +56,8 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<Session> {
             CsrfToken::new_random,
             Nonce::new_random,
         )
-        .add_scope(Scope::new("openid".to_string()))
+        // openid is added by authorize_url itself - asking again produced
+        // "scope=openid+openid+profile+..." in the request
         .add_scope(Scope::new("profile".to_string()))
         .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("groups".to_string()))
