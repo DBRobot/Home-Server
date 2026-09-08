@@ -39,8 +39,11 @@ in
         litellm_jwtauth = {
           user_id_jwt_field = "preferred_username";
           team_id_default = "default";
-          # kanidm puts group SPNs here, e.g. users@idm.<domain>
+          # kanidm puts group SPNs in this claim, so the allowed value is the
+          # full spn, not a bare name. litellm refuses to start if the field
+          # is set without the allow-list.
           user_roles_jwt_field = "groups";
+          user_allowed_roles = [ "users@idm.${base}" ];
         };
       };
       litellm_settings = {
