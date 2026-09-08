@@ -70,6 +70,71 @@ in
     requires = [ "media-union.service" ];
   };
 
+  # The plugin's own config is xml in jellyfin's data dir, not nix. This
+  # writes it once, from sops, and then leaves it alone: the same file holds
+  # CanonicalLinks - the sso-identity to jellyfin-user mapping - so
+  # overwriting on every rebuild would unlink every account.
+  #
+  # Element names are not guesswork: SerializableDictionary.WriteXml emits
+  # item/key/value, and XmlSerializer wraps the key as <string> and the value
+  # as <OidConfig>.
+  systemd.services.jellyfin-sso-config = {
+    description = "Seed the jellyfin sso provider config";
+    after = [ "jellyfin.service" ];
+    requires = [ "jellyfin.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      cfg=${config.services.jellyfin.dataDir}/plugins/configurations/SSO-Auth.xml
+      if [ -f "$cfg" ] && ${pkgs.gnugrep}/bin/grep -q "<string>kanidm</string>" "$cfg"; then
+        echo "kanidm provider already present; leaving config alone"
+        exit 0
+      fi
+      secret=$(cat ${config.sops.secrets.jellyfin-oauth-secret.path})
+      cat > "$cfg" <<XML
+      <?xml version="1.0" encoding="utf-8"?>
+      <PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+        <SamlConfigs />
+        <OidConfigs>
+          <item>
+            <key><string>kanidm</string></key>
+            <value>
+              <OidConfig>
+                <OidEndpoint>https://idm.${base}/oauth2/openid/jellyfin</OidEndpoint>
+                <OidClientId>jellyfin</OidClientId>
+                <OidSecret>$secret</OidSecret>
+                <Enabled>true</Enabled>
+                <EnableAuthorization>true</EnableAuthorization>
+                <EnableAllFolders>true</EnableAllFolders>
+                <EnableFolderRoles>false</EnableFolderRoles>
+                <EnableLiveTv>false</EnableLiveTv>
+                <EnableLiveTvManagement>false</EnableLiveTvManagement>
+                <EnableLiveTvRoles>false</EnableLiveTvRoles>
+                <Roles />
+                <AdminRoles />
+                <FolderRoleMapping />
+                <RoleClaim>groups</RoleClaim>
+                <DefaultProvider></DefaultProvider>
+                <DefaultUsernameClaim>preferred_username</DefaultUsernameClaim>
+                <SchemeOverride>https</SchemeOverride>
+                <NewPath>true</NewPath>
+                <CanonicalLinks />
+              </OidConfig>
+            </value>
+          </item>
+        </OidConfigs>
+      </PluginConfiguration>
+      XML
+      ${pkgs.gnused}/bin/sed -i "s/^      //" "$cfg"
+      chown jellyfin:${config.services.jellyfin.group} "$cfg"
+      chmod 0600 "$cfg"
+      systemctl restart jellyfin
+    '';
+  };
+
   services.nginx.virtualHosts.${host} = {
     useACMEHost = base;
     forceSSL = true;
