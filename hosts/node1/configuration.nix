@@ -20,6 +20,7 @@
     ../../modules/smb-media.nix
     ../../modules/kanidm.nix
     ../../modules/llm-auth.nix
+    ../../modules/webdav-media.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
