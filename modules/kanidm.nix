@@ -60,6 +60,20 @@ in
         ];
       };
 
+      systems.oauth2.jellyfin = {
+        displayName = "Jellyfin";
+        originUrl = "https://jellyfin.${base}/sso/OID/redirect/kanidm";
+        originLanding = "https://jellyfin.${base}/";
+        basicSecretFile = config.sops.secrets.jellyfin-oauth-secret.path;
+        preferShortUsername = true;
+        scopeMaps.users = [
+          "openid"
+          "profile"
+          "email"
+          "groups"
+        ];
+      };
+
       persons.david = {
         displayName = "David";
         mailAddresses = [ "davidsprojects7@gmail.com" ];

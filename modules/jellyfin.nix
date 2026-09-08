@@ -2,6 +2,22 @@
 let
   base = "distributed-datacenter.duckdns.org";
   host = "jellyfin.${base}";
+
+  # Not in nixpkgs, and jellyfin has no plugin option, so it is fetched and
+  # dropped into the plugin dir. The upstream repo is ARCHIVED - it targets
+  # abi 10.11.0.0 which matches jellyfin 10.11.11 today, but a future
+  # jellyfin bump may strand it and there is no maintained replacement.
+  ssoPlugin = pkgs.stdenvNoCC.mkDerivation {
+    pname = "jellyfin-plugin-sso";
+    version = "4.0.0.3";
+    src = pkgs.fetchurl {
+      url = "https://github.com/9p4/jellyfin-plugin-sso/releases/download/v4.0.0.3/sso-authentication_4.0.0.3.zip";
+      hash = "sha256-3glRJVvsTtZGA3ZB5+CqEhCzoAoUFAZUgIe+2ZTLm90=";
+    };
+    nativeBuildInputs = [ pkgs.unzip ];
+    unpackPhase = "unzip $src -d .";
+    installPhase = "mkdir -p $out && cp *.dll meta.json $out/";
+  };
 in
 {
   services.jellyfin = {
@@ -19,6 +35,10 @@ in
       vpl-gpu-rt
     ];
   };
+
+  systemd.tmpfiles.rules = [
+    "L+ ${config.services.jellyfin.dataDir}/plugins/SSO-Auth_4.0.0.3 - - - - ${ssoPlugin}"
+  ];
 
   users.users.jellyfin.extraGroups = [
     "render" # /dev/dri/renderD128

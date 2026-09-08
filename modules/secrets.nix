@@ -23,6 +23,7 @@
       grafana-oauth-secret.owner = "grafana";
       grafana-oauth-secret.mode = "0440";
       grafana-oauth-secret.group = "kanidm";
+      jellyfin-oauth-secret.owner = "kanidm";
       # read only through sops templates below, so root-only is fine
       garage-media-key-id = { };
       garage-media-key-secret = { };
