@@ -51,6 +51,24 @@ in
       # The cli binds 127.0.0.1:0 so concurrent logins cannot collide, which
       # means the port is not known ahead of time - enableLocalhostRedirects
       # is what permits that rather than pinning one port.
+      # oauth2-proxy's own client. Confidential - it runs on node1 and can
+      # hold a secret - and it exists only to give oauth2-proxy an issuer to
+      # discover. The tokens it actually verifies are dd's, accepted through
+      # extra-jwt-issuers in modules/llm-auth.nix.
+      systems.oauth2.llm = {
+        displayName = "LLM gateway";
+        originUrl = "https://llm.${base}/oauth2/callback";
+        originLanding = "https://llm.${base}/";
+        basicSecretFile = config.sops.secrets.llm-oauth-secret.path;
+        preferShortUsername = true;
+        scopeMaps.users = [
+          "openid"
+          "profile"
+          "email"
+          "groups"
+        ];
+      };
+
       systems.oauth2.dd = {
         displayName = "Distributed Datacenter CLI";
         public = true;
