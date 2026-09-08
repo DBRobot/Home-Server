@@ -67,6 +67,24 @@ in
         ];
       };
 
+      # oauth2-proxy's own client. It is confidential - it runs on node1 and
+      # can hold a secret - and exists only so oauth2-proxy has an issuer to
+      # configure. The tokens it actually validates are dd's, accepted via
+      # extra-jwt-issuers in modules/llm-auth.nix.
+      systems.oauth2.llm = {
+        displayName = "LLM gateway";
+        originUrl = "https://llm.${base}/oauth2/callback";
+        originLanding = "https://llm.${base}/";
+        basicSecretFile = config.sops.secrets.llm-oauth-secret.path;
+        preferShortUsername = true;
+        scopeMaps.users = [
+          "openid"
+          "profile"
+          "email"
+          "groups"
+        ];
+      };
+
       systems.oauth2.dd = {
         displayName = "Distributed Datacenter CLI";
         public = true;
@@ -79,6 +97,9 @@ in
           "profile"
           "email"
           "groups"
+          # without this kanidm issues no refresh token, and every access
+          # token expiry would mean another browser round trip
+          "offline_access"
         ];
       };
 

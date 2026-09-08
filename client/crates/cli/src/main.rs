@@ -58,8 +58,24 @@ async fn main() -> Result<()> {
                 .context("kanidm login failed")?;
             let who = session
                 .preferred_username
+                .clone()
                 .unwrap_or_else(|| session.subject.clone());
             println!("signed in to kanidm as {who}");
+            // Shape only, never the token: whether it is a jwt decides how
+            // a proxy in front of the llm can validate it.
+            let at: &str = &session.access_token;
+            let parts = at.split('.').count();
+            if parts == 3 {
+                use base64::Engine as _;
+                let hdr = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(at.split('.').next().unwrap_or(""))
+                    .ok()
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_else(|| "<undecodable>".into());
+                println!("access token: JWT, header {hdr}");
+            } else {
+                println!("access token: opaque ({parts} segment(s), {} chars)", at.len());
+            }
         }
 
         Command::Unlock {

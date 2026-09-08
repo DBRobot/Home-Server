@@ -25,6 +25,8 @@
       grafana-oauth-secret.group = "kanidm";
       jellyfin-oauth-secret.owner = "kanidm";
       litellm-oauth-secret.owner = "kanidm";
+      llm-oauth-secret.owner = "kanidm";
+      llm-cookie-secret.owner = "oauth2-proxy";
       litellm-master-key = { };
       litellm-salt-key = { };
       # read only through sops templates below, so root-only is fine
