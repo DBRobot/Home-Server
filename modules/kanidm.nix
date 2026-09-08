@@ -12,6 +12,10 @@ in
 
   services.kanidm = {
     enableServer = true;
+    # without this the cli has no /etc/kanidm/config and every
+    # onboarding command needs an explicit --url
+    enableClient = true;
+    clientSettings.uri = "https://${host}";
     # no default: nixpkgs ships several majors, same as garage. The
     # WithSecretProvisioning variant is what lets oauth2 client secrets be
     # provisioned declaratively rather than clicked in a ui.
