@@ -36,9 +36,27 @@ in
     ];
   };
 
-  systemd.tmpfiles.rules = [
-    "L+ ${config.services.jellyfin.dataDir}/plugins/SSO-Auth_4.0.0.3 - - - - ${ssoPlugin}"
-  ];
+  # A symlink into the store does not work: jellyfin rewrites meta.json when
+  # it loads a plugin, so the directory has to be a real writable copy. With
+  # the symlink it loaded the assemblies and then threw
+  # UnauthorizedAccessException from SaveManifest, leaving the endpoint 503.
+  systemd.services.jellyfin-plugins = {
+    description = "Install jellyfin plugins from the store into its data dir";
+    before = [ "jellyfin.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      dir=${config.services.jellyfin.dataDir}/plugins/SSO-Auth_4.0.0.3
+      rm -rf "$dir"
+      mkdir -p "$dir"
+      cp ${ssoPlugin}/* "$dir"/
+      chown -R jellyfin:${config.services.jellyfin.group} "$dir"
+      chmod -R u+w "$dir"
+    '';
+  };
 
   users.users.jellyfin.extraGroups = [
     "render" # /dev/dri/renderD128
