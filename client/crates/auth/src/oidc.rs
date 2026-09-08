@@ -67,7 +67,7 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<Session> {
         .add_scope(Scope::new("groups".to_string()))
         // without this kanidm issues no refresh token, and a 15-minute
         // access token expiry would mean another browser round trip
-        // TEMPORARILY DISABLED FOR TESTING - restored below
+        .add_scope(Scope::new("offline_access".to_string()))
         .set_pkce_challenge(challenge)
         .url();
 
