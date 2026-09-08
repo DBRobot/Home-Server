@@ -75,9 +75,12 @@ in
   # CanonicalLinks - the sso-identity to jellyfin-user mapping - so
   # overwriting on every rebuild would unlink every account.
   #
-  # Element names are not guesswork: SerializableDictionary.WriteXml emits
-  # item/key/value, and XmlSerializer wraps the key as <string> and the value
-  # as <OidConfig>.
+  # This structure was copied from what jellyfin itself wrote after the
+  # provider was added once through the plugin's page - not derived. Reading
+  # SerializableDictionary.WriteXml got item/key/value right but the value
+  # element is <PluginConfiguration>, not <OidConfig>, and the field is
+  # FolderRoleMappings, not FolderRoleMapping. A wrong name here is ignored
+  # silently: jellyfin falls back to defaults and persists them over this.
   systemd.services.jellyfin-sso-config = {
     description = "Seed the jellyfin sso provider config";
     # Before jellyfin, not after. The first version ended with
@@ -106,29 +109,36 @@ in
         <SamlConfigs />
         <OidConfigs>
           <item>
-            <key><string>kanidm</string></key>
+            <key>
+              <string>kanidm</string>
+            </key>
             <value>
-              <OidConfig>
+              <PluginConfiguration>
                 <OidEndpoint>https://idm.${base}/oauth2/openid/jellyfin</OidEndpoint>
                 <OidClientId>jellyfin</OidClientId>
                 <OidSecret>$secret</OidSecret>
                 <Enabled>true</Enabled>
-                <EnableAuthorization>true</EnableAuthorization>
+                <EnableAuthorization>false</EnableAuthorization>
                 <EnableAllFolders>true</EnableAllFolders>
+                <EnabledFolders />
+                <AdminRoles />
+                <Roles />
                 <EnableFolderRoles>false</EnableFolderRoles>
+                <EnableLiveTvRoles>false</EnableLiveTvRoles>
                 <EnableLiveTv>false</EnableLiveTv>
                 <EnableLiveTvManagement>false</EnableLiveTvManagement>
-                <EnableLiveTvRoles>false</EnableLiveTvRoles>
-                <Roles />
-                <AdminRoles />
-                <FolderRoleMapping />
-                <RoleClaim>groups</RoleClaim>
-                <DefaultProvider></DefaultProvider>
-                <DefaultUsernameClaim>preferred_username</DefaultUsernameClaim>
-                <SchemeOverride>https</SchemeOverride>
-                <NewPath>true</NewPath>
+                <LiveTvRoles />
+                <LiveTvManagementRoles />
+                <FolderRoleMappings />
+                <OidScopes />
+                <PortOverride xsi:nil="true" />
+                <NewPath>false</NewPath>
                 <CanonicalLinks />
-              </OidConfig>
+                <DisableHttps>false</DisableHttps>
+                <DisablePushedAuthorization>false</DisablePushedAuthorization>
+                <DoNotValidateEndpoints>false</DoNotValidateEndpoints>
+                <DoNotValidateIssuerName>false</DoNotValidateIssuerName>
+              </PluginConfiguration>
             </value>
           </item>
         </OidConfigs>
