@@ -24,6 +24,8 @@
       garage-media-key-secret = { };
       rclone-crypt-password = { };
       rclone-crypt-salt = { };
+      kanidm-admin-password.owner = "kanidm";
+      kanidm-idm-admin-password.owner = "kanidm";
     };
 
     # several consumers want an EnvironmentFile rather than a bare value

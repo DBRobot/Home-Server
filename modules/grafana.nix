@@ -14,7 +14,7 @@ in
         root_url = "https://${host}/";
       };
       # Infrastructure, not family-facing: it stays on the tailnet, so
-      # anonymous access is fine until authelia exists to front it.
+      # anonymous access is fine until kanidm oidc is wired up.
       analytics.reporting_enabled = false;
       # $__file{} is grafana's own indirection, so the key never enters the
       # nix store - same property as every other secret here.

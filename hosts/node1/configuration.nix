@@ -18,6 +18,7 @@
     ../../modules/jellyfin.nix
     ../../modules/archive-catalog.nix
     ../../modules/smb-media.nix
+    ../../modules/kanidm.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
