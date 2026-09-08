@@ -44,6 +44,28 @@ in
       groups.users = { };
       groups.admins = { };
 
+      # The dd cli. A public client: no secret exists, because a secret
+      # shipped inside a binary on someone's laptop is not a secret. PKCE is
+      # what stops an intercepted code being redeemed by anyone else.
+      #
+      # The cli binds 127.0.0.1:0 so concurrent logins cannot collide, which
+      # means the port is not known ahead of time - enableLocalhostRedirects
+      # is what permits that rather than pinning one port.
+      systems.oauth2.dd = {
+        displayName = "Distributed Datacenter CLI";
+        public = true;
+        enableLocalhostRedirects = true;
+        originUrl = "http://127.0.0.1:8080/callback";
+        originLanding = "https://idm.${base}/";
+        preferShortUsername = true;
+        scopeMaps.users = [
+          "openid"
+          "profile"
+          "email"
+          "groups"
+        ];
+      };
+
       systems.oauth2.grafana = {
         displayName = "Grafana";
         originUrl = "https://grafana.${base}/login/generic_oauth";
