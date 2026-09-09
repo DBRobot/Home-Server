@@ -15,6 +15,7 @@ const SERVICE: &str = "distributed-datacenter";
 const KANIDM: &str = "kanidm-refresh";
 const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2/openid/dd";
 const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
+const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
 
 #[derive(Parser)]
 #[command(name = "dd", about = "distributed datacenter client")]
@@ -25,6 +26,28 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create an account, from nothing. Asks the signup service for the
+    /// services account, then creates the end-to-end encrypted photo account,
+    /// which no server-side flow can do for you.
+    Signup {
+        #[arg(long)]
+        username: String,
+        /// Your name, as other people will see it.
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        email: String,
+        #[arg(long, default_value = DEFAULT_SIGNUP)]
+        url: String,
+        #[arg(long, default_value = DEFAULT_ENTE)]
+        ente_origin: String,
+        /// Stop after the services account and leave photos for later.
+        #[arg(long)]
+        skip_photos: bool,
+        /// Read the photo password from stdin instead of prompting.
+        #[arg(long)]
+        password_stdin: bool,
+    },
     /// Sign in to kanidm. Proves who you are to services; touches no keys.
     Login {
         #[arg(long, default_value = DEFAULT_IDM)]
@@ -64,6 +87,112 @@ async fn main() -> Result<()> {
     let keys = OsKeyring::new(SERVICE);
 
     match cli.command {
+        Command::Signup {
+            username,
+            name,
+            email,
+            url,
+            ente_origin,
+            skip_photos,
+            password_stdin,
+        } => {
+            // The signup service answers json when asked to, so this never
+            // parses the html page a browser gets.
+            #[derive(serde::Deserialize)]
+            struct Reply {
+                status: String,
+                message: String,
+            }
+
+            let reply: Reply = reqwest::Client::new()
+                .post(&url)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .form(&[
+                    ("username", &username),
+                    ("display_name", &name),
+                    ("email", &email),
+                ])
+                .send()
+                .await
+                .context("reaching the signup service")?
+                .json()
+                .await
+                .context("the signup service did not answer json")?;
+
+            if reply.status != "created" {
+                anyhow::bail!("{}", reply.message);
+            }
+            println!("{}", reply.message);
+
+            if skip_photos {
+                println!(
+                    "\nphotos: skipped - run `dd signup --skip-photos=false` or create it \
+                     in the photos app later"
+                );
+                return Ok(());
+            }
+            if keys.get("ente")?.is_some() {
+                println!("\nphotos: already unlocked on this machine, leaving it alone");
+                return Ok(());
+            }
+
+            // A SECOND password, deliberately. This one is never sent anywhere:
+            // it derives the key that decrypts the photos, which is why no
+            // amount of sso can create this account for you.
+            println!(
+                "\nNow the photo account. This password is separate and cannot be \
+                 recovered by anyone here - it derives the key your photos are \
+                 encrypted with."
+            );
+            let password = if password_stdin {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                Zeroizing::new(line.trim_end_matches(['\n', '\r']).to_string())
+            } else {
+                let first = Zeroizing::new(rpassword::prompt_password("photo password: ")?);
+                let again = Zeroizing::new(rpassword::prompt_password("again: ")?);
+                anyhow::ensure!(first == again, "those did not match");
+                anyhow::ensure!(first.len() >= 8, "use at least 8 characters");
+                first
+            };
+
+            let client = ente::client(&ente_origin)?;
+            let mut ui = ui::Term;
+            let mut flow = ente::AuthFlow::new(&client, &mut ui);
+            let account = flow
+                .create_account(ente::CreateAccountParams {
+                    email: email.clone(),
+                    password,
+                    source: None,
+                })
+                .await?;
+
+            // Generated now rather than offered later, because the moment an
+            // account exists is the only moment its owner has nothing to lose
+            // by writing this down.
+            let recovery = match &account.recovery_key {
+                Some(k) => k.clone(),
+                None => {
+                    flow.create_recovery_key(&account.secrets.master_key, &account.key_attributes)
+                        .await?
+                        .recovery_key
+                }
+            };
+
+            let v = Vault::from_secrets(account.user_id, &account.secrets);
+            keys.set("ente", &v.to_json()?)?;
+
+            println!(
+                "\nphotos: created and unlocked (user_id {})",
+                account.user_id
+            );
+            println!("\n  RECOVERY KEY - write this down, on paper, now.");
+            println!("  It is the only way back in if you forget the photo password.");
+            println!("  Nobody running this service can recover it for you.\n");
+            println!("    {recovery}\n");
+            println!("Once you have set a passkey from the emailed link, run `dd login`.");
+        }
+
         Command::Login { issuer, client_id } => {
             let session = auth::login(&issuer, &client_id)
                 .await

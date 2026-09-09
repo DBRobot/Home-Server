@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem 1rem;
+         display: flex; justify-content: center; }
+  main { width: 100%; max-width: 26rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .75rem; }
+  aside { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid;
+          border-color: color-mix(in srgb, currentColor 25%, transparent);
+          opacity: .8; font-size: .92rem; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>{{TITLE}}</h1>
+  <p>{{BODY}}</p>
+  <aside>
+    <strong>Photos are separate.</strong> Photos are end-to-end encrypted, which
+    means the password that unlocks them never reaches the server and cannot be
+    issued by this account. Create that one in
+    <a href="{{PHOTOS_URL}}">the photos app</a> when you are ready.
+  </aside>
+</main>
+</body>
+</html>

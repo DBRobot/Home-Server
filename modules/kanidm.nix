@@ -81,8 +81,26 @@ in
       # overwritten back to empty on the next provisioning run.
       extraJsonFile = config.sops.secrets.kanidm-roster.path;
 
-      groups.users = { };
+      # overwriteMembers is false on both because membership is now set at
+      # RUNTIME, not here: modules/signup.nix adds people to `pending`, and
+      # whatever grants entitlement later adds them to `users`. The option
+      # defaults to true, which would reset both lists to the declared members
+      # on every provisioning run and silently undo every signup and every
+      # promotion. Append mode is the cost of that: removing someone from the
+      # roster no longer removes them from the group, which is correct now that
+      # the roster is not the authority on membership.
+      groups.users = {
+        overwriteMembers = false;
+      };
       groups.admins = { };
+
+      # Where signup puts people. Deliberately referenced by NO scopeMap
+      # anywhere, so a member of it can authenticate and reach nothing - kanidm
+      # refuses to issue a token for a client whose scope maps do not match any
+      # group they are in. That is the whole access gate.
+      groups.pending = {
+        overwriteMembers = false;
+      };
 
       # The dd cli. A public client: no secret exists, because a secret
       # shipped inside a binary on someone's laptop is not a secret. PKCE is

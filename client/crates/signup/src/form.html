@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create an account</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem 1rem;
+         display: flex; justify-content: center; }
+  main { width: 100%; max-width: 26rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  p.sub { margin: 0 0 1.5rem; opacity: .7; }
+  label { display: block; margin: 1rem 0 .25rem; font-weight: 600; }
+  input { width: 100%; box-sizing: border-box; padding: .6rem .7rem;
+          font: inherit; border: 1px solid currentColor; border-radius: 6px;
+          background: transparent; color: inherit; }
+  small { display: block; margin-top: .3rem; opacity: .65; }
+  button { margin-top: 1.75rem; width: 100%; padding: .7rem; font: inherit;
+           font-weight: 600; border: 0; border-radius: 6px; cursor: pointer;
+           background: currentColor; }
+  button span { color: Canvas; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Create an account</h1>
+  <p class="sub">One account for media, files and the assistant.</p>
+  <form method="post" action="/">
+    <label for="username">Username</label>
+    <input id="username" name="username" required autocomplete="username"
+           autocapitalize="none" spellcheck="false" maxlength="62">
+    <small>Lowercase letters, numbers, dots, dashes. This cannot be changed later.</small>
+
+    <label for="display_name">Your name</label>
+    <input id="display_name" name="display_name" required autocomplete="name"
+           maxlength="128">
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required autocomplete="email"
+           maxlength="254">
+    <small>We send a link here so you can set a passkey. No password is chosen on this page.</small>
+
+    <button type="submit"><span>Create account</span></button>
+  </form>
+</main>
+</body>
+</html>

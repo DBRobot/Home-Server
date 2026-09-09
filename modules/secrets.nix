@@ -39,6 +39,11 @@
       # "person-sarah-email" publishes "sarah" just as loudly as the value
       # would. Read by kanidm's provisioning through LoadCredential.
       kanidm-roster.owner = "kanidm"; # provisioning reads it as the kanidm user
+      # Service account api tokens. Minted by kanidm rather than generated
+      # here - it signs them - so these are captured once with
+      # `mint-kanidm-token` and encrypted, not derived from anything.
+      signup-api-token.owner = "signup";
+      mail-sender-api-token.owner = "kanidm-mail-sender";
       # Where machine mail actually goes. Read only through the msmtp aliases
       # template below, so root-only is right.
       alert-recipient = { };
