@@ -17,7 +17,10 @@
     ../../modules/media-tier.nix
     ../../modules/jellyfin.nix
     ../../modules/archive-catalog.nix
-    ../../modules/smb-media.nix
+    ../../modules/user-accounts.nix
+    ../../modules/kanidm.nix
+    ../../modules/llm-auth.nix
+    ../../modules/webdav-media.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

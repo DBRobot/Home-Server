@@ -1,8 +1,19 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   base = "distributed-datacenter.duckdns.org";
   d = sub: "${sub}.${base}";
-  entePorts = map d [ "api" "accounts" "albums" "cast" "photos" ];
+  entePorts = map d [
+    "api"
+    "accounts"
+    "albums"
+    "cast"
+    "photos"
+  ];
 
   # Locker is a fourth ente app - notes, credentials, physical records and
   # documents - sharing the account and museum that photos already uses. The
