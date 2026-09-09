@@ -18,7 +18,13 @@ in
   # template - the same shape as rclone.env in modules/secrets.nix - and nothing
   # has to assemble it at start.
   sops.templates."kanidm-mail-sender.toml" = {
-    owner = user;
+    # root-owned and group-readable, not owned by the service user. The sender
+    # checks this itself and warns twice at startup otherwise: a config the
+    # running uid OWNS can have its own permissions changed by that uid, so
+    # "readonly to the running uid" is only true if someone else owns it.
+    owner = "root";
+    group = user;
+    mode = "0440";
     content = ''
       token = "${config.sops.placeholder.mail-sender-api-token}"
       instance_display_name = "Distributed Datacenter"
