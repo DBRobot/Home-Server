@@ -21,6 +21,7 @@
     ../../modules/kanidm.nix
     ../../modules/llm-auth.nix
     ../../modules/webdav-media.nix
+    ../../modules/zfs-replicate.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
