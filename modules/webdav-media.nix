@@ -77,9 +77,13 @@ in
   services.nginx.appendHttpConfig = ''
     map $dav_user $dav_dir {
       # __denied__ is a real 0555 root-owned directory created by
-      # media-user-dirs in modules/smb-media.nix. Pointing the alias at
-      # something that exists but is unwritable turns what would be a 500 on
-      # a missing path into the 403 this actually is.
+      # media-user-dirs in modules/smb-media.nix. It exists so a request that
+      # got past auth with no usable username lands somewhere provably
+      # unwritable instead of somewhere nginx might create. The response is
+      # still a 500, not a 403: nginx's dav module maps the EACCES from
+      # open() to 500 and no permission arrangement changes that. Masking it
+      # with error_page would also swallow real server errors here, so it is
+      # left honest and ugly.
       default            "__denied__";
       "~^[a-zA-Z0-9._-]+$" $dav_user;
     }
