@@ -33,6 +33,12 @@
       rclone-crypt-salt = { };
       kanidm-admin-password.owner = "kanidm";
       kanidm-idm-admin-password.owner = "kanidm";
+      # The roster: every person, their display name, mail and groups, as one
+      # opaque blob. ONE secret and not a field each, because sops encrypts
+      # values but leaves KEY NAMES readable - a secret called
+      # "person-sarah-email" publishes "sarah" just as loudly as the value
+      # would. Read by kanidm's provisioning through LoadCredential.
+      kanidm-roster = { };
     };
 
     # several consumers want an EnvironmentFile rather than a bare value

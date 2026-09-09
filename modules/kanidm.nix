@@ -71,6 +71,16 @@ in
       adminPasswordFile = config.sops.secrets.kanidm-admin-password.path;
       idmAdminPasswordFile = config.sops.secrets.kanidm-idm-admin-password.path;
 
+      # Who the people are lives here, encrypted, NOT in this file. This repo
+      # is public, and a list of persons is a list of everyone using the
+      # service. The module deep-merges this at RUNTIME, so no name ever
+      # reaches the nix store either.
+      #
+      # It carries groups.<g>.members as well as persons, because the module
+      # emits overwriteMembers: true - members declared only here would be
+      # overwritten back to empty on the next provisioning run.
+      extraJsonFile = config.sops.secrets.kanidm-roster.path;
+
       groups.users = { };
       groups.admins = { };
 
@@ -153,14 +163,6 @@ in
         ];
       };
 
-      persons.david = {
-        displayName = "David";
-        mailAddresses = [ "davidsprojects7@gmail.com" ];
-        groups = [
-          "users"
-          "admins"
-        ];
-      };
     };
   };
 
