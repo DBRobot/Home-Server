@@ -1,8 +1,50 @@
-{ config, pkgs, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   base = "distributed-datacenter.duckdns.org";
   host = "idm.${base}";
   certDir = "/var/lib/acme/${base}";
+
+  # Persons that also have a local unix account. kanidm-provision cannot set
+  # posix attributes - it has no gidnumber support at all - so they are applied
+  # here instead, converging on every rebuild.
+  #
+  # The number is NOT left to kanidm to derive. Kanidm would allocate one from
+  # the account uuid, which is stable across nodes but would not match the uid
+  # already pinned in modules/smb-media.nix - and nss puts kanidm ahead of
+  # files, so /srv/users/david would stop being owned by "david".
+  posixUsers = lib.filterAttrs (
+    n: _: (config.users.users ? ${n}) && config.users.users.${n}.uid != null
+  ) config.services.kanidm.provision.persons;
+
+  posixSync = pkgs.writeShellScript "kanidm-posix-sync" ''
+        set -euo pipefail
+        export HOME="$STATE_DIRECTORY"
+        kanidm=${config.services.kanidm.package}/bin/kanidm
+        pw=${config.sops.secrets.kanidm-idm-admin-password.path}
+
+        # kanidm has just started and may not be serving yet, and provisioning
+        # runs in its own pre-start, so the person may not exist for a moment
+        # either. Retry rather than order against something that does not exist.
+        for i in $(seq 1 30); do
+          if KANIDM_PASSWORD="$(cat "$pw")" "$kanidm" login -D idm_admin >/dev/null 2>&1; then
+            break
+          fi
+          [ "$i" = 30 ] && { echo "kanidm did not become ready" >&2; exit 1; }
+          sleep 2
+        done
+
+    ${lib.concatMapStrings (n: ''
+      "$kanidm" person posix set ${lib.escapeShellArg n} --gidnumber ${
+        toString config.users.users.${n}.uid
+      }
+      echo "posix: ${n} -> ${toString config.users.users.${n}.uid}"
+    '') (lib.attrNames posixUsers)}
+  '';
 in
 {
   # kanidm insists on terminating tls itself - it will not serve plaintext
@@ -10,8 +52,28 @@ in
   # cert. modules/acme.nix puts those in the acmecerts group for this.
   users.users.kanidm.extraGroups = [ "acmecerts" ];
 
+  # NSS and PAM backed by kanidm. This is what makes a person the same uid on
+  # every node, which shared storage needs and which per-node `users.users`
+  # cannot give. nss order puts kanidm ahead of files, and the kanidm module
+  # returns NOTFOUND when unixd is down, so local accounts stay a fallback
+  # rather than being shadowed into unreachability.
+  systemd.services.kanidm-posix = lib.mkIf (posixUsers != { }) {
+    description = "Apply posix attributes kanidm-provision cannot express";
+    after = [ "kanidm.service" ];
+    requires = [ "kanidm.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StateDirectory = "kanidm-posix"; # HOME for the cli token cache
+      ExecStart = posixSync;
+    };
+  };
+
   services.kanidm = {
     enableServer = true;
+    unix.enable = true;
+    unix.settings.kanidm.pam_allowed_login_groups = [ "users" ];
     # without this the cli has no /etc/kanidm/config and every
     # onboarding command needs an explicit --url
     enableClient = true;
