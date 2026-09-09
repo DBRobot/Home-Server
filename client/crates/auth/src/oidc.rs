@@ -1,7 +1,7 @@
 use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
 use openidconnect::{
     AuthenticationFlow, AuthorizationCode, ClientId, CsrfToken, IssuerUrl, Nonce,
-    OAuth2TokenResponse, PkceCodeChallenge, RedirectUrl, Scope, TokenResponse,
+    OAuth2TokenResponse, PkceCodeChallenge, RedirectUrl, RefreshToken, Scope, TokenResponse,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::Zeroizing;
@@ -91,6 +91,62 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<Session> {
         .map(|t| {
             t.claims(&client.id_token_verifier(), &nonce)
                 .map_err(|e| Error::Exchange(e.to_string()))
+        })
+        .transpose()?;
+
+    Ok(Session {
+        access_token: Zeroizing::new(tokens.access_token().secret().to_string()),
+        refresh_token: tokens
+            .refresh_token()
+            .map(|t| Zeroizing::new(t.secret().to_string())),
+        id_token: id_token.map(|t| t.to_string()),
+        subject: claims
+            .map(|c| c.subject().to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        preferred_username: claims.and_then(|c| c.preferred_username().map(|u| u.to_string())),
+    })
+}
+
+/// Trade a refresh token for a fresh set, with no browser and no user present.
+///
+/// Kanidm ROTATES the refresh token: the response carries a new one and the
+/// old one stops working. The caller has to store what comes back or the next
+/// renewal fails and the only way out is another browser login.
+pub async fn refresh(issuer: &str, client_id: &str, refresh_token: &str) -> Result<Session> {
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| Error::Discovery(e.to_string()))?;
+
+    let issuer_url =
+        IssuerUrl::new(issuer.to_string()).map_err(|e| Error::Discovery(e.to_string()))?;
+    let metadata = CoreProviderMetadata::discover_async(issuer_url, &http)
+        .await
+        .map_err(|e| Error::Discovery(e.to_string()))?;
+
+    let client = CoreClient::from_provider_metadata(
+        metadata,
+        ClientId::new(client_id.to_string()),
+        None, // public client, same as login
+    );
+
+    let tokens = client
+        .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
+        .map_err(|e| Error::Exchange(e.to_string()))?
+        .request_async(&http)
+        .await
+        .map_err(|e| Error::Exchange(e.to_string()))?;
+
+    let id_token = tokens.id_token();
+    // No nonce to check here: a nonce binds an id token to one browser
+    // authorize request, and there was no browser. Everything else the
+    // verifier checks - signature, issuer, audience, expiry - still applies.
+    let claims = id_token
+        .map(|t| {
+            t.claims(&client.id_token_verifier(), |_: Option<&Nonce>| {
+                Ok::<(), String>(())
+            })
+            .map_err(|e| Error::Exchange(e.to_string()))
         })
         .transpose()?;
 

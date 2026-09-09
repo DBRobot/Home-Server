@@ -9,7 +9,7 @@ pub mod keystore;
 pub mod oidc;
 
 pub use keystore::{KeyStore, OsKeyring};
-pub use oidc::{Session, login};
+pub use oidc::{Session, login, refresh};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
