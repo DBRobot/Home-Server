@@ -21,6 +21,9 @@
     ../../modules/kanidm.nix
     ../../modules/llm-auth.nix
     ../../modules/webdav-media.nix
+    ../../modules/kanidm-service-accounts.nix
+    ../../modules/kanidm-mail-sender.nix
+    ../../modules/signup.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
