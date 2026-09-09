@@ -38,7 +38,7 @@
       # values but leaves KEY NAMES readable - a secret called
       # "person-sarah-email" publishes "sarah" just as loudly as the value
       # would. Read by kanidm's provisioning through LoadCredential.
-      kanidm-roster = { };
+      kanidm-roster.owner = "kanidm"; # provisioning reads it as the kanidm user
     };
 
     # several consumers want an EnvironmentFile rather than a bare value
