@@ -5,6 +5,8 @@
   programs.msmtp = {
     enable = true;
     setSendmail = true;
+    # so every sender here can write "alerts" instead of a real address
+    defaults.aliases = config.sops.templates."msmtp-aliases".path;
     accounts.default = {
       host = "smtp.gmail.com";
       port = 587;

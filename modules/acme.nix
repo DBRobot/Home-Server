@@ -9,7 +9,12 @@ in
   # cert covering both *.domain and domain deadlocks its own challenges.
   security.acme = {
     acceptTerms = true;
-    defaults.email = "davidsprojects7@gmail.com";
+    # The role account, not a personal address. This one genuinely cannot come
+    # from sops: the module passes it to lego as --email at eval time, so any
+    # value here is a value in the store and in this public repo. Changing it
+    # re-registers the acme account (the address is hashed into the account
+    # directory); issued certs are unaffected.
+    defaults.email = "distributed.datacenter@gmail.com";
     certs.${base} = {
       domain = "*.${base}";
       dnsProvider = "duckdns";

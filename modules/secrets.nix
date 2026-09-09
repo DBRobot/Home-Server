@@ -39,10 +39,20 @@
       # "person-sarah-email" publishes "sarah" just as loudly as the value
       # would. Read by kanidm's provisioning through LoadCredential.
       kanidm-roster.owner = "kanidm"; # provisioning reads it as the kanidm user
+      # Where machine mail actually goes. Read only through the msmtp aliases
+      # template below, so root-only is right.
+      alert-recipient = { };
     };
 
     # several consumers want an EnvironmentFile rather than a bare value
     templates = {
+      # msmtp expands local names through this, so zed, smartd and the backup
+      # alerts can all address "alerts" and the real destination stays here.
+      # One place to change it, and nothing names a person in the repo.
+      "msmtp-aliases".content = ''
+        alerts: ${config.sops.placeholder.alert-recipient}
+        default: ${config.sops.placeholder.alert-recipient}
+      '';
       "duckdns.env".content = ''
         DUCKDNS_TOKEN=${config.sops.placeholder.duckdns-token}
       '';

@@ -1,4 +1,9 @@
-{ config, pkgs, lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
   dir = "/vault/backups/postgres";
   # services.postgresqlBackup writes <db>.sql.zstd and keeps one .prev. History
@@ -36,20 +41,20 @@ let
 
   # Backups usually die silently rather than loudly.
   alert = pkgs.writeShellScript "pg-backup-alert" ''
-    set -eu
-    unit="$1"
-    ${pkgs.msmtp}/bin/msmtp --from=distributed.datacenter@gmail.com davidsprojects7@gmail.com <<EOF
-From: node1 <distributed.datacenter@gmail.com>
-To: davidsprojects7@gmail.com
-Subject: node1: $unit FAILED
+        set -eu
+        unit="$1"
+        ${pkgs.msmtp}/bin/msmtp --from=distributed.datacenter@gmail.com alerts <<EOF
+    From: node1 <distributed.datacenter@gmail.com>
+    To: alerts
+    Subject: node1: $unit FAILED
 
-$unit failed on node1.
+    $unit failed on node1.
 
-  journalctl -u $unit -n 50
+      journalctl -u $unit -n 50
 
-These dumps are the only copy of the ente key hierarchy. Without them the
-photo blobs on vault cannot be decrypted by anyone, recovery key included.
-EOF
+    These dumps are the only copy of the ente key hierarchy. Without them the
+    photo blobs on vault cannot be decrypted by anyone, recovery key included.
+    EOF
   '';
 in
 {

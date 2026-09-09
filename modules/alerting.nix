@@ -1,6 +1,9 @@
 { pkgs, ... }:
 let
-  to = "davidsprojects7@gmail.com";
+  # Not an address: an msmtp alias, expanded from sops at send time by
+  # modules/mail.nix. This repo is public and a real address here is a real
+  # address published.
+  to = "alerts";
 in
 {
   # Everything here ends at an email. metrics.nix records; this interrupts.
