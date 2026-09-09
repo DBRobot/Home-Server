@@ -34,6 +34,12 @@ in
       # default which nothing on this host uses
       home_prefix = "/srv/users/";
       home_attr = "name"; # /srv/users/david, not /srv/users/<uuid>
+      # Without these, unixd resolves accounts by SPN and `id david` answers
+      # "david@idm.distributed-datacenter.duckdns.org" - which is a valid unix
+      # name but not the one the webdav path, the acls and every other service
+      # were built around.
+      uid_attr_map = "name";
+      gid_attr_map = "name";
       default_shell = "${pkgs.shadow}/bin/nologin";
     };
     # without this the cli has no /etc/kanidm/config and every
