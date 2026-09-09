@@ -1,6 +1,7 @@
 pub use ente_accounts::{
     AccountSecrets, AccountsClient, AccountsClientConfig, AuthFlow, AuthFlowUi,
-    AuthenticatedAccount, Error, LoginParams, OtpPurpose, Result, SecondFactorMethod, TotpPurpose,
+    AuthenticatedAccount, CreateAccountParams, Error, LoginParams, OtpPurpose, Result,
+    SecondFactorMethod, TotpPurpose,
 };
 
 pub fn client(origin: &str) -> Result<AccountsClient> {

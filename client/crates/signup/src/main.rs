@@ -15,10 +15,10 @@ use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use axum::{
-    Form, Router,
+    Form, Json, Router,
     extract::State,
-    http::StatusCode,
-    response::{Html, IntoResponse},
+    http::{HeaderMap, StatusCode, header::ACCEPT},
+    response::{Html, IntoResponse, Response},
     routing::get,
 };
 use serde::Deserialize;
@@ -96,12 +96,57 @@ fn valid_email(s: &str) -> bool {
         && !s.chars().any(|c| c.is_whitespace())
 }
 
-fn page(title: &str, body: String, photos_url: &str) -> Html<String> {
-    Html(
-        DONE.replace("{{TITLE}}", title)
-            .replace("{{BODY}}", &body)
-            .replace("{{PHOTOS_URL}}", photos_url),
+/// One answer, rendered as a page for a browser and as json for `dd signup`.
+/// The machine-readable `status` is what the cli branches on, so it never has
+/// to scrape the html.
+struct Reply {
+    code: StatusCode,
+    status: &'static str,
+    title: &'static str,
+    body: String,
+}
+
+fn wants_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("application/json"))
+}
+
+fn render(headers: &HeaderMap, r: Reply, photos_url: &str) -> Response {
+    if wants_json(headers) {
+        return (
+            r.code,
+            Json(serde_json::json!({ "status": r.status, "message": strip_tags(&r.body) })),
+        )
+            .into_response();
+    }
+    (
+        r.code,
+        Html(
+            DONE.replace("{{TITLE}}", r.title)
+                .replace("{{BODY}}", &r.body)
+                .replace("{{PHOTOS_URL}}", photos_url),
+        ),
     )
+        .into_response()
+}
+
+/// The message bodies carry <strong> for the page; json consumers want the
+/// text. Only tags this file writes are involved - user input reaching a body
+/// has already been through escape(), so there is nothing here to sanitise.
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
 }
 
 async fn form() -> Html<&'static str> {
@@ -110,99 +155,85 @@ async fn form() -> Html<&'static str> {
 
 async fn signup(
     State(app): State<std::sync::Arc<App>>,
+    headers: HeaderMap,
     Form(f): Form<SignupForm>,
-) -> impl IntoResponse {
+) -> Response {
     let username = f.username.trim().to_lowercase();
     let display_name = f.display_name.trim();
     let email = f.email.trim();
 
-    if !valid_username(&username) {
-        return (
-            StatusCode::BAD_REQUEST,
-            page(
-                "That username will not work",
-                "Usernames start with a letter and use only lowercase letters, \
-                 numbers, dots, dashes and underscores."
-                    .to_string(),
-                &app.cfg.photos_url,
-            ),
-        );
-    }
-    if display_name.is_empty() || display_name.chars().count() > 128 {
-        return (
-            StatusCode::BAD_REQUEST,
-            page(
-                "That name will not work",
-                "A display name is required, up to 128 characters.".to_string(),
-                &app.cfg.photos_url,
-            ),
-        );
-    }
-    if !valid_email(email) {
-        return (
-            StatusCode::BAD_REQUEST,
-            page(
-                "That email address will not work",
-                "The enrolment link is sent to this address, so it has to be one \
-                 you can read."
-                    .to_string(),
-                &app.cfg.photos_url,
-            ),
-        );
-    }
+    let invalid = |title, body: &str| Reply {
+        code: StatusCode::BAD_REQUEST,
+        status: "invalid",
+        title,
+        body: body.to_string(),
+    };
 
-    match app
-        .kanidm
-        .sign_up(
-            &app.cfg.group,
-            &username,
-            display_name,
-            email,
-            app.cfg.intent_ttl,
+    let reply = if !valid_username(&username) {
+        invalid(
+            "That username will not work",
+            "Usernames start with a letter and use only lowercase letters, \
+             numbers, dots, dashes and underscores.",
         )
-        .await
-    {
-        Ok(kanidm::Outcome::Created) | Ok(kanidm::Outcome::Resent) => (
-            StatusCode::OK,
-            page(
-                "Check your email",
-                format!(
-                    "An enrolment link is on its way to <strong>{}</strong>. Open it \
-                     to set a passkey or password for <strong>{}</strong>. The link \
-                     expires in {} hours.",
+    } else if display_name.is_empty() || display_name.chars().count() > 128 {
+        invalid(
+            "That name will not work",
+            "A display name is required, up to 128 characters.",
+        )
+    } else if !valid_email(email) {
+        invalid(
+            "That email address will not work",
+            "The enrolment link is sent to this address, so it has to be one you can read.",
+        )
+    } else {
+        match app
+            .kanidm
+            .sign_up(
+                &app.cfg.group,
+                &username,
+                display_name,
+                email,
+                app.cfg.intent_ttl,
+            )
+            .await
+        {
+            Ok(kanidm::Outcome::Created) | Ok(kanidm::Outcome::Resent) => Reply {
+                code: StatusCode::OK,
+                status: "created",
+                title: "Check your email",
+                body: format!(
+                    "An enrolment link is on its way to <strong>{}</strong>. Open it to \
+                     set a passkey or password for <strong>{}</strong>. The link expires \
+                     in {} hours.",
                     escape(email),
                     escape(&username),
                     app.cfg.intent_ttl / 3600
                 ),
-                &app.cfg.photos_url,
-            ),
-        ),
-        Ok(kanidm::Outcome::NameTaken) => (
-            StatusCode::CONFLICT,
-            page(
-                "That username is taken",
-                format!(
+            },
+            Ok(kanidm::Outcome::NameTaken) => Reply {
+                code: StatusCode::CONFLICT,
+                status: "name_taken",
+                title: "That username is taken",
+                body: format!(
                     "Someone already has <strong>{}</strong>. Go back and pick another.",
                     escape(&username)
                 ),
-                &app.cfg.photos_url,
-            ),
-        ),
-        Err(e) => {
-            // The reason goes to the journal, not to the page: it names
-            // internal endpoints and status codes.
-            eprintln!("signup failed for {username}: {e:#}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                page(
-                    "Something went wrong",
-                    "The account was not created. Try again in a few minutes."
-                        .to_string(),
-                    &app.cfg.photos_url,
-                ),
-            )
+            },
+            Err(e) => {
+                // The reason goes to the journal, not to the caller: it names
+                // internal endpoints and status codes.
+                eprintln!("signup failed for {username}: {e:#}");
+                Reply {
+                    code: StatusCode::INTERNAL_SERVER_ERROR,
+                    status: "error",
+                    title: "Something went wrong",
+                    body: "The account was not created. Try again in a few minutes.".to_string(),
+                }
+            }
         }
-    }
+    };
+
+    render(&headers, reply, &app.cfg.photos_url)
 }
 
 #[tokio::main]
@@ -258,7 +289,10 @@ mod tests {
         assert!(valid_username("alice"));
         assert!(valid_username("a.b-c_1"));
         assert!(!valid_username("9alice"), "must start with a letter");
-        assert!(!valid_username("Alice"), "uppercase is normalised away first");
+        assert!(
+            !valid_username("Alice"),
+            "uppercase is normalised away first"
+        );
         assert!(!valid_username("a"), "too short");
         assert!(!valid_username("al ice"));
         assert!(!valid_username("al/ice"));

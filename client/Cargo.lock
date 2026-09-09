@@ -914,6 +914,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "ente",
+ "reqwest",
  "rpassword",
  "serde",
  "serde_json",

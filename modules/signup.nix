@@ -26,7 +26,7 @@ in
     ];
     requires = [
       "kanidm.service"
-      "kanidm-service-accounts.service" # writes the api token this reads at start
+      "kanidm-service-accounts.service" # the account the sops token belongs to
     ];
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
@@ -35,7 +35,7 @@ in
       # The public name rather than 127.0.0.1:8443 - kanidm's cert is issued for
       # this name, and going back in through nginx is what makes it verify.
       SIGNUP_KANIDM_URL = "https://idm.${base}";
-      SIGNUP_TOKEN_FILE = "/var/lib/kanidm-service-accounts/signup.token";
+      SIGNUP_TOKEN_FILE = config.sops.secrets.signup-api-token.path;
       SIGNUP_GROUP = "pending";
       SIGNUP_PHOTOS_URL = "https://photos.${base}";
       SIGNUP_INTENT_TTL = "86400"; # a day, so an evening signup survives til morning
