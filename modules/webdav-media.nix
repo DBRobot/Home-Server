@@ -7,8 +7,8 @@ in
 {
   # Authenticated upload with no new service: nginx already ships the dav
   # modules, and oauth2-proxy from modules/llm-auth.nix already validates
-  # kanidm tokens. The same directories and acls samba writes to, so a file
-  # arriving either way is indistinguishable to jellyfin.
+  # kanidm tokens. This is the only way files reach /srv/users now - samba was
+  # retired with modules/smb-media.nix, having never carried a file.
   #
   # Present the ID TOKEN here, not the access token. oauth2-proxy's bearer
   # mode is built for id tokens - providers/oidc.go names the function
