@@ -17,14 +17,13 @@ in
   # Both secrets in this file are sops values, so the whole config is a sops
   # template - the same shape as rclone.env in modules/secrets.nix - and nothing
   # has to assemble it at start.
+  # No owner/group/mode: the unit takes this through systemd LoadCredential, the
+  # same way harmonia takes its signing key, so it stays root-only here and
+  # systemd hands the service a private copy. That also answers the sender's own
+  # startup warning - it refuses to call a config secure when the uid reading it
+  # also OWNS it, because that uid can then change the mode. Under
+  # LoadCredential the copy is root-owned in a directory no other uid can reach.
   sops.templates."kanidm-mail-sender.toml" = {
-    # root-owned and group-readable, not owned by the service user. The sender
-    # checks this itself and warns twice at startup otherwise: a config the
-    # running uid OWNS can have its own permissions changed by that uid, so
-    # "readonly to the running uid" is only true if someone else owns it.
-    owner = "root";
-    group = user;
-    mode = "0440";
     content = ''
       token = "${config.sops.placeholder.mail-sender-api-token}"
       instance_display_name = "Distributed Datacenter"
@@ -57,14 +56,18 @@ in
       Type = "simple";
       User = user;
       Group = user;
-      # -c is the client config enableClient already writes; -m is ours. Note
-      # lettre's relay() is implicit TLS on 465, where msmtp in modules/mail.nix
-      # uses 587 + STARTTLS against the same account. Both are fine with gmail;
-      # they are just different libraries with different defaults.
+      LoadCredential = [
+        "config:${config.sops.templates."kanidm-mail-sender.toml".path}"
+      ];
+      # -c is the client config enableClient already writes; -m is the credential
+      # systemd just placed, named by %d. Note lettre's relay() is implicit TLS
+      # on 465, where msmtp in modules/mail.nix uses 587 + STARTTLS against the
+      # same account. Both are fine with gmail; they are just different
+      # libraries with different defaults.
       ExecStart = ''
         ${config.services.kanidm.package}/bin/kanidm-mail-sender \
           -c /etc/kanidm/config \
-          -m ${config.sops.templates."kanidm-mail-sender.toml".path}
+          -m %d/config
       '';
       Restart = "on-failure";
       RestartSec = 30;
