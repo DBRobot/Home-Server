@@ -44,14 +44,6 @@ let
       "com.sun:auto-snapshot" = "true";
     };
 
-    # Replication target for modules/zfs-replicate.nix. mountpoint=none so the
-    # children inherit it and no replica ever competes with the live dataset for
-    # a directory.
-    "tank/replica" = {
-      mountpoint = "none";
-      "com.sun:auto-snapshot" = "false"; # the replicas carry the source's snapshots
-    };
-
     "tank/models" = {
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible
