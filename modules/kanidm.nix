@@ -26,7 +26,7 @@ in
   # hijack a local account. Accounts are therefore declared in kanidm ONLY -
   # see modules/user-accounts.nix.
   services.kanidm = {
-    enableServer = true;
+    server.enable = true;
     unix.enable = true;
     unix.settings = {
       kanidm.pam_allowed_login_groups = [ "users" ];
@@ -44,14 +44,20 @@ in
     };
     # without this the cli has no /etc/kanidm/config and every
     # onboarding command needs an explicit --url
-    enableClient = true;
-    clientSettings.uri = "https://${host}";
+    client.enable = true;
+    client.settings.uri = "https://${host}";
     # no default: nixpkgs ships several majors, same as garage. The
     # WithSecretProvisioning variant is what lets oauth2 client secrets be
     # provisioned declaratively rather than clicked in a ui.
-    package = pkgs.kanidmWithSecretProvisioning_1_10;
+    #
+    # Upgrades must be SEQUENTIAL - 1.10 to 1.12 is not supported, only 1.10 to
+    # 1.11 to 1.12 - so this cannot be left to drift. 1.10 reached end of life
+    # on 2026-08-31. `kanidmd domain upgrade-check` reported PASS (domain level
+    # 14 -> 15) before this bump; the level itself is raised by the server on
+    # first start, there is no command for it.
+    package = pkgs.kanidmWithSecretProvisioning_1_11;
 
-    serverSettings = {
+    server.settings = {
       # Changing this later is a documented migration, not a config edit, so
       # it is deliberately the same as the origin host. Note this bakes in a
       # duckdns name - moving to a real domain later means that migration.
