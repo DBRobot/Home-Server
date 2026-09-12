@@ -40,7 +40,7 @@
     zpool = {
       tank = {
         type = "zpool";
-        mode = "create";
+        mode = "";
         options.cachefile = "none";
         rootFsOptions.compression = "zstd";
         datasets = { };
