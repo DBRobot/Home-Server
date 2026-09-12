@@ -71,6 +71,13 @@ in
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI $request_uri;
+        # The subrequest inherits nothing from the dav location, so it ran with
+        # nginx's default 1m limit. When the body was still arriving as the
+        # auth phase ran, discarding it tripped that limit: "auth request
+        # unexpected status: 413", surfaced to the client as a 500. Small
+        # uploads passed only because they had already fully arrived. The
+        # limit belongs on the dav location; here it must not exist.
+        client_max_body_size 0;
       '';
     };
 
