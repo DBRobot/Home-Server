@@ -83,7 +83,7 @@ in
     enable = true;
     package = llamaCppTuned;
     inherit model;
-    # localhost only: litellm in modules/litellm.nix is the front door and
+    # localhost only: oauth2-proxy in modules/llm-auth.nix is the front door and
     # does the kanidm jwt check. Before this, 8081 was the one service open
     # on every interface with no authentication at all.
     host = "127.0.0.1";

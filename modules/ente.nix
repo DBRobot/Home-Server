@@ -5,7 +5,7 @@
   ...
 }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   d = sub: "${sub}.${base}";
   entePorts = map d [
     "api"

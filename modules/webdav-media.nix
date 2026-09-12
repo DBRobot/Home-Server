@@ -1,6 +1,6 @@
-{ ... }:
+{ config, ... }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   host = "files.${base}";
   root = "/srv/users";
   images = "/srv/images";
@@ -99,7 +99,7 @@ in
   services.nginx.appendHttpConfig = ''
     map $dav_user $dav_dir {
       # __denied__ is a real 0555 root-owned directory created by
-      # media-user-dirs in modules/smb-media.nix. It exists so a request that
+      # user-accounts in modules/user-accounts.nix. It exists so a request that
       # got past auth with no usable username lands somewhere provably
       # unwritable instead of somewhere nginx might create. The response is
       # still a 500, not a 403: nginx's dav module maps the EACCES from

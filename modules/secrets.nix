@@ -33,12 +33,6 @@
       rclone-crypt-salt = { };
       kanidm-admin-password.owner = "kanidm";
       kanidm-idm-admin-password.owner = "kanidm";
-      # The roster: every person, their display name, mail and groups, as one
-      # opaque blob. ONE secret and not a field each, because sops encrypts
-      # values but leaves KEY NAMES readable - a secret called
-      # "person-sarah-email" publishes "sarah" just as loudly as the value
-      # would. Read by kanidm's provisioning through LoadCredential.
-      kanidm-roster.owner = "kanidm"; # provisioning reads it as the kanidm user
       # Service account api tokens. Minted by kanidm rather than generated
       # here - it signs them - so these are captured once with
       # `mint-kanidm-token` and encrypted, not derived from anything.

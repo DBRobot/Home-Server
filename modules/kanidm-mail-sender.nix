@@ -3,7 +3,7 @@
   ...
 }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   user = "kanidm-mail-sender";
   relayAddress = "distributed.datacenter@gmail.com";
 in

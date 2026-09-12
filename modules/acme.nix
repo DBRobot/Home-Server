@@ -1,6 +1,6 @@
 { config, ... }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
 in
 {
   # One wildcard cert for every subdomain. DNS-01 needs no inbound ports,

@@ -1,6 +1,6 @@
 { config, ... }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   host = "grafana.${base}";
 in
 {

@@ -5,7 +5,7 @@
   ...
 }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   host = "idm.${base}";
   certDir = "/var/lib/acme/${base}";
 
@@ -77,15 +77,11 @@ in
       adminPasswordFile = config.sops.secrets.kanidm-admin-password.path;
       idmAdminPasswordFile = config.sops.secrets.kanidm-idm-admin-password.path;
 
-      # Who the people are lives here, encrypted, NOT in this file. This repo
-      # is public, and a list of persons is a list of everyone using the
-      # service. The module deep-merges this at RUNTIME, so no name ever
-      # reaches the nix store either.
-      #
-      # It carries groups.<g>.members as well as persons, because the module
-      # emits overwriteMembers: true - members declared only here would be
-      # overwritten back to empty on the next provisioning run.
-      extraJsonFile = config.sops.secrets.kanidm-roster.path;
+      # No roster here, encrypted or otherwise. People come from signup and
+      # live only in kanidm's database - the one copy that has to exist. This
+      # repo is public, and a list of persons is a list of everyone using the
+      # service; the fewer copies the better, and provisioning never deletes
+      # persons it does not know about, so leaving them out is safe.
 
       # overwriteMembers is false on both because membership is now set at
       # RUNTIME, not here: modules/signup.nix adds people to `pending`, and
@@ -98,7 +94,11 @@ in
       groups.users = {
         overwriteMembers = false;
       };
-      groups.admins = { };
+      # append mode here too, now that no roster supplies the members list:
+      # the default (true) would reset admins to empty on every run
+      groups.admins = {
+        overwriteMembers = false;
+      };
 
       # Where signup puts people. Deliberately referenced by NO scopeMap
       # anywhere, so a member of it can authenticate and reach nothing - kanidm

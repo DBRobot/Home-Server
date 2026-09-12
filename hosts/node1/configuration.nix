@@ -2,6 +2,7 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ../../modules/domain.nix
     ../../modules/zfs-datasets.nix
     ../../modules/llama-cpp.nix
     ../../modules/secrets.nix
@@ -40,6 +41,8 @@
   boot.extraModprobeConfig = ''
     options zfs zfs_arc_max=8589934592
   '';
+
+  dd.domain = "distributed-datacenter.duckdns.org";
 
   networking.hostName = "node1";
   networking.hostId = "0195f284";

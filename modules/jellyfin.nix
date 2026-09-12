@@ -1,6 +1,6 @@
 { config, pkgs, ... }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   host = "jellyfin.${base}";
 
   # Not in nixpkgs, and jellyfin has no plugin option, so it is fetched and

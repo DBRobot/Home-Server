@@ -5,7 +5,7 @@
   ...
 }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
 in
 {
   services.garage = {

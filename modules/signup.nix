@@ -5,7 +5,7 @@
   ...
 }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   host = "signup.${base}";
   port = 8083; # 8080 museum, 8081 llama, 8443 kanidm, 4180 oauth2-proxy
   user = "signup";
