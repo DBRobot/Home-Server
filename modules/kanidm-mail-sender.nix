@@ -30,7 +30,7 @@ in
       instance_url = "https://idm.${base}"
       mail_from_address = "${relayAddress}"
       mail_reply_to_address = "${relayAddress}"
-      mail_relay = "smtp.gmail.com"
+      mail_relay = "smtps://smtp.gmail.com"
       mail_username = "${relayAddress}"
       mail_password = "${config.sops.placeholder.ente-smtp-password}"
     '';
@@ -59,11 +59,15 @@ in
       LoadCredential = [
         "config:${config.sops.templates."kanidm-mail-sender.toml".path}"
       ];
-      # -c is the client config enableClient already writes; -m is the credential
-      # systemd just placed, named by %d. Note lettre's relay() is implicit TLS
-      # on 465, where msmtp in modules/mail.nix uses 587 + STARTTLS against the
-      # same account. Both are fine with gmail; they are just different
-      # libraries with different defaults.
+      # -c is the client config client.enable already writes; -m is the
+      # credential systemd just placed, named by %d.
+      #
+      # mail_relay is a URL as of 1.11 and was a BARE HOSTNAME in 1.10, whose
+      # example config said in as many words that it must not carry a scheme.
+      # Upgrading without changing it fails at parse with "relative URL without
+      # a base". smtps:// is implicit TLS on 465, which is what lettre's relay()
+      # did by default before; msmtp in modules/mail.nix uses 587 + STARTTLS
+      # against the same account, which would be smtp:// here.
       ExecStart = ''
         ${config.services.kanidm.package}/bin/kanidm-mail-sender \
           -c /etc/kanidm/config \
