@@ -29,6 +29,9 @@
       # read only through sops templates below, so root-only is fine
       garage-media-key-id = { };
       garage-media-key-secret = { };
+      # key pair for the drive-images recovery bucket (see garage.nix)
+      garage-drive-key-id = { };
+      garage-drive-key-secret = { };
       rclone-crypt-password = { };
       rclone-crypt-salt = { };
       kanidm-admin-password.owner = "kanidm";
@@ -71,6 +74,8 @@
         GARAGE_KEY_SECRET=${config.sops.placeholder.garage-key-secret}
         GARAGE_MEDIA_KEY_ID=${config.sops.placeholder.garage-media-key-id}
         GARAGE_MEDIA_KEY_SECRET=${config.sops.placeholder.garage-media-key-secret}
+        GARAGE_DRIVE_KEY_ID=${config.sops.placeholder.garage-drive-key-id}
+        GARAGE_DRIVE_KEY_SECRET=${config.sops.placeholder.garage-drive-key-secret}
       '';
       # rclone takes its whole config from the environment, so no config file
       # is written anywhere. PASSWORD/PASSWORD2 are rclone-obscured, which is

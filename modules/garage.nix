@@ -95,6 +95,15 @@ in
       garage key import "$GARAGE_MEDIA_KEY_ID" "$GARAGE_MEDIA_KEY_SECRET" --yes -n media 2>/dev/null || true
       garage bucket allow --read --write --owner media --key "$GARAGE_MEDIA_KEY_ID" 2>/dev/null || true
 
+      # Old-drive recovery. Members dump whole disk images here (a raw dd of a
+      # dying drive) for an admin to dig through later. Unlike the media tier
+      # there is no crypt layer and no CORS: these are server-side uploads by
+      # rclone/Cyberduck/awscli, never browser writes. The upload key is rw so
+      # members can put images in; recovery happens out-of-band on node1.
+      garage bucket create drive-images 2>/dev/null || true
+      garage key import "$GARAGE_DRIVE_KEY_ID" "$GARAGE_DRIVE_KEY_SECRET" --yes -n drive-images 2>/dev/null || true
+      garage bucket allow --read --write --owner drive-images --key "$GARAGE_DRIVE_KEY_ID" 2>/dev/null || true
+
 
       # Browsers upload blobs straight to garage, so the bucket needs CORS or
       # every upload fails the preflight with "This CORS request is not
