@@ -45,7 +45,9 @@ impl<K: KeyStore + Send + Sync + 'static> Webdav<K> {
         let path = if tpe == FileType::Config {
             "config".to_string()
         } else {
-            format!("{}/{id}", tpe.dirname())
+            // to_hex(), NOT Display: Display is the abbreviated 8-character
+            // form, and a key file stored under that name is never found again
+            format!("{}/{}", tpe.dirname(), id.to_hex().as_str())
         };
         Ok(self.base.join(&path)?)
     }
@@ -105,7 +107,10 @@ impl<K: KeyStore + Send + Sync + 'static> ReadBackend for Webdav<K> {
 
     fn list_with_size(&self, tpe: FileType) -> RusticResult<Vec<(Id, u32)>> {
         if tpe == FileType::Config {
-            let url = self.base.join("config").map_err(|e| rustic(e.into(), "url"))?;
+            let url = self
+                .base
+                .join("config")
+                .map_err(|e| rustic(e.into(), "url"))?;
             let r = self
                 .send(|| self.client.head(url.clone()))
                 .map_err(|e| rustic(e, "HEAD config"))?;
@@ -207,7 +212,11 @@ impl<K: KeyStore + Send + Sync + 'static> WriteBackend for Webdav<K> {
         let url = self.url(tpe, id).map_err(|e| rustic(e, "url"))?;
         // one body, known length: this is what lets nginx take it - it has no
         // streaming PUT, every request needs a Content-Length
-        let body: Vec<u8> = content.slice().iter().flat_map(|b| b.iter().copied()).collect();
+        let body: Vec<u8> = content
+            .slice()
+            .iter()
+            .flat_map(|b| b.iter().copied())
+            .collect();
         self.send(|| self.client.put(url.clone()).body(body.clone()))
             .and_then(Self::ok)
             .map(|_| ())

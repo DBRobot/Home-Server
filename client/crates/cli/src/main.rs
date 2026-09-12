@@ -1,3 +1,4 @@
+mod derive;
 mod ui;
 mod vault;
 
@@ -97,11 +98,14 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ImageCmd {
-    /// Choose the archive password and create your repository. Once.
+    /// Create your repository. Once; `push` does it too if it is missing.
+    /// The archive password is derived from the photo password by
+    /// `dd unlock` / `dd signup` - there is nothing new to choose here.
     Init {
-        /// Read the password from stdin instead of prompting.
+        /// This machine unlocked before archives existed: ask for the photo
+        /// password once more to derive the archive password from it.
         #[arg(long)]
-        password_stdin: bool,
+        rederive: bool,
     },
     /// Archive a file, or stdin with `-`. For a whole drive:
     /// `sudo cat /dev/sdX | dd image push - --name old-laptop`
@@ -126,34 +130,13 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
     use archive::{Archive, Source, Stderr, TokenProvider};
     let keys = OsKeyring::new(SERVICE);
 
-    let password = match &cmd {
-        ImageCmd::Init { password_stdin } => {
-            if keys.get(ARCHIVE)?.is_some() {
-                println!("an archive password is already stored - `dd lock` first to choose another");
-                return Ok(());
-            }
-            let pw = if *password_stdin {
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line)?;
-                Zeroizing::new(line.trim_end_matches(['\n', '\r']).to_string())
-            } else {
-                println!(
-                    "This password encrypts everything you archive. It is never sent \
-                     anywhere and nobody here can recover it."
-                );
-                let first = Zeroizing::new(rpassword::prompt_password("archive password: ")?);
-                let again = Zeroizing::new(rpassword::prompt_password("again: ")?);
-                anyhow::ensure!(first == again, "those did not match");
-                anyhow::ensure!(first.len() >= 8, "use at least 8 characters");
-                first
-            };
-            keys.set(ARCHIVE, &pw)?;
-            pw
-        }
-        _ => keys
-            .get(ARCHIVE)?
-            .context("no archive password on this machine - run `dd image init`")?,
-    };
+    if let ImageCmd::Init { rederive: true } = &cmd {
+        let master = Zeroizing::new(rpassword::prompt_password("photo password: ")?);
+        keys.set(ARCHIVE, &derive::archive_password(&master))?;
+    }
+    let password = keys.get(ARCHIVE)?.context(
+        "no archive password on this machine - run `dd unlock`, or `dd image init --rederive`",
+    )?;
 
     let tokens = std::sync::Arc::new(TokenProvider::new(
         &issuer,
@@ -175,7 +158,10 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
                 Source::File(std::path::PathBuf::from(source))
             };
             let e = archive.push(src, &name)?;
-            println!("archived {} as {}  ({} bytes)  snapshot {}", name, e.name, e.bytes, e.id);
+            println!(
+                "archived {} as {}  ({} bytes)  snapshot {}",
+                name, e.name, e.bytes, e.id
+            );
         }
         ImageCmd::List => {
             let entries = archive.list()?;
@@ -183,7 +169,13 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
                 println!("nothing archived yet");
             }
             for e in entries {
-                println!("{:<10} {:<28} {:>14}  {}", &e.id[..8.min(e.id.len())], e.name, e.bytes, e.time);
+                println!(
+                    "{:<10} {:<28} {:>14}  {}",
+                    &e.id[..8.min(e.id.len())],
+                    e.name,
+                    e.bytes,
+                    e.time
+                );
             }
         }
         ImageCmd::Pull { name, snapshot } => {
@@ -269,6 +261,7 @@ async fn main() -> Result<()> {
                 first
             };
 
+            let archive_pw = derive::archive_password(&password);
             let client = ente::client(&ente_origin)?;
             let mut ui = ui::Term;
             let mut flow = ente::AuthFlow::new(&client, &mut ui);
@@ -294,6 +287,7 @@ async fn main() -> Result<()> {
 
             let v = Vault::from_secrets(account.user_id, &account.secrets);
             keys.set("ente", &v.to_json()?)?;
+            keys.set(ARCHIVE, &archive_pw)?;
 
             println!(
                 "\nphotos: created and unlocked (user_id {})",
@@ -343,6 +337,7 @@ async fn main() -> Result<()> {
             } else {
                 Zeroizing::new(rpassword::prompt_password("ente password: ")?)
             };
+            let archive_pw = derive::archive_password(&password);
             let client = ente::client(&origin)?;
             let mut ui = ui::Term;
             let mut flow = ente::AuthFlow::new(&client, &mut ui);
@@ -350,6 +345,9 @@ async fn main() -> Result<()> {
 
             let v = Vault::from_secrets(account.user_id, &account.secrets);
             keys.set("ente", &v.to_json()?)?;
+            // the same typed password also yields the archive password, so
+            // `dd image` never asks for one
+            keys.set(ARCHIVE, &archive_pw)?;
             println!("unlocked and stored for user_id {}", account.user_id);
         }
 

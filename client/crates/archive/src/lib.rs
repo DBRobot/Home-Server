@@ -85,7 +85,12 @@ impl<K: KeyStore + Send + Sync + 'static, P: ProgressBars + Clone> Archive<K, P>
         Credentials::Password(self.password.to_string())
     }
 
-    /// Create the repository. Once per user, before the first push.
+    /// Whether a repository has been created here yet.
+    pub fn exists(&self) -> Result<bool> {
+        Ok(self.repo()?.config_id()?.is_some())
+    }
+
+    /// Create the repository. Once per user; `push` does it if it is missing.
     pub fn init(&self) -> Result<()> {
         self.repo()?
             .init(
@@ -100,10 +105,15 @@ impl<K: KeyStore + Send + Sync + 'static, P: ProgressBars + Clone> Archive<K, P>
     /// Archive `source` as a snapshot named `name`. Interrupted and run again,
     /// restic's dedup means every block already uploaded is skipped.
     pub fn push(&self, source: Source, name: &str) -> Result<Entry> {
+        // First push creates the repository. A person who signed up and then
+        // ran `dd image push` should not have to know that step exists.
+        if !self.exists()? {
+            self.init()?;
+        }
         let repo = self
             .repo()?
             .open(&self.credentials())
-            .context("opening the repository - wrong password, or not initialised")?
+            .context("opening the repository - wrong password?")?
             .to_indexed_ids()?;
 
         let (paths, opts) = match source {
@@ -129,18 +139,26 @@ impl<K: KeyStore + Send + Sync + 'static, P: ProgressBars + Clone> Archive<K, P>
     }
 
     /// Stream one archived file back out. `snapshot` is an id prefix or
-    /// "latest"; `name` is what it was pushed as.
+    /// "latest"; `name` is what it was pushed as. The tree is walked for the
+    /// name rather than addressed by path, because where rustic places a
+    /// single file depends on whether it came from a path or from stdin.
     pub fn pull(&self, snapshot: &str, name: &str, out: &mut impl Write) -> Result<()> {
-        let repo = self
-            .repo()?
-            .open(&self.credentials())?
-            .to_indexed()?;
-        let node = repo
-            .node_from_snapshot_path(&format!("{snapshot}:/{name}"), |_| true)
-            .or_else(|_| repo.node_from_snapshot_path(&format!("{snapshot}:{name}"), |_| true))
+        let repo = self.repo()?.open(&self.credentials())?.to_indexed()?;
+        let root = repo.node_from_snapshot_path(snapshot, |_| true)?;
+        let files: Vec<_> = repo
+            .ls(&root, &LsOptions::default().recursive(true))?
+            .filter_map(Result::ok)
+            .map(|(_, node)| node)
+            .filter(|n| n.is_file())
+            .collect();
+        // by name if it was pushed from stdin; otherwise a push is one file
+        // and rustic kept its original filename, so there is exactly one
+        let node = files
+            .iter()
+            .find(|n| n.name().to_string_lossy() == name)
+            .or_else(|| (files.len() == 1).then(|| &files[0]))
             .with_context(|| format!("no `{name}` in snapshot {snapshot}"))?;
-        let _ = LsOptions::default();
-        repo.dump(&node, out).context("restoring")?;
+        repo.dump(node, out).context("restoring")?;
         Ok(())
     }
 }

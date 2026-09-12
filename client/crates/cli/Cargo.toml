@@ -8,6 +8,9 @@ license.workspace = true
 ente = { path = "../ente" }
 auth = { path = "../auth" }
 archive = { path = "../archive" }
+# already in the tree through ente; used to derive the archive password
+hkdf = "0.12"
+sha2 = "0.10"
 url = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1"
