@@ -67,6 +67,16 @@ in
       ldapbindaddress = "127.0.0.1:3636";
       tls_chain = "${certDir}/fullchain.pem";
       tls_key = "${certDir}/key.pem";
+      # The module's default is versions = 0, and 0 means OFF: the backups
+      # directory was empty when it was needed. A raw copy of kanidm.db is not
+      # a backup either - sqlite runs in WAL mode and the .db alone is
+      # "database disk image is malformed". This is kanidm's own dump format,
+      # restorable with `kanidmd database restore`.
+      online_backup = {
+        path = "/var/lib/kanidm/backups";
+        schedule = "00 22 * * *";
+        versions = 7;
+      };
     };
 
     # Accounts and groups are declared; credentials deliberately are not.
