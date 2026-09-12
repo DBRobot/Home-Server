@@ -5,6 +5,8 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     sops-nix.url = "github:Mic92/sops-nix";
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
+    disko.url = "github:nix-community/disko/latest";
+    disko.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -12,6 +14,7 @@
       self,
       nixpkgs,
       sops-nix,
+      disko,
       ...
     }:
     let
@@ -89,6 +92,17 @@
         modules = [
           ./hosts/node1/configuration.nix
           sops-nix.nixosModules.sops
+        ];
+      };
+
+      # Fresh install: disks are described with disko, not the rolled-by-hand
+      # layout of node1's hardware-configuration.nix. The disko module turns
+      # disko.devices into fileSystems + boot entries; nothing else here has
+      # to know about the nvme at all.
+      nixosConfigurations.node2 = nixpkgs.lib.nixosSystem {
+        modules = [
+          ./hosts/node2/configuration.nix
+          disko.nixosModules.disko
         ];
       };
     };
