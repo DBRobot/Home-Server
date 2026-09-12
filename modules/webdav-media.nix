@@ -11,7 +11,7 @@ let
   # it. /srv/images is per-user archives that arrive already encrypted (rclone
   # crypt on the client), so nothing on this host can read them and nothing
   # gets an acl. See modules/user-accounts.nix for the directories.
-  dav = dir: ''
+  dav = dir: listing: ''
     auth_request /oauth2/auth;
     # NOT x_auth_request_user: oauth2-proxy fills that from the `sub`
     # claim and there is no flag to change it - providers/provider_data.go
@@ -32,6 +32,10 @@ let
     client_body_timeout 600s;
     send_timeout 600s;
     autoindex on;
+    # html for a person in a browser; json for `dd image`, which lists a
+    # restic repository's type directories this way rather than parsing
+    # PROPFIND xml
+    autoindex_format ${listing};
   '';
 in
 {
@@ -54,11 +58,11 @@ in
     useACMEHost = base;
     forceSSL = true;
 
-    locations."/".extraConfig = dav root;
+    locations."/".extraConfig = dav root "html";
     # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
     # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,
     # so no scratch copy of the image is ever needed on the client.
-    locations."/images/".extraConfig = dav images;
+    locations."/images/".extraConfig = dav images "json";
 
     locations."= /oauth2/auth" = {
       proxyPass = "http://127.0.0.1:4180";

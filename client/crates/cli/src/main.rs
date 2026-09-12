@@ -13,9 +13,13 @@ const SERVICE: &str = "distributed-datacenter";
 /// these authorise services, that one decrypts photos, and conflating them
 /// would mean one `dd lock` throwing away more than the user asked.
 const KANIDM: &str = "kanidm-refresh";
+/// The archive password. Separate again: it decrypts old computers, not
+/// photos, and `dd lock` should be able to forget one without the other.
+const ARCHIVE: &str = "archive";
 const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2/openid/dd";
 const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
 const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
+const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
 
 #[derive(Parser)]
 #[command(name = "dd", about = "distributed datacenter client")]
@@ -75,10 +79,119 @@ enum Command {
         #[arg(long, default_value = "dd")]
         client_id: String,
     },
+    /// Encrypted archives of old computers. restic's format, in your own
+    /// directory on the server; the password never leaves this machine.
+    Image {
+        #[command(subcommand)]
+        cmd: ImageCmd,
+        #[arg(long, default_value = DEFAULT_IMAGES, global = true)]
+        repo: String,
+        #[arg(long, default_value = DEFAULT_IDM, global = true)]
+        issuer: String,
+    },
     /// What is cached on this machine.
     Status,
     /// Forget the stored ente keys and kanidm token on this machine.
     Lock,
+}
+
+#[derive(Subcommand)]
+enum ImageCmd {
+    /// Choose the archive password and create your repository. Once.
+    Init {
+        /// Read the password from stdin instead of prompting.
+        #[arg(long)]
+        password_stdin: bool,
+    },
+    /// Archive a file, or stdin with `-`. For a whole drive:
+    /// `sudo cat /dev/sdX | dd image push - --name old-laptop`
+    /// so only cat runs as root and the keyring stays yours.
+    Push {
+        source: String,
+        #[arg(long)]
+        name: String,
+    },
+    /// Every archive in your repository.
+    List,
+    /// Write an archive back out to stdout.
+    Pull {
+        name: String,
+        /// Snapshot id prefix; the newest if omitted.
+        #[arg(long, default_value = "latest")]
+        snapshot: String,
+    },
+}
+
+fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
+    use archive::{Archive, Source, Stderr, TokenProvider};
+    let keys = OsKeyring::new(SERVICE);
+
+    let password = match &cmd {
+        ImageCmd::Init { password_stdin } => {
+            if keys.get(ARCHIVE)?.is_some() {
+                println!("an archive password is already stored - `dd lock` first to choose another");
+                return Ok(());
+            }
+            let pw = if *password_stdin {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                Zeroizing::new(line.trim_end_matches(['\n', '\r']).to_string())
+            } else {
+                println!(
+                    "This password encrypts everything you archive. It is never sent \
+                     anywhere and nobody here can recover it."
+                );
+                let first = Zeroizing::new(rpassword::prompt_password("archive password: ")?);
+                let again = Zeroizing::new(rpassword::prompt_password("again: ")?);
+                anyhow::ensure!(first == again, "those did not match");
+                anyhow::ensure!(first.len() >= 8, "use at least 8 characters");
+                first
+            };
+            keys.set(ARCHIVE, &pw)?;
+            pw
+        }
+        _ => keys
+            .get(ARCHIVE)?
+            .context("no archive password on this machine - run `dd image init`")?,
+    };
+
+    let tokens = std::sync::Arc::new(TokenProvider::new(
+        &issuer,
+        "dd",
+        OsKeyring::new(SERVICE),
+        KANIDM,
+    )?);
+    let archive = Archive::new(url::Url::parse(&repo)?, tokens, password, Stderr)?;
+
+    match cmd {
+        ImageCmd::Init { .. } => {
+            archive.init()?;
+            println!("repository created at {repo}");
+        }
+        ImageCmd::Push { source, name } => {
+            let src = if source == "-" {
+                Source::Stdin
+            } else {
+                Source::File(std::path::PathBuf::from(source))
+            };
+            let e = archive.push(src, &name)?;
+            println!("archived {} as {}  ({} bytes)  snapshot {}", name, e.name, e.bytes, e.id);
+        }
+        ImageCmd::List => {
+            let entries = archive.list()?;
+            if entries.is_empty() {
+                println!("nothing archived yet");
+            }
+            for e in entries {
+                println!("{:<10} {:<28} {:>14}  {}", &e.id[..8.min(e.id.len())], e.name, e.bytes, e.time);
+            }
+        }
+        ImageCmd::Pull { name, snapshot } => {
+            let mut out = std::io::stdout().lock();
+            archive.pull(&snapshot, &name, &mut out)?;
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -261,7 +374,20 @@ async fn main() -> Result<()> {
             println!("{idt}");
         }
 
+        // rustic_core is synchronous and the token provider blocks on its own
+        // small runtime. Neither may run on a tokio worker thread, so the
+        // whole command gets a plain thread of its own.
+        Command::Image { cmd, repo, issuer } => {
+            return std::thread::spawn(move || image(cmd, repo, issuer))
+                .join()
+                .map_err(|_| anyhow::anyhow!("image command panicked"))?;
+        }
+
         Command::Status => {
+            match keys.get(ARCHIVE)? {
+                Some(_) => println!("archive: password stored - `dd image push` works"),
+                None => println!("archive: none - run `dd image init`"),
+            }
             match keys.get("ente")? {
                 Some(raw) => {
                     let v = Vault::from_json(&raw)?;
@@ -276,6 +402,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Lock => {
+            keys.clear(ARCHIVE)?;
             keys.clear("ente")?;
             keys.clear(KANIDM)?;
             println!("ente keys and kanidm token removed from this machine's credential store");
