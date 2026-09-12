@@ -33,6 +33,20 @@ let
       "com.sun:auto-snapshot" = "false";
     };
 
+    # Per-user archives of old computers - disk images or copied-out user
+    # folders - uploaded already encrypted (rclone crypt, key on the client),
+    # so this dataset only ever holds ciphertext. Separate from vault/users on
+    # purpose: jellyfin has an acl on every media dir and has no business
+    # traversing these, and NO snapshots - an archive is written once and never
+    # changed, so a snapshot buys nothing and would keep a deleted 80 G image
+    # on disk for a year.
+    "vault/images" = {
+      mountpoint = "/srv/images";
+      recordsize = "1M"; # gigabyte chunks, sequential
+      compression = "lz4"; # ciphertext is incompressible; lz4 early-aborts, costs nothing
+      "com.sun:auto-snapshot" = "false";
+    };
+
     # Per-user uploads. These were on the ext4 root partition, which is the
     # small disk and has no snapshots or checksums - user data belongs on the
     # pool with everything else. Snapshots are on: unlike vault/media this is
