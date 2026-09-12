@@ -56,11 +56,23 @@ in
       proxyPass = "http://127.0.0.1:8081";
       extraConfig = ''
         auth_request /oauth2/auth;
+        # A client with a bearer token (dd, curl, an editor) is answered by
+        # auth_request alone. A browser has no token and got a bare 401 with
+        # nowhere to go, so llama-server's own chat ui was unreachable by
+        # anyone. Send the no-credential case into oauth2-proxy's login
+        # instead: it runs the kanidm code flow, sets a cookie, and every later
+        # auth_request passes on that cookie. bearer-token-login-fallback=false
+        # is unaffected - that governs a token that is PRESENT and bad.
+        error_page 401 = @login;
         proxy_buffering off; # streamed completions
         proxy_read_timeout 600s; # cpu generation is slow
         client_max_body_size 0;
       '';
     };
+
+    locations."@login".extraConfig = ''
+      return 302 /oauth2/start?rd=$scheme://$host$request_uri;
+    '';
 
     # the subrequest nginx makes for every request above
     locations."= /oauth2/auth" = {
