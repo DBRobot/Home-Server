@@ -74,6 +74,13 @@ in
     # flow, so a password change never needs a rebuild.
     provision = {
       enable = true;
+      # DEFAULTS TO TRUE, and it deletes. kanidm-provision tracks every entity
+      # it created (via ext_idm_provisioned_entities) and removes any of them
+      # that later vanish from the state file - which is exactly what happened
+      # when the roster left this file: the person it had created went with
+      # it, recycle bin and all. People are runtime state owned by kanidm's
+      # database now; provisioning must never be the thing that removes one.
+      autoRemove = false;
       adminPasswordFile = config.sops.secrets.kanidm-admin-password.path;
       idmAdminPasswordFile = config.sops.secrets.kanidm-idm-admin-password.path;
 
