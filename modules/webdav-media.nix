@@ -64,8 +64,11 @@ in
     # so no scratch copy of the image is ever needed on the client.
     locations."/images/".extraConfig = dav images "json";
 
+    # The verifier first (modules/verify.nix): a user-signed biscuit is checked
+    # against the device keys on file, anything else is relayed to
+    # oauth2-proxy. Same variables come out either way.
     locations."= /oauth2/auth" = {
-      proxyPass = "http://127.0.0.1:4180";
+      proxyPass = "http://127.0.0.1:4181/verify";
       extraConfig = ''
         internal;
         proxy_pass_request_body off;

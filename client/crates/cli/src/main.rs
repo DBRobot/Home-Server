@@ -21,6 +21,10 @@ const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2
 const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
 const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
 const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
+/// The verifier's public face: where a device registers its key.
+const DEFAULT_VERIFIER: &str = "https://files.distributed-datacenter.duckdns.org/_dd";
+/// keyring account holding the username the device key signs for
+const USER: &str = "user";
 
 #[derive(Parser)]
 #[command(name = "dd", about = "distributed datacenter client")]
@@ -53,12 +57,25 @@ enum Command {
         #[arg(long)]
         password_stdin: bool,
     },
-    /// Sign in to kanidm. Proves who you are to services; touches no keys.
+    /// Sign in once on this device. Proves who you are to kanidm, then
+    /// registers this device's own key so every later token is signed here,
+    /// by you, and no server can mint one in your name.
     Login {
         #[arg(long, default_value = DEFAULT_IDM)]
         issuer: String,
         #[arg(long, default_value = "dd")]
         client_id: String,
+        #[arg(long, default_value = DEFAULT_VERIFIER)]
+        verifier: String,
+        /// A voucher from a device already registered (`dd device vouch`),
+        /// needed once you have one - a login alone can no longer add a key.
+        #[arg(long)]
+        voucher: Option<String>,
+    },
+    /// This device's key.
+    Device {
+        #[command(subcommand)]
+        cmd: DeviceCmd,
     },
     /// Unlock ente. Asks for the ente password once, then stores the derived
     /// keys in the OS credential store so it is not asked again.
@@ -94,6 +111,18 @@ enum Command {
     Status,
     /// Forget the stored ente keys and kanidm token on this machine.
     Lock,
+}
+
+#[derive(Subcommand)]
+enum DeviceCmd {
+    /// Show this device's key fingerprint.
+    Show,
+    /// Vouch for a new device: prints a short-lived token to paste into
+    /// `dd login --voucher` on it. Only a registered device can do this.
+    Vouch {
+        /// The new device's fingerprint, from `dd device show` there.
+        fingerprint: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -307,26 +336,64 @@ async fn main() -> Result<()> {
             println!("Once you have set a passkey from the emailed link, run `dd login`.");
         }
 
-        Command::Login { issuer, client_id } => {
-            let session = auth::login(&issuer, &client_id)
-                .await
-                .context("kanidm login failed")?;
-            let who = session
+        Command::Login {
+            issuer,
+            client_id,
+            verifier,
+            voucher,
+        } => {
+            let session = auth::login(&issuer, &client_id).await?;
+            let user = session
                 .preferred_username
                 .clone()
-                .unwrap_or_else(|| session.subject.clone());
-            println!("signed in to kanidm as {who}");
-            match &session.refresh_token {
-                Some(rt) => {
-                    keys.set(KANIDM, rt)?;
-                    println!("token stored - `dd token` renews without a browser");
+                .context("kanidm returned no username")?;
+            if let Some(rt) = &session.refresh_token {
+                keys.set(KANIDM, rt)?;
+            }
+            println!("signed in to kanidm as {user}");
+
+            // The device key: made here, kept here. The id token from the login
+            // just now is what admits it - for the first device. Afterwards a
+            // registered device has to vouch.
+            let (kp, fresh) = auth::device::load_or_create(&keys)?;
+            let idt = session
+                .id_token
+                .as_deref()
+                .context("no id token to register with")?;
+            match auth::device::register(&verifier, idt, &kp, voucher.as_deref()).await {
+                Ok(()) => {
+                    keys.set(USER, &user)?;
+                    println!(
+                        "device {} {} - tokens are signed here from now on",
+                        auth::device::fingerprint(&kp),
+                        if fresh { "registered" } else { "confirmed" }
+                    );
                 }
-                None => println!(
-                    "no refresh token: the `offline_access` scope was not granted, \
-                     so every expiry needs another login"
-                ),
+                Err(e) => {
+                    println!("device not registered: {e}");
+                    println!(
+                        "  on a device that already works, run: dd device vouch {}",
+                        auth::device::fingerprint(&kp)
+                    );
+                    println!("  then here: dd login --voucher <that token>");
+                }
             }
         }
+
+        Command::Device { cmd } => match cmd {
+            DeviceCmd::Show => match auth::device::load(&keys)? {
+                Some(kp) => println!("{}", auth::device::fingerprint(&kp)),
+                None => println!("no device key - run `dd login`"),
+            },
+            DeviceCmd::Vouch { fingerprint } => {
+                let kp =
+                    auth::device::load(&keys)?.context("no device key here - run `dd login`")?;
+                let user = keys
+                    .get(USER)?
+                    .context("no user recorded - run `dd login`")?;
+                println!("{}", auth::device::vouch(&kp, &user, &fingerprint)?);
+            }
+        },
 
         Command::Unlock {
             origin,
@@ -359,6 +426,15 @@ async fn main() -> Result<()> {
         }
 
         Command::Token { issuer, client_id } => {
+            // A registered device signs its own token: no server involved, no
+            // fifteen-minute expiry dance, works offline.
+            if let (Some(kp), Some(user)) = (auth::device::load(&keys)?, keys.get(USER)?) {
+                println!(
+                    "{}",
+                    auth::device::mint(&kp, &user, std::time::Duration::from_secs(3600))?
+                );
+                return Ok(());
+            }
             let stored = keys
                 .get(KANIDM)?
                 .context("not signed in to kanidm - run `dd login`")?;
@@ -389,6 +465,13 @@ async fn main() -> Result<()> {
         }
 
         Command::Status => {
+            match auth::device::load(&keys)? {
+                Some(kp) => println!(
+                    "device:  {} - signs its own tokens",
+                    auth::device::fingerprint(&kp)
+                ),
+                None => println!("device:  none - run `dd login`"),
+            }
             match keys.get(ARCHIVE)? {
                 Some(_) => println!("archive: password stored - `dd image push` works"),
                 None => println!("archive: none - run `dd image init`"),
@@ -407,6 +490,8 @@ async fn main() -> Result<()> {
         }
 
         Command::Lock => {
+            keys.clear(auth::device::ACCOUNT)?;
+            keys.clear(USER)?;
             keys.clear(ARCHIVE)?;
             keys.clear("ente")?;
             keys.clear(KANIDM)?;

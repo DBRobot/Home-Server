@@ -26,6 +26,7 @@
     ../../modules/kanidm-mail-sender.nix
     ../../modules/kanidm-key-rotation.nix
     ../../modules/signup.nix
+    ../../modules/verify.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

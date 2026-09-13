@@ -70,6 +70,19 @@
           # Built separately from dd rather than as another binary in the same
           # derivation: this one runs on a server and has no business pulling in
           # the keyring/dbus stack that the cli needs.
+          # The verifier behind nginx's auth_request. Same shape as signup.
+          verify = pkgs.rustPlatform.buildRustPackage {
+            pname = "verify";
+            version = "0.1.0";
+            src = ./client;
+            inherit cargoLock;
+            cargoBuildFlags = [
+              "-p"
+              "verify"
+            ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
+          };
+
           signup = pkgs.rustPlatform.buildRustPackage {
             pname = "signup";
             version = "0.1.0";

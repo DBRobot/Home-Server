@@ -50,6 +50,20 @@ impl<K: KeyStore + Send + Sync> TokenProvider<K> {
         {
             return Ok(c.id_token.clone());
         }
+        // A registered device signs its own: no server round trip at all.
+        if let (Some(kp), Some(user)) = (auth::device::load(&self.keys)?, self.keys.get("user")?) {
+            let ttl = 3600;
+            let tok = Zeroizing::new(auth::device::mint(
+                &kp,
+                &user,
+                std::time::Duration::from_secs(ttl),
+            )?);
+            *slot = Some(Cached {
+                id_token: tok.clone(),
+                expires: now + ttl,
+            });
+            return Ok(tok);
+        }
         let stored = self
             .keys
             .get(&self.account)?

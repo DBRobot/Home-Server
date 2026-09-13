@@ -1,0 +1,19 @@
+[package]
+name = "verify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+base64 = "0.22"
+# the token format devices sign; the verifier only ever holds public keys
+biscuit-auth = "6"
+# to check the kanidm id token that bootstraps a user's FIRST device - the
+# one moment a server's word is taken for who somebody is
+jsonwebtoken = "11"

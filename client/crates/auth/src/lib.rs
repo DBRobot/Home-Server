@@ -5,6 +5,7 @@
 //! never derived from it - it comes from the ente password, is stored by the
 //! OS, and kanidm never sees it.
 
+pub mod device;
 pub mod keystore;
 pub mod oidc;
 
