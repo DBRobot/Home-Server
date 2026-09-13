@@ -24,6 +24,7 @@
     ../../modules/verify.nix
     ../../modules/forgejo.nix
     ../../modules/forgejo-runner.nix
+    ../../modules/forgejo-mirror.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
@@ -45,6 +46,14 @@
   # node2's directory copy, over the tailnet
   dd.verify.peers = [ "http://100.95.10.10:4181/_dd/directory" ];
   dd.forgejo.admin = "david";
+  # the public copy on GitHub follows the forge
+  dd.forgejo.mirrors = [
+    {
+      repo = "david/Home-Server";
+      to = "https://github.com/DBRobot/Home-Server.git";
+      user = "DBRobot";
+    }
+  ];
 
   networking.hostName = "node1";
   networking.hostId = "0195f284";
