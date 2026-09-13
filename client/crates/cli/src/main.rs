@@ -63,11 +63,21 @@ enum Command {
         password_stdin: bool,
     },
     /// A browser login: prints a link, signed by this device and good for ten
-    /// minutes, that sets up a passkey on the box it points at. No server
-    /// vouches for you; your own key does.
+    /// minutes, that sets up a passkey in the browser that opens it. Waits
+    /// for that, then signs the passkey into your entry with the root held
+    /// here - a box can run the ceremony but cannot add the result.
     Enrol {
         #[arg(long, default_value = DEFAULT_ENROL)]
         url: String,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES)]
+        directories: Vec<String>,
+    },
+    /// The browser passkeys in your entry.
+    Passkey {
+        #[command(subcommand)]
+        cmd: PasskeyCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
+        directories: Vec<String>,
     },
     /// Who you are: a root key here, a recovery key on paper, and the entry
     /// you sign listing your devices. No server issues it.
@@ -147,6 +157,17 @@ enum IdentityCmd {
         #[arg(long)]
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum PasskeyCmd {
+    /// Every passkey in your entry, by id.
+    List,
+    /// Drop one; the browser that holds it stops working everywhere at once.
+    Remove { id: String },
+    /// Sign in a credential record from a file - the one a box used to keep
+    /// in <name>.passkeys.json before passkeys lived in the entry.
+    Add { file: String },
 }
 
 #[derive(Subcommand)]
@@ -344,8 +365,10 @@ async fn main() -> Result<()> {
             println!("For a browser: `dd enrol` prints a link that sets up a passkey.");
         }
 
-        Command::Enrol { url } => {
+        Command::Enrol { url, directories } => {
             let kp = auth::device::load(&keys)?.context("no device key here - `dd device show`")?;
+            let root = who::load_root(&keys)?
+                .context("no root key on this machine - the passkey has to be signed in")?;
             let user = keys
                 .get(USER)?
                 .context("no name on this machine - `dd identity new` or `dd identity import`")?;
@@ -363,10 +386,81 @@ async fn main() -> Result<()> {
                 "  {url}?t={tok}
 "
             );
+            println!("waiting for the browser...");
+            let http = reqwest::Client::new();
+            let result = format!("{}/result", url.trim_end_matches('/'));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+            let cred = loop {
+                if std::time::Instant::now() > deadline {
+                    anyhow::bail!("no passkey arrived within ten minutes");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let r = http.get(&result).bearer_auth(&tok).send().await?;
+                match r.status().as_u16() {
+                    200 => break r.json::<identity::Passkey>().await?,
+                    204 => continue,
+                    s => anyhow::bail!("{s} {}", r.text().await.unwrap_or_default()),
+                }
+            };
+            let id = cred.id.clone();
+            let signed = who::admit_passkey(&directories, &user, &root, cred).await?;
             println!(
-                "it can set up a passkey and nothing else; afterwards the passkey signs you in."
+                "passkey {id} signed into your entry; version {}",
+                signed.entry.version
             );
+            println!("the browser can sign in now, on every box that has your entry.");
         }
+
+        Command::Passkey { cmd, directories } => match cmd {
+            PasskeyCmd::List => {
+                let name = keys
+                    .get(USER)?
+                    .context("no name here - `dd identity new` or `dd identity import`")?
+                    .to_string();
+                let found = who::fetch(&directories, &name).await;
+                let e = who::newest(&found).context("no directory has an entry")?;
+                if e.entry.passkeys.is_empty() {
+                    println!("no passkeys - `dd enrol` adds one");
+                }
+                for p in &e.entry.passkeys {
+                    println!("{}  added {}", p.id, p.added);
+                }
+            }
+            PasskeyCmd::Remove { id } => {
+                let root = who::load_root(&keys)?.context("no root key on this machine")?;
+                let name = keys.get(USER)?.context("no name here")?.to_string();
+                let signed = who::remove_passkey(&directories, &name, &root, &id).await?;
+                println!("passkey {id} removed; version {}", signed.entry.version);
+            }
+            PasskeyCmd::Add { file } => {
+                let root = who::load_root(&keys)?.context("no root key on this machine")?;
+                let name = keys.get(USER)?.context("no name here")?.to_string();
+                let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file)?)?;
+                let creds: Vec<serde_json::Value> = match v.get("passkeys") {
+                    Some(serde_json::Value::Array(a)) => a.clone(),
+                    _ => vec![v],
+                };
+                for cred in creds {
+                    let id = cred
+                        .pointer("/cred/cred_id")
+                        .and_then(|x| x.as_str())
+                        .context("no cred.cred_id in that record")?
+                        .to_string();
+                    let signed = who::admit_passkey(
+                        &directories,
+                        &name,
+                        &root,
+                        identity::Passkey {
+                            id: id.clone(),
+                            cred,
+                            added: identity::now(),
+                        },
+                    )
+                    .await?;
+                    println!("passkey {id} signed in; version {}", signed.entry.version);
+                }
+            }
+        },
 
         Command::Identity { cmd, directories } => match cmd {
             IdentityCmd::New { name } => {
@@ -420,6 +514,9 @@ async fn main() -> Result<()> {
                                     dev.fingerprint,
                                     if this { " (this one)" } else { "" }
                                 );
+                            }
+                            for p in &e.entry.passkeys {
+                                println!("  passkey {}", p.id);
                             }
                         }
                     }

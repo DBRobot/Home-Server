@@ -40,9 +40,24 @@ pub struct Entry {
     /// base64 ed25519 public key that may install a new root
     pub recovery: String,
     pub devices: Vec<Device>,
+    /// Browser passkeys, as the box that enrolled them serialised the
+    /// credential. In the entry rather than on a box, so no box can add one
+    /// for you and any box can check a login against them. Absent when
+    /// empty, so entries signed before the field existed still verify.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub passkeys: Vec<Passkey>,
     /// strictly increasing; a box never accepts an older or equal one
     pub version: u64,
     pub updated: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Passkey {
+    /// the credential id, base64url, as the browser presents it
+    pub id: String,
+    /// the whole credential as webauthn-rs serialises it; opaque here
+    pub cred: serde_json::Value,
+    pub added: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -229,6 +244,7 @@ mod tests {
         let recovery = generate();
         let d1 = generate();
         let e1 = Entry {
+            passkeys: vec![],
             name: "sarah".into(),
             root: encode_public(&root.verifying_key()),
             recovery: encode_public(&recovery.verifying_key()),

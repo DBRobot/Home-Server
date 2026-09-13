@@ -135,6 +135,7 @@ pub async fn create(
         root: identity::encode_public(&root.verifying_key()),
         recovery: identity::encode_public(&recovery.verifying_key()),
         devices: vec![device_of(kp)],
+        passkeys: vec![],
         version: 1,
         updated: identity::now(),
     };
@@ -230,6 +231,7 @@ pub async fn recover(
         root: identity::encode_public(&root.verifying_key()),
         recovery: identity::encode_public(&next_recovery.verifying_key()),
         devices: vec![device_of(kp)],
+        passkeys: vec![],
         version: cur.entry.version + 1,
         updated: identity::now(),
     };
@@ -244,4 +246,45 @@ pub fn print_recovery(recovery: &str) {
     println!("  It is the only way back in if every device is lost or stolen.");
     println!("  It is not stored anywhere, and nobody can issue another.\n");
     println!("    {recovery}\n");
+}
+
+/// Sign a passkey into the entry. The box that ran the browser ceremony hands
+/// the credential to `dd enrol`; nothing on that box could add it itself.
+pub async fn admit_passkey(
+    dirs: &[String],
+    name: &str,
+    root: &ed25519_dalek::SigningKey,
+    pk: identity::Passkey,
+) -> Result<SignedEntry> {
+    let cur = ours(dirs, name, root).await?;
+    let mut entry = cur.entry.clone();
+    if entry.passkeys.iter().any(|p| p.id == pk.id) {
+        bail!("that passkey is already in the entry");
+    }
+    entry.passkeys.push(pk);
+    entry.version += 1;
+    entry.updated = identity::now();
+    let signed = identity::sign(entry, root, Signer_::Root)?;
+    publish(dirs, &signed).await?;
+    Ok(signed)
+}
+
+pub async fn remove_passkey(
+    dirs: &[String],
+    name: &str,
+    root: &ed25519_dalek::SigningKey,
+    id: &str,
+) -> Result<SignedEntry> {
+    let cur = ours(dirs, name, root).await?;
+    let mut entry = cur.entry.clone();
+    let before = entry.passkeys.len();
+    entry.passkeys.retain(|p| p.id != id);
+    if entry.passkeys.len() == before {
+        bail!("no passkey {id} in the entry");
+    }
+    entry.version += 1;
+    entry.updated = identity::now();
+    let signed = identity::sign(entry, root, Signer_::Root)?;
+    publish(dirs, &signed).await?;
+    Ok(signed)
 }

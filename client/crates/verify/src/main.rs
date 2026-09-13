@@ -30,16 +30,20 @@ use axum::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
 use biscuit_auth::{Biscuit, PublicKey, UnverifiedBiscuit, builder::Algorithm};
 use serde::{Deserialize, Serialize};
 use webauthn_rs::prelude::*;
 
 struct App {
-    dir: PathBuf,
     directory: Arc<directory::Directory>,
     sessions: session::Sessions,
     webauthn: Webauthn,
     ceremonies: Mutex<HashMap<String, (Instant, Ceremony)>>,
+    /// a passkey the browser just made, waiting for `dd enrol` to collect
+    /// it and sign it into the entry. Keyed by the enrol token, so only the
+    /// terminal that printed the link can pick it up. Never stored.
+    pending: Mutex<HashMap<String, (Instant, identity::Passkey)>>,
     oidc: Option<oidc::Issuer>,
 }
 
@@ -52,14 +56,6 @@ enum Ceremony {
         user: String,
         state: PasskeyAuthentication,
     },
-}
-
-/// Browser passkeys enrolled on THIS box. Box-local consent state, not part of
-/// the identity: a passkey enrolled through a page this box served is a
-/// decision to trust this box for browser sessions, nothing more.
-#[derive(Serialize, Deserialize, Default)]
-struct Passkeys {
-    passkeys: Vec<Passkey>,
 }
 
 fn env(k: &str) -> Result<String> {
@@ -83,21 +79,21 @@ impl App {
         self.directory.entry(user)
     }
 
-    fn load(&self, user: &str) -> Result<Passkeys> {
-        let p = self.dir.join(format!("{user}.passkeys.json"));
-        match std::fs::read(&p) {
-            Ok(b) => Ok(serde_json::from_slice(&b)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Passkeys::default()),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn store(&self, user: &str, d: &Passkeys) -> Result<()> {
-        let p = self.dir.join(format!("{user}.passkeys.json"));
-        let tmp = self.dir.join(format!(".{user}.passkeys.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(d)?)?;
-        std::fs::rename(&tmp, &p)?;
-        Ok(())
+    /// The passkeys in the user's signed entry, as webauthn-rs credentials.
+    /// A record that does not parse is skipped, never fatal: one odd entry
+    /// must not lock the others out.
+    fn passkeys(&self, user: &str) -> Vec<Passkey> {
+        self.entry(user)
+            .ok()
+            .flatten()
+            .map(|e| {
+                e.entry
+                    .passkeys
+                    .iter()
+                    .filter_map(|p| serde_json::from_value(p.cred.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Verify a biscuit against the devices in the user's entry. `operation`
@@ -233,13 +229,7 @@ async fn enrol_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
     let Some(user) = app.identify(&headers, "enrol") else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    let dir = match app.load(&user) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("enrol: {e:#}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
+    let existing = app.passkeys(&user);
     // a stable per-user id for the authenticator: derived from the name, so
     // the same person enrolling twice is the same user to the passkey
     let uid = {
@@ -249,7 +239,7 @@ async fn enrol_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
         b.copy_from_slice(&h[..16]);
         Uuid::from_bytes(b)
     };
-    let exclude: Vec<CredentialID> = dir.passkeys.iter().map(|p| p.cred_id().clone()).collect();
+    let exclude: Vec<CredentialID> = existing.iter().map(|p| p.cred_id().clone()).collect();
     match app
         .webauthn
         .start_passkey_registration(uid, &user, &user, Some(exclude))
@@ -283,22 +273,54 @@ async fn enrol_finish(
             return (StatusCode::BAD_REQUEST, format!("passkey rejected: {e}")).into_response();
         }
     };
-    let mut dir = app.load(&user).unwrap_or_default();
-    dir.passkeys.push(passkey);
-    if let Err(e) = app.store(&user, &dir) {
-        eprintln!("enrol: {e:#}");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    // Not stored here. The browser made it; only the person's root can put
+    // it in the entry, and that key is with the terminal that printed the
+    // link. It collects the credential with the same token.
+    let Some(key) = bearer(&headers).map(pending_key) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let id = B64_URL.encode(passkey.cred_id().as_slice());
+    let cred = match serde_json::to_value(&passkey) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("enrol: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let mut m = app.pending.lock().unwrap();
+    m.retain(|_, (t, _)| t.elapsed() < Duration::from_secs(600));
+    m.insert(
+        key,
+        (
+            Instant::now(),
+            identity::Passkey {
+                id: id.clone(),
+                cred,
+                added: identity::now(),
+            },
+        ),
+    );
+    eprintln!("passkey {id} made for {user}; waiting for dd to sign it in");
+    Json(serde_json::json!({ "id": id, "user": user })).into_response()
+}
+
+/// `dd enrol` polls this with its enrol token until the browser is done.
+async fn enrol_result(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    if app.identify(&headers, "enrol").is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
     }
-    eprintln!(
-        "passkey enrolled for {user} ({} on file)",
-        dir.passkeys.len()
-    );
-    let mut r = StatusCode::OK.into_response();
-    r.headers_mut().insert(
-        "set-cookie",
-        HeaderValue::from_str(&app.sessions.issue(&user)).unwrap(),
-    );
-    r
+    let Some(key) = bearer(&headers).map(pending_key) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match app.pending.lock().unwrap().remove(&key) {
+        Some((_, pk)) => Json(pk).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+fn pending_key(token: &str) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(token.as_bytes()))
 }
 
 #[derive(Deserialize)]
@@ -311,15 +333,15 @@ async fn login_start(State(app): State<Arc<App>>, Json(q): Json<LoginStart>) -> 
     if !valid_user(&user) {
         return (StatusCode::BAD_REQUEST, "bad username").into_response();
     }
-    let dir = app.load(&user).unwrap_or_default();
-    if dir.passkeys.is_empty() {
+    let passkeys = app.passkeys(&user);
+    if passkeys.is_empty() {
         return (
             StatusCode::NOT_FOUND,
-            "no passkey enrolled for that name here",
+            "no passkey in that name's entry - `dd enrol` adds one",
         )
             .into_response();
     }
-    match app.webauthn.start_passkey_authentication(&dir.passkeys) {
+    match app.webauthn.start_passkey_authentication(&passkeys) {
         Ok((rcr, state)) => {
             let id = app.ceremony_put(Ceremony::Login { user, state });
             with_challenge(rcr, id)
@@ -343,16 +365,13 @@ async fn login_finish(
     else {
         return (StatusCode::BAD_REQUEST, "no ceremony").into_response();
     };
-    let result = match app.webauthn.finish_passkey_authentication(&cred, &state) {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::UNAUTHORIZED, format!("refused: {e}")).into_response(),
-    };
-    // the signature counter moves; keep it, so a cloned authenticator shows
-    let mut dir = app.load(&user).unwrap_or_default();
-    for pk in dir.passkeys.iter_mut() {
-        pk.update_credential(&result);
+    // The signature counter is not written back: the credential lives in
+    // the signed entry, which this box cannot update. Clone detection by
+    // counter is given up for that; the passkey's private key never leaves
+    // the authenticator either way.
+    if let Err(e) = app.webauthn.finish_passkey_authentication(&cred, &state) {
+        return (StatusCode::UNAUTHORIZED, format!("refused: {e}")).into_response();
     }
-    let _ = app.store(&user, &dir);
     let mut r = StatusCode::OK.into_response();
     r.headers_mut().insert(
         "set-cookie",
@@ -540,11 +559,11 @@ async fn main() -> Result<()> {
         Err(_) => None,
     };
     let app = Arc::new(App {
-        dir,
         directory: directory.clone(),
         sessions: session::Sessions::open(&state_dir, &domain)?,
         webauthn,
         ceremonies: Mutex::new(HashMap::new()),
+        pending: Mutex::new(HashMap::new()),
         oidc,
     });
     let router = Router::new()
@@ -558,6 +577,7 @@ async fn main() -> Result<()> {
         .route("/_dd/enrol", get(|| async { Html(pages::ENROL) }))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
+        .route("/_dd/enrol/result", get(enrol_result))
         // the per-box issuer for jellyfin
         .route(
             "/_dd/oidc/.well-known/openid-configuration",

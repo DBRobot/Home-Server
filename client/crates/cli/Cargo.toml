@@ -15,7 +15,7 @@ archive = { path = "../archive" }
 hkdf = "0.12"
 sha2 = "0.10"
 url = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 anyhow = "1"
 rpassword = "7"
 zeroize = "1"
