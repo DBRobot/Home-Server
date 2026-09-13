@@ -1,5 +1,6 @@
 {
   config,
+  lib,
   pkgs,
   self,
   ...
@@ -84,37 +85,35 @@ in
     map
       (h: {
         name = "${h}.${base}";
-        value = {
-          locations."/_dd/" = {
+        value.locations = {
+          "/_dd/" = {
             proxyPass = "http://127.0.0.1:${toString port}/_dd/";
             extraConfig = ''
               limit_req zone=signup burst=8 nodelay;
               proxy_set_header X-Original-URI $request_uri;
             '';
           };
-          locations."@login".extraConfig = ''
+          "@login".extraConfig = ''
             return 302 /_dd/login?rd=$request_uri;
           '';
         }
-        // (
-          # the bootstrap for a first browser passkey is an oauth2-proxy login,
-          # and its callback is per-host - files and llm already carry the
-          # /oauth2/ path, these two need it as well
-          if
-            builtins.elem h [
+        # the bootstrap for a first browser passkey is an oauth2-proxy login,
+        # and its callback is per-host - files and llm already carry the
+        # /oauth2/ path, these two need it as well. Added INSIDE locations:
+        # `//` on the vhost would replace the whole set, which is exactly the
+        # bug that once dropped /_dd/ from these two hosts.
+        //
+          lib.optionalAttrs
+            (builtins.elem h [
               "grafana"
               "jellyfin"
-            ]
-          then
+            ])
             {
-              locations."/oauth2/" = {
+              "/oauth2/" = {
                 proxyPass = "http://127.0.0.1:4180";
                 extraConfig = "proxy_set_header X-Scheme $scheme;";
               };
-            }
-          else
-            { }
-        );
+            };
       })
       [
         "files"
