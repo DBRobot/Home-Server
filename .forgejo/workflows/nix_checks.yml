@@ -5,9 +5,15 @@ name: nix_checks
 
 on:
   workflow_call:
+    inputs:
+      run:
+        description: "false: report every job as skipped"
+        type: boolean
+        default: true
 
 jobs:
   flake_check:
+    if: ${{ inputs.run }}
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
@@ -15,6 +21,7 @@ jobs:
         run: nix flake check --show-trace
 
   build_host:
+    if: ${{ inputs.run }}
     runs-on: nix
     strategy:
       fail-fast: false

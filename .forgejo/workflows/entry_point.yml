@@ -41,12 +41,17 @@ jobs:
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
           echo "nix: $nix  rust: $rust"
 
+  # Always called; each leaf skips itself when nothing relevant changed. A
+  # skipped leaf still reports, which a required check needs - a skipped
+  # caller would leave the leaves unreported and the merge blocked forever.
   nix_checks:
     needs: files_modified
-    if: needs.files_modified.outputs.nix == 'true'
     uses: ./.forgejo/workflows/nix_checks.yml
+    with:
+      run: ${{ needs.files_modified.outputs.nix == 'true' }}
 
   rust_checks:
     needs: files_modified
-    if: needs.files_modified.outputs.rust == 'true'
     uses: ./.forgejo/workflows/rust_checks.yml
+    with:
+      run: ${{ needs.files_modified.outputs.rust == 'true' }}

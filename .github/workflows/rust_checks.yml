@@ -5,6 +5,11 @@ name: rust_checks
 
 on:
   workflow_call:
+    inputs:
+      run:
+        description: "false: report every job as skipped"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -15,6 +20,7 @@ defaults:
 
 jobs:
   lint:
+    if: ${{ inputs.run }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,6 +33,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   test:
+    if: ${{ inputs.run }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
