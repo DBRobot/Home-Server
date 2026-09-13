@@ -1,6 +1,7 @@
 {
   config,
   pkgs,
+  lib,
   ...
 }:
 let
@@ -42,6 +43,22 @@ in
         openssh
       ];
     };
+  };
+
+  # Not the module's DynamicUser: systemd mounts a dynamic user's state
+  # directory noexec (idmapped), and a host-mode job builds and runs things
+  # there - every cargo build script died with "Permission denied". A plain
+  # system user gets an ordinary directory.
+  users.users.forgejo-runner = {
+    isSystemUser = true;
+    group = "forgejo-runner";
+    home = "/var/lib/gitea-runner";
+  };
+  users.groups.forgejo-runner = { };
+  systemd.services.gitea-runner-node1.serviceConfig = {
+    DynamicUser = lib.mkForce false;
+    User = lib.mkForce "forgejo-runner";
+    Group = "forgejo-runner";
   };
 
   sops.secrets.forgejo-runner-token = { };
