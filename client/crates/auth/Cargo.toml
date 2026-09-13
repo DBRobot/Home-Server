@@ -15,3 +15,4 @@ thiserror = "2"
 # Biscuit is the token format: public-key verification, offline, attenuable.
 biscuit-auth = "6"
 base64 = "0.22"
+serde_json = "1"
