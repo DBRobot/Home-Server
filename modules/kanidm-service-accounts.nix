@@ -62,6 +62,10 @@ let
   converge = pkgs.writeShellScript "kanidm-service-accounts" ''
     set -euo pipefail
     export HOME="$STATE_DIRECTORY"
+    # Two sessions end up cached here (idm_admin and admin), and the cli then
+    # PROMPTS for which to use on any command without -D - which in a unit is
+    # "Failed to handle user input: not a terminal". Pin the default.
+    export KANIDM_NAME=idm_admin
     pw=${config.sops.secrets.kanidm-idm-admin-password.path}
 
     for i in $(seq 1 30); do
@@ -114,7 +118,7 @@ let
     # system `admin` account can grant - done once, converged every time.
     KANIDM_PASSWORD="$(cat ${config.sops.secrets.kanidm-admin-password.path})" \
       ${kanidm} login -D admin >/dev/null
-    ${kanidm} group add-members idm_access_control_admins idm_admin >/dev/null 2>&1 || true
+    ${kanidm} -D admin group add-members idm_access_control_admins idm_admin >/dev/null 2>&1 || true
     KANIDM_PASSWORD="$(cat "$pw")" ${kanidm} login -D idm_admin >/dev/null
 
     ${kanidm} group remove-members idm_people_on_boarding signup >/dev/null 2>&1 || true
