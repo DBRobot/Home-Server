@@ -72,6 +72,10 @@ let
       sleep 2
     done
 
+    # the receiver group has to exist before the loop puts anyone in it
+    ${kanidm} group get signup_service >/dev/null 2>&1 \
+      || ${kanidm} group create signup_service 00000000-0000-0000-0000-000000000001 >/dev/null
+
     ${lib.concatStringsSep "\n" (
       lib.mapAttrsToList (name: a: ''
         if ! ${kanidm} service-account get ${name} >/dev/null 2>&1; then
@@ -109,9 +113,6 @@ let
     ${kanidm} group add-members idm_access_control_admins idm_admin >/dev/null 2>&1 || true
     KANIDM_PASSWORD="$(cat "$pw")" ${kanidm} login -D idm_admin >/dev/null
 
-    ${kanidm} group get signup_service >/dev/null 2>&1 \
-      || ${kanidm} group create signup_service 00000000-0000-0000-0000-000000000001 >/dev/null
-    ${kanidm} group add-members signup_service signup >/dev/null
     ${kanidm} group remove-members idm_people_on_boarding signup >/dev/null 2>&1 || true
 
     pending=$(${kanidm} group get pending | ${pkgs.gnused}/bin/sed -n 's/^uuid: //p')
