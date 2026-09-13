@@ -138,7 +138,16 @@ in
       # extra-jwt-issuers in modules/llm-auth.nix.
       systems.oauth2.llm = {
         displayName = "LLM gateway";
-        originUrl = "https://llm.${base}/oauth2/callback";
+        # oauth2-proxy answers on every browser vhost, and its callback is
+        # per-host - kanidm matches redirect_uri exactly, so each one has to
+        # be listed or the bootstrap login fails with invalid_origin on any
+        # vhost but llm.
+        originUrl = [
+          "https://llm.${base}/oauth2/callback"
+          "https://files.${base}/oauth2/callback"
+          "https://grafana.${base}/oauth2/callback"
+          "https://jellyfin.${base}/oauth2/callback"
+        ];
         originLanding = "https://llm.${base}/";
         basicSecretFile = config.sops.secrets.llm-oauth-secret.path;
         preferShortUsername = true;
