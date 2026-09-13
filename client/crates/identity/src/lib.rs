@@ -68,19 +68,18 @@ pub struct Device {
     pub added: u64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Signer_ {
-    Root,
-    Recovery,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedEntry {
     pub entry: Entry,
-    pub signer: Signer_,
-    /// base64 ed25519 signature over the canonical json of `entry`
+    /// base64 ed25519 signature over the canonical json of `entry`, by the
+    /// root named IN the entry. Always present, so an entry at any version
+    /// stands on its own: a box that has never seen the name can still tell
+    /// the entry is internally honest.
     pub signature: String,
+    /// When the root changed: the same bytes signed by the recovery key that
+    /// was on file before. The box that holds the previous entry checks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_signature: Option<String>,
 }
 
 pub fn generate() -> SigningKey {
@@ -135,31 +134,55 @@ pub fn canonical(entry: &Entry) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(entry)?)
 }
 
-pub fn sign(entry: Entry, key: &SigningKey, signer: Signer_) -> Result<SignedEntry> {
-    let sig: Signature = key.sign(&canonical(&entry)?);
+/// Sign with the root the entry names.
+pub fn sign(entry: Entry, root: &SigningKey) -> Result<SignedEntry> {
+    if entry.root != encode_public(&root.verifying_key()) {
+        return Err(Error::Key("that is not the root the entry names".into()));
+    }
+    let sig: Signature = root.sign(&canonical(&entry)?);
     Ok(SignedEntry {
         entry,
-        signer,
         signature: B64.encode(sig.to_bytes()),
+        recovery_signature: None,
     })
 }
 
-/// Does `key` vouch for exactly these bytes?
-pub fn verify(signed: &SignedEntry, key: &VerifyingKey) -> Result<()> {
-    let sig = B64
-        .decode(&signed.signature)
-        .map_err(|_| Error::Signature)?;
+/// Recovery: a new root signs, and the old recovery key co-signs to hand over.
+pub fn sign_recovery(
+    entry: Entry,
+    new_root: &SigningKey,
+    recovery: &SigningKey,
+) -> Result<SignedEntry> {
+    let mut signed = sign(entry, new_root)?;
+    let sig: Signature = recovery.sign(&canonical(&signed.entry)?);
+    signed.recovery_signature = Some(B64.encode(sig.to_bytes()));
+    Ok(signed)
+}
+
+fn check(sig_b64: &str, entry: &Entry, key: &VerifyingKey) -> Result<()> {
+    let sig = B64.decode(sig_b64).map_err(|_| Error::Signature)?;
     let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
-    key.verify(&canonical(&signed.entry)?, &sig)
+    key.verify(&canonical(entry)?, &sig)
         .map_err(|_| Error::Signature)
+}
+
+/// Is the entry signed by the root it names? True of every valid entry.
+pub fn verify(signed: &SignedEntry) -> Result<()> {
+    check(
+        &signed.signature,
+        &signed.entry,
+        &decode_public(&signed.entry.root)?,
+    )
 }
 
 /// The rule a box applies before storing `new` in place of `existing`.
 ///
-/// - first sight: the entry must be signed by its own root
-/// - otherwise: strictly newer version, and signed by the root ALREADY on
-///   file - or by the recovery key already on file, in which case the root
-///   may change (that is what recovery is)
+/// - always: signed by the root it names
+/// - first sight: nothing more. Whether a first sight may be trusted at all
+///   is the box's question (has any peer seen the name?), not this one's.
+/// - otherwise: strictly newer version, and either the same root as on
+///   file, or a different root co-signed by the recovery key on file - that
+///   is what recovery is
 ///
 /// Nothing here consults a server, an admin, or a name registry. A box that
 /// wants to lie can only withhold or replay; it cannot make this pass.
@@ -173,41 +196,28 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
     for d in &new.entry.devices {
         decode_public(&d.public_key)?;
     }
-    match existing {
-        None => {
-            if new.entry.version != 1 {
-                return Err(Error::Rejected("a first entry has version 1".into()));
-            }
-            if new.signer != Signer_::Root {
-                return Err(Error::Rejected(
-                    "a first entry is signed by its root".into(),
-                ));
-            }
-            verify(new, &decode_public(&new.entry.root)?)
-        }
-        Some(old) => {
-            if new.entry.name != old.entry.name {
-                return Err(Error::Rejected("name mismatch".into()));
-            }
-            if new.entry.version <= old.entry.version {
-                return Err(Error::Rejected(format!(
-                    "version {} is not newer than {}",
-                    new.entry.version, old.entry.version
-                )));
-            }
-            match new.signer {
-                Signer_::Root => {
-                    if new.entry.root != old.entry.root {
-                        return Err(Error::Rejected(
-                            "only the recovery key may change the root".into(),
-                        ));
-                    }
-                    verify(new, &decode_public(&old.entry.root)?)
-                }
-                Signer_::Recovery => verify(new, &decode_public(&old.entry.recovery)?),
-            }
-        }
+    verify(new)?;
+    let Some(old) = existing else {
+        return Ok(());
+    };
+    if new.entry.name != old.entry.name {
+        return Err(Error::Rejected("name mismatch".into()));
     }
+    if new.entry.version <= old.entry.version {
+        return Err(Error::Rejected(format!(
+            "version {} is not newer than {}",
+            new.entry.version, old.entry.version
+        )));
+    }
+    if new.entry.root == old.entry.root {
+        return Ok(());
+    }
+    let Some(rs) = &new.recovery_signature else {
+        return Err(Error::Rejected(
+            "only the recovery key may change the root".into(),
+        ));
+    };
+    check(rs, &new.entry, &decode_public(&old.entry.recovery)?)
 }
 
 pub fn valid_name(s: &str) -> bool {
@@ -252,42 +262,53 @@ mod tests {
             version: 1,
             updated: 1,
         };
-        let s1 = sign(e1.clone(), &root, Signer_::Root).unwrap();
+        let s1 = sign(e1.clone(), &root).unwrap();
         accept(None, &s1).unwrap();
 
-        // a stranger's key cannot produce version 2
+        // a stranger's key cannot produce version 2: sign() refuses a key the
+        // entry does not name, and a forged signature fails accept
         let stranger = generate();
         let mut e2 = e1.clone();
         e2.version = 2;
         e2.devices.push(dev(&generate()));
-        assert!(
-            accept(
-                Some(&s1),
-                &sign(e2.clone(), &stranger, Signer_::Root).unwrap()
-            )
-            .is_err()
-        );
+        assert!(sign(e2.clone(), &stranger).is_err());
+        let mut forged = sign(e2.clone(), &root).unwrap();
+        forged.signature = B64.encode([0u8; 64]);
+        assert!(accept(Some(&s1), &forged).is_err());
         // the root can
-        let s2 = sign(e2.clone(), &root, Signer_::Root).unwrap();
+        let s2 = sign(e2.clone(), &root).unwrap();
         accept(Some(&s1), &s2).unwrap();
         // replaying the old one is refused
         assert!(accept(Some(&s2), &s1).is_err());
-        // the root may not swap itself out
+        // a new root on its own is refused, however well it signs itself
         let mut e3 = e2.clone();
         e3.version = 3;
         e3.root = encode_public(&stranger.verifying_key());
-        assert!(accept(Some(&s2), &sign(e3.clone(), &root, Signer_::Root).unwrap()).is_err());
-        // the recovery key may: that is recovery
-        let s3 = sign(e3.clone(), &recovery, Signer_::Recovery).unwrap();
+        assert!(accept(Some(&s2), &sign(e3.clone(), &stranger).unwrap()).is_err());
+        // co-signed by the recovery key on file it is recovery
+        let s3 = sign_recovery(e3.clone(), &stranger, &recovery).unwrap();
         accept(Some(&s2), &s3).unwrap();
-        // and afterwards the OLD root is out
+        // co-signed by the wrong recovery key it is not
+        assert!(
+            accept(
+                Some(&s2),
+                &sign_recovery(e3.clone(), &stranger, &generate()).unwrap()
+            )
+            .is_err()
+        );
+        // afterwards the OLD root is out and the new one is in
         let mut e4 = e3.clone();
         e4.version = 4;
-        assert!(accept(Some(&s3), &sign(e4.clone(), &root, Signer_::Root).unwrap()).is_err());
-        assert!(accept(Some(&s3), &sign(e4, &stranger, Signer_::Root).unwrap()).is_ok());
-        // a first entry must be signed by its own root
+        assert!(sign(e4.clone(), &root).is_err());
+        assert!(accept(Some(&s3), &sign(e4, &stranger).unwrap()).is_ok());
+        // a box seeing the name for the first time takes any version that
+        // stands on its own - the peer check is the box's job, not this one's
+        accept(None, &s3).unwrap();
+        // but never an entry whose signature is not by the root it names
         let mut e0 = e1.clone();
         e0.root = encode_public(&stranger.verifying_key());
-        assert!(accept(None, &sign(e0, &root, Signer_::Root).unwrap()).is_err());
+        let mut bad = sign(e0, &stranger).unwrap();
+        bad.signature = s1.signature.clone();
+        assert!(accept(None, &bad).is_err());
     }
 }

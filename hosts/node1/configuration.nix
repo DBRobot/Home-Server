@@ -40,6 +40,8 @@
   '';
 
   dd.domain = "distributed-datacenter.duckdns.org";
+  # node2's directory copy, over the tailnet
+  dd.verify.peers = [ "http://100.95.10.10:4181/_dd/directory" ];
 
   networking.hostName = "node1";
   networking.hostId = "0195f284";

@@ -18,6 +18,7 @@
   # service - because the entries it keeps are signed by their owners and
   # would be equally good from any box.
   dd.verify.role = "directory";
+  dd.verify.peers = [ "https://files.distributed-datacenter.duckdns.org/_dd/directory" ];
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;

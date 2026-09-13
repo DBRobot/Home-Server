@@ -522,7 +522,14 @@ async fn main() -> Result<()> {
     let bind: std::net::SocketAddr = env_or("VERIFY_BIND", "127.0.0.1:4181").parse()?;
     let dir: PathBuf = env("VERIFY_DIR")?.into();
     std::fs::create_dir_all(&dir)?;
-    let directory = Arc::new(directory::Directory::open(dir.clone())?);
+    let peers: Vec<String> = env_or("VERIFY_PEERS", "")
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    let directory = Arc::new(directory::Directory::open(dir.clone(), peers)?);
+    tokio::spawn(directory.clone().sync_forever());
     // a box with nothing else on it: no domain, no sessions, no secrets. It
     // serves entries and accepts the ones that verify, and that is all.
     if env_or("VERIFY_ROLE", "full") == "directory" {

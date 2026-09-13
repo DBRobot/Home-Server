@@ -25,6 +25,15 @@ in
     default = "full";
     description = "full: auth_request for the services on this box plus the directory; directory: the directory alone, on the tailnet.";
   };
+  # The other boxes' directories. Pulled every five minutes through the same
+  # accept rule a client's update gets; a new name from the network is taken
+  # only once every peer has been pulled and none knows it under another
+  # root. A box with no peers is on its own and takes new names at once.
+  options.dd.verify.peers = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    default = [ ];
+    description = "Directory urls of the other boxes, e.g. https://files.example/_dd/directory.";
+  };
 
   config = {
     users.users.${user} = {
@@ -52,6 +61,7 @@ in
         # lets only the tailnet in: 4181 is not in allowedTCPPorts.
         VERIFY_BIND = if full then "127.0.0.1:${toString port}" else "0.0.0.0:${toString port}";
         VERIFY_DIR = "/var/lib/dd-verify/keys";
+        VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
       }
       // lib.optionalAttrs full {
         # the browser login: passkeys scoped to the whole domain, so one login

@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use auth::KeyStore;
-use identity::{Device, Entry, SignedEntry, Signer_};
+use identity::{Device, Entry, SignedEntry};
 
 /// keyring account holding the root secret, base64
 pub const ROOT: &str = "identity-root";
@@ -139,7 +139,7 @@ pub async fn create(
         version: 1,
         updated: identity::now(),
     };
-    let signed = identity::sign(entry, &root, Signer_::Root)?;
+    let signed = identity::sign(entry, &root)?;
     publish(dirs, &signed).await?;
     keys.set(ROOT, &identity::encode_secret(&root))?;
     Ok(identity::encode_secret(&recovery))
@@ -176,10 +176,7 @@ pub async fn ours(
             identity::fingerprint(&mine)
         );
     }
-    if cur.signer == Signer_::Root {
-        identity::verify(&cur, &root.verifying_key())
-            .context("the entry under our root does not carry our signature")?;
-    }
+    identity::verify(&cur).context("the entry under our root does not carry a valid signature")?;
     Ok(cur)
 }
 
@@ -203,7 +200,7 @@ pub async fn admit(
     });
     entry.version += 1;
     entry.updated = identity::now();
-    let signed = identity::sign(entry, root, Signer_::Root)?;
+    let signed = identity::sign(entry, root)?;
     publish(dirs, &signed).await?;
     Ok(signed)
 }
@@ -235,7 +232,7 @@ pub async fn recover(
         version: cur.entry.version + 1,
         updated: identity::now(),
     };
-    let signed = identity::sign(entry, &recovery, Signer_::Recovery)?;
+    let signed = identity::sign_recovery(entry, &root, &recovery)?;
     publish(dirs, &signed).await?;
     keys.set(ROOT, &identity::encode_secret(&root))?;
     Ok(identity::encode_secret(&next_recovery))
@@ -264,7 +261,7 @@ pub async fn admit_passkey(
     entry.passkeys.push(pk);
     entry.version += 1;
     entry.updated = identity::now();
-    let signed = identity::sign(entry, root, Signer_::Root)?;
+    let signed = identity::sign(entry, root)?;
     publish(dirs, &signed).await?;
     Ok(signed)
 }
@@ -284,7 +281,7 @@ pub async fn remove_passkey(
     }
     entry.version += 1;
     entry.updated = identity::now();
-    let signed = identity::sign(entry, root, Signer_::Root)?;
+    let signed = identity::sign(entry, root)?;
     publish(dirs, &signed).await?;
     Ok(signed)
 }
