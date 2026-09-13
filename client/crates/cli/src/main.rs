@@ -87,6 +87,16 @@ enum Command {
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
+    /// The fleet: every box, its roles and where it stands. Reads
+    /// fleet/boxes.json; with --private, the owner and place behind the ids
+    /// (secrets/fleet.yaml, readable by the release signer's dd key).
+    Box {
+        #[command(subcommand)]
+        cmd: BoxCmd,
+        /// the repository checkout; defaults to the current directory
+        #[arg(long, default_value = ".")]
+        repo: String,
+    },
     /// The repo's sops files, edited with an age key that lives in this
     /// machine's credential store. `dd secret run -- <sops arguments>` runs
     /// sops with that key; `init` makes the key and prints the recipient to
@@ -186,10 +196,24 @@ enum PasskeyCmd {
     /// Every passkey in your entry, by id.
     List,
     /// Drop one; the browser that holds it stops working everywhere at once.
-    Remove { id: String },
+    Remove {
+        /// base64url, so it may start with a hyphen
+        #[arg(allow_hyphen_values = true)]
+        id: String,
+    },
     /// Sign in a credential record from a file - the one a box used to keep
     /// in <name>.passkeys.json before passkeys lived in the entry.
     Add { file: String },
+}
+
+#[derive(Subcommand)]
+enum BoxCmd {
+    /// Every box in the list.
+    List {
+        /// Also the owner, site and region behind the opaque ids.
+        #[arg(long)]
+        private: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -630,6 +654,67 @@ async fn main() -> Result<()> {
                     "root for {name} stored ({})",
                     identity::fingerprint(&identity::encode_public(&root.verifying_key()))
                 );
+            }
+        },
+
+        Command::Box { cmd, repo } => match cmd {
+            BoxCmd::List { private } => {
+                let path = std::path::Path::new(&repo).join("fleet/boxes.json");
+                let boxes: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?,
+                )?;
+                let secret: Option<serde_json::Value> = if private {
+                    let out = std::process::Command::new(std::env::current_exe()?)
+                        .args(["secret", "run", "--", "-d", "--output-type", "json"])
+                        .arg(std::path::Path::new(&repo).join("secrets/fleet.yaml"))
+                        .env(
+                            "DD_KEYRING_FILE",
+                            std::env::var("DD_KEYRING_FILE").unwrap_or_default(),
+                        )
+                        .output()?;
+                    anyhow::ensure!(out.status.success(), "decrypting secrets/fleet.yaml");
+                    Some(serde_json::from_slice(&out.stdout)?)
+                } else {
+                    None
+                };
+                for (name, b) in boxes.as_object().context("boxes.json is not an object")? {
+                    let roles: Vec<&str> = b["roles"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|r| r.as_str()).collect())
+                        .unwrap_or_default();
+                    println!(
+                        "{name}  {} {}  tailnet {}  {}",
+                        b["siteId"].as_str().unwrap_or("-"),
+                        b["regionId"].as_str().unwrap_or("-"),
+                        b["tailnet"].as_str().unwrap_or("-"),
+                        if b["public"].as_bool().unwrap_or(false) {
+                            "public"
+                        } else {
+                            "tailnet only"
+                        },
+                    );
+                    println!("  roles: {}", roles.join(" "));
+                    if let Some(sec) = &secret {
+                        let sb = &sec["boxes"][name];
+                        let site = sb["site"].as_str().unwrap_or("-");
+                        let region = sb["region"].as_str().unwrap_or("-");
+                        println!(
+                            "  owner: {}   site: {}   region: {}",
+                            sb["owner"].as_str().unwrap_or("-"),
+                            sec["sites"][site].as_str().unwrap_or(site),
+                            sec["regions"][region].as_str().unwrap_or(region)
+                        );
+                        if let Some(c) = sb["contents"].as_array() {
+                            for item in c {
+                                println!(
+                                    "  holds: {} - {}",
+                                    item["role"].as_str().unwrap_or("-"),
+                                    item["state"].as_str().unwrap_or("-")
+                                );
+                            }
+                        }
+                    }
+                }
             }
         },
 

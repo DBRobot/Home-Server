@@ -1,7 +1,5 @@
-# Evaluation only, no vm: an untrusted box configured with a plaintext
-# service must trip the placement assertion, naming the service; a trusted
-# one must not. Only the assertions are evaluated, not the whole system,
-# so this needs no certificates, secrets or disks.
+# Evaluation only: a module that reads plaintext registers itself, and
+# registering is all that happens - no box is trusted and none refuses.
 {
   pkgs,
   self,
@@ -9,28 +7,18 @@
   ...
 }:
 let
-  assertionsFor =
-    trusted:
+  cfg =
     (lib.nixosSystem {
       modules = [
         ./box.nix
         ../modules/jellyfin.nix
-        {
-          dd.box.ownerTrusted = trusted;
-          nixpkgs.hostPlatform = pkgs.stdenv.hostPlatform.system;
-        }
+        { nixpkgs.hostPlatform = pkgs.stdenv.hostPlatform.system; }
       ];
       specialArgs = { inherit self; };
-    }).config.assertions;
-  tripped =
-    trusted:
-    builtins.filter (a: !a.assertion && lib.hasInfix "not owner-trusted" a.message) (
-      assertionsFor trusted
-    );
-  untrusted = tripped false;
-  trustedOk = tripped true == [ ];
+    }).config;
+  labels = cfg.dd.box.plaintext;
+  refusals = builtins.filter (a: !a.assertion && lib.hasInfix "plaintext" a.message) cfg.assertions;
 in
-assert builtins.length untrusted == 1;
-assert lib.hasInfix "jellyfin" (builtins.head untrusted).message;
-assert trustedOk;
-pkgs.runCommand "placement-rule" { } "echo ok > $out"
+assert builtins.any (l: lib.hasInfix "jellyfin" l) labels;
+assert refusals == [ ];
+pkgs.runCommand "plaintext-label" { } "echo ok > $out"

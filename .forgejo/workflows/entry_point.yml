@@ -37,11 +37,11 @@ jobs:
           echo "changed files:"; echo "$changed" | sed 's/^/  /'
           nix=false; rust=false; vm=false
           # the client is built by the flake too, so a rust change is a nix change
-          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|hosts/|modules/|secrets/|client/|\.forgejo/workflows/)' && nix=true
+          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|hosts/|modules/|roles/|fleet/|secrets/|client/|\.forgejo/workflows/)' && nix=true
           echo "$changed" | grep -qE '^(client/|\.forgejo/workflows/)' && rust=true
           # boxes booted as vms: only when what a box runs changed, not for
           # every client or host tweak. Minutes, so spent where it counts.
-          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|modules/|tests/|client/crates/(verify|identity)/|\.forgejo/workflows/)' && vm=true
+          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|modules/|roles/|fleet/|hosts/|tests/|client/crates/(verify|identity)/|\.forgejo/workflows/)' && vm=true
           echo "nix=$nix" >> "$GITHUB_OUTPUT"
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
           echo "vm=$vm" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,38 @@
+# Evaluation only: the box list is well-formed. Every role a box names is a
+# file, every box has core, every box builds, and the wiring the flake
+# derives from the list (peers, grafana's datasources) says what the list
+# says.
+{
+  pkgs,
+  self,
+  lib,
+  ...
+}:
+let
+  boxes = builtins.fromJSON (builtins.readFile ../fleet/boxes.json);
+  cfgs = self.nixosConfigurations;
+  ok = builtins.all (x: x) (
+    lib.flatten (
+      lib.mapAttrsToList (
+        name: box:
+        [
+          (builtins.elem "core" box.roles)
+          (builtins.all (r: builtins.pathExists (../roles + "/${r}.nix")) box.roles)
+          (builtins.hasAttr name cfgs)
+          (cfgs.${name}.config.networking.hostName == name)
+          # peers: every other box, none of itself
+          (
+            builtins.length cfgs.${name}.config.dd.verify.peers
+            == builtins.length (builtins.attrNames boxes) - 1
+          )
+          (builtins.all (p: !lib.hasInfix box.tailnet p) cfgs.${name}.config.dd.verify.peers)
+        ]
+        ++ lib.optional (builtins.elem "observe" box.roles) (
+          builtins.attrNames cfgs.${name}.config.dd.grafana.boxes == builtins.attrNames boxes
+        )
+      ) boxes
+    )
+  );
+in
+assert ok;
+pkgs.runCommand "box-list" { } "echo ok > $out"
