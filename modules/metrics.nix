@@ -79,7 +79,7 @@ in
       set -euo pipefail
       out=${facts}/dd_box.prom.tmp
       esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-      host=$(hostname)
+      host=$(uname -n)
       model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')
       cores=$(nproc)
       mem=$(awk '/MemTotal/ {print $2 * 1024}' /proc/meminfo)
