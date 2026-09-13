@@ -17,6 +17,7 @@ pub struct Client {
 
 /// What a signup attempt did, so the handler can answer differently without
 /// caring how it was worked out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Created,
     /// The account already existed but has never left `pending`, so this is a
@@ -49,7 +50,35 @@ impl Client {
             .with_context(|| format!("POST {path}"))
     }
 
-    async fn person_exists(&self, name: &str) -> Result<bool> {
+    /// Whether the account already carries a credential - a passkey or a
+    /// password. The worker refuses to touch such an account no matter what
+    /// the spool says: an enrolled person is never a signup.
+    pub async fn has_credential(&self, name: &str) -> Result<bool> {
+        let r = self
+            .http
+            .get(self.url(&format!("/v1/person/{name}")))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .context("GET person")?;
+        if r.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        let v: Option<serde_json::Value> = r.error_for_status()?.json().await?;
+        let attrs = match v.as_ref().and_then(|v| v.get("attrs")) {
+            Some(a) => a,
+            None => return Ok(false),
+        };
+        let has = |k: &str| {
+            attrs
+                .get(k)
+                .and_then(|x| x.as_array())
+                .is_some_and(|a| !a.is_empty())
+        };
+        Ok(has("passkeys") || has("primary_credential") || has("attested_passkeys"))
+    }
+
+    pub async fn person_exists(&self, name: &str) -> Result<bool> {
         let r = self
             .http
             .get(self.url(&format!("/v1/person/{name}")))
@@ -69,7 +98,7 @@ impl Client {
     /// Membership of `pending` is how a failed-mail retry is told apart from
     /// someone trying to take a name that is already in use. Anyone who has
     /// been granted access is in `users`, so they can never be reached here.
-    async fn is_pending(&self, group: &str, name: &str) -> Result<bool> {
+    pub async fn is_pending(&self, group: &str, name: &str) -> Result<bool> {
         let r = self
             .http
             .get(self.url(&format!("/v1/group/{group}/_attr/member")))
@@ -123,6 +152,20 @@ impl Client {
         Ok(())
     }
 
+    /// What a signup for `name` would be. Needs only read access, so the
+    /// internet-facing service can answer "taken" immediately without holding
+    /// anything that writes. The worker runs the same check again with its
+    /// own token before acting, and trusts nothing the spool says.
+    pub async fn classify(&self, group: &str, name: &str) -> Result<Outcome> {
+        if !self.person_exists(name).await? {
+            return Ok(Outcome::Created);
+        }
+        if self.is_pending(group, name).await? && !self.has_credential(name).await? {
+            return Ok(Outcome::Resent);
+        }
+        Ok(Outcome::NameTaken)
+    }
+
     pub async fn sign_up(
         &self,
         group: &str,
@@ -131,16 +174,14 @@ impl Client {
         email: &str,
         ttl_secs: u64,
     ) -> Result<Outcome> {
-        // With access scoped to pending, a person outside it is simply not
-        // visible: exists() is false, create fails on the name, and that is
-        // reported as taken - which it is.
-        if self.person_exists(name).await? {
-            if self.is_pending(group, name).await? {
+        match self.classify(group, name).await? {
+            Outcome::NameTaken => return Ok(Outcome::NameTaken),
+            Outcome::Resent => {
                 self.set_expiry(name, ttl_secs).await?;
                 self.send_intent(name, email, ttl_secs).await?;
                 return Ok(Outcome::Resent);
             }
-            return Ok(Outcome::NameTaken);
+            Outcome::Created => {}
         }
 
         let r = self

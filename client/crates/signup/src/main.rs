@@ -1,9 +1,16 @@
-//! Self-service signup.
+//! Self-service signup, in two processes.
 //!
-//! What this service can do is create an account and ask kanidm to mail an
-//! enrolment link. What it deliberately cannot do is authenticate as anyone: it
-//! never sees, sets or carries a credential. The password or passkey is set by
-//! the person, in kanidm's own ui, behind the link kanidm sends them.
+//! `signup serve` faces the network. It holds a READ-ONLY kanidm token: enough
+//! to say "that name is taken", not enough to change anything. A valid request
+//! becomes a file in a local spool. `signup work` faces nothing: it reads the
+//! spool with the read-write token, checks each request against kanidm itself,
+//! and refuses any whose target already carries a credential. So there is no
+//! path from the network to an existing account - kanidm cannot scope a token
+//! to "pending accounts only", but a process boundary can.
+//!
+//! Neither half ever sees, sets or carries a credential. The password or
+//! passkey is set by the person, in kanidm's own ui, behind the link kanidm
+//! sends them.
 //!
 //! New accounts land in a group that no oauth2 scope map mentions, so they can
 //! log in and reach nothing until something adds them to `users`. That group
@@ -31,6 +38,16 @@ struct Config {
     group: String,
     photos_url: String,
     intent_ttl: u64,
+    spool: std::path::PathBuf,
+}
+
+/// What crosses the process boundary. Plain data; the worker validates it
+/// all over again and trusts none of it.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Request {
+    username: String,
+    display_name: String,
+    email: String,
 }
 
 struct App {
@@ -188,15 +205,21 @@ async fn signup(
     } else {
         match app
             .kanidm
-            .sign_up(
-                &app.cfg.group,
-                &username,
-                display_name,
-                email,
-                app.cfg.intent_ttl,
-            )
+            .classify(&app.cfg.group, &username)
             .await
-        {
+            .and_then(|outcome| {
+                if outcome != kanidm::Outcome::NameTaken {
+                    spool(
+                        &app.cfg.spool,
+                        &Request {
+                            username: username.clone(),
+                            display_name: display_name.to_string(),
+                            email: email.to_string(),
+                        },
+                    )?;
+                }
+                Ok(outcome)
+            }) {
             Ok(kanidm::Outcome::Created) | Ok(kanidm::Outcome::Resent) => Reply {
                 code: StatusCode::OK,
                 status: "created",
@@ -236,6 +259,82 @@ async fn signup(
     render(&headers, reply, &app.cfg.photos_url)
 }
 
+/// One file per request, written whole then renamed, so the worker never
+/// reads a half-written one.
+fn spool(dir: &std::path::Path, req: &Request) -> Result<()> {
+    let id = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos(),
+        std::process::id()
+    );
+    let tmp = dir.join(format!(".{id}.tmp"));
+    let fin = dir.join(format!("{id}.json"));
+    std::fs::write(&tmp, serde_json::to_vec(req)?).context("writing to the spool")?;
+    std::fs::rename(&tmp, &fin).context("filing in the spool")?;
+    Ok(())
+}
+
+/// The privileged half. Polls the spool; every request is re-validated and
+/// re-classified with kanidm before anything is written, so a forged or stale
+/// file can at most create a fresh empty account.
+async fn work(app: std::sync::Arc<App>) -> Result<()> {
+    eprintln!("worker watching {}", app.cfg.spool.display());
+    loop {
+        let mut entries: Vec<_> = std::fs::read_dir(&app.cfg.spool)
+            .context("reading the spool")?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        entries.sort();
+        for path in entries {
+            let outcome = process(&app, &path).await;
+            match &outcome {
+                Ok(o) => eprintln!("{}: {o}", path.display()),
+                Err(e) => eprintln!("{}: FAILED: {e:#}", path.display()),
+            }
+            // consumed either way: a failure is logged, and the person can
+            // simply sign up again - that is the retry path, by design
+            let _ = std::fs::remove_file(&path);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+async fn process(app: &App, path: &std::path::Path) -> Result<String> {
+    let req: Request = serde_json::from_slice(&std::fs::read(path)?).context("parsing")?;
+    let username = req.username.trim().to_lowercase();
+    let display_name = req.display_name.trim();
+    let email = req.email.trim();
+    anyhow::ensure!(valid_username(&username), "rejected username");
+    anyhow::ensure!(
+        !display_name.is_empty() && display_name.chars().count() <= 128,
+        "rejected display name"
+    );
+    anyhow::ensure!(valid_email(email), "rejected email");
+
+    // The rule that makes the split worth anything: a target with a credential
+    // is never touched, whatever the request claims. sign_up re-classifies
+    // with this token and only acts on Created or Resent.
+    match app
+        .kanidm
+        .sign_up(
+            &app.cfg.group,
+            &username,
+            display_name,
+            email,
+            app.cfg.intent_ttl,
+        )
+        .await?
+    {
+        kanidm::Outcome::Created => Ok(format!("created {username}, enrolment mail queued")),
+        kanidm::Outcome::Resent => Ok(format!("resent enrolment mail for {username}")),
+        kanidm::Outcome::NameTaken => Ok(format!("ignored: {username} is taken")),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let bind: SocketAddr = env_or("SIGNUP_BIND", "127.0.0.1:8083").parse()?;
@@ -253,12 +352,18 @@ async fn main() -> Result<()> {
         // A day, not kanidm's default hour: the mail has to survive someone
         // signing up in the evening and reading it the next morning.
         intent_ttl: env_or("SIGNUP_INTENT_TTL", "86400").parse()?,
+        spool: env("SIGNUP_SPOOL")?.into(),
     };
 
     let app = std::sync::Arc::new(App {
         kanidm: kanidm::Client::new(kanidm_url, token)?,
         cfg,
     });
+
+    // `signup work` is the privileged half; everything else serves the page.
+    if std::env::args().nth(1).as_deref() == Some("work") {
+        return work(app).await;
+    }
 
     let router = Router::new()
         .route("/", get(form).post(signup))

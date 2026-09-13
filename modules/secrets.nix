@@ -36,7 +36,11 @@
       # Service account api tokens. Minted by kanidm rather than generated
       # here - it signs them - so these are captured once with
       # `mint-kanidm-token` and encrypted, not derived from anything.
-      signup-api-token.owner = "signup";
+      # Two tokens for one account, on purpose. The read-write one is held
+      # only by the worker, which faces no network; the internet-facing page
+      # gets a read-only token that can say "taken" and nothing else.
+      signup-api-token.owner = "signup-worker";
+      signup-readonly-token.owner = "signup";
       mail-sender-api-token.owner = "kanidm-mail-sender";
       # Where machine mail actually goes. Read only through the msmtp aliases
       # template below, so root-only is right.
