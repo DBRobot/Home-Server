@@ -72,13 +72,17 @@ let
       sleep 2
     done
 
-    # the receiver group has to exist before the loop puts anyone in it
-    ${kanidm} group get signup_service >/dev/null 2>&1 \
-      || ${kanidm} group create signup_service 00000000-0000-0000-0000-000000000001 >/dev/null
+    # the receiver group has to exist before the loop puts anyone in it.
+    # `group get` exits 0 for a missing group ("No matching entries"), so
+    # existence is read off the output, not the exit code.
+    if ! ${kanidm} group get signup_service 2>/dev/null | grep -qx 'name: signup_service'; then
+      ${kanidm} group create signup_service 00000000-0000-0000-0000-000000000001 >/dev/null
+      echo "created group signup_service"
+    fi
 
     ${lib.concatStringsSep "\n" (
       lib.mapAttrsToList (name: a: ''
-        if ! ${kanidm} service-account get ${name} >/dev/null 2>&1; then
+        if ! ${kanidm} service-account get ${name} 2>/dev/null | grep -qx 'name: ${name}'; then
           # entry-managed-by resolves an spn or a uuid, NOT a bare name -
           # "idm_admins" fails with ReferentialIntegrity("Uuid referenced not
           # found in database"). The builtin uuid rather than the spn, so the
