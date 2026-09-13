@@ -10,6 +10,10 @@ on:
         description: "false: report every job as skipped"
         type: boolean
         default: true
+      vm:
+        description: "boot the boxes as vms and drive the failure cases"
+        type: boolean
+        default: false
 
 jobs:
   flake_check:
@@ -17,8 +21,10 @@ jobs:
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
+      # evaluate everything, build nothing: the vm tests are built by their
+      # own job, only when what a box runs changed
       - name: flake check
-        run: nix flake check --show-trace
+        run: nix flake check --no-build --show-trace
 
   build_host:
     if: ${{ inputs.run }}
@@ -31,3 +37,11 @@ jobs:
       - uses: https://github.com/actions/checkout@v4
       - name: build ${{ matrix.host }}
         run: nix build --print-out-paths .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel
+
+  vm_tests:
+    if: ${{ inputs.run && inputs.vm }}
+    runs-on: nix
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - name: boxes as vms
+        run: nix build --no-link .#checks.x86_64-linux.placement .#checks.x86_64-linux.metrics .#checks.x86_64-linux.directory

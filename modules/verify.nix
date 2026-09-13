@@ -29,6 +29,11 @@ in
   # accept rule a client's update gets; a new name from the network is taken
   # only once every peer has been pulled and none knows it under another
   # root. A box with no peers is on its own and takes new names at once.
+  options.dd.verify.syncSeconds = lib.mkOption {
+    type = lib.types.int;
+    default = 300;
+    description = "How often a box pulls its peers' directories. Tests set it low.";
+  };
   options.dd.verify.peers = lib.mkOption {
     type = lib.types.listOf lib.types.str;
     default = [ ];
@@ -62,6 +67,7 @@ in
         VERIFY_BIND = if full then "127.0.0.1:${toString port}" else "0.0.0.0:${toString port}";
         VERIFY_DIR = "/var/lib/dd-verify/keys";
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
+        VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
       // lib.optionalAttrs full {
         # the browser login: passkeys scoped to the whole domain, so one login
