@@ -69,6 +69,13 @@ in
     };
   };
 
+  # The nvme controller node (/dev/nvme0, not the namespace) is root-only by
+  # default, and SMART is read through the controller. The exporter runs in
+  # the disk group; let that group at it. Same standing as the sd devices.
+  services.udev.extraRules = ''
+    KERNEL=="nvme[0-9]*", SUBSYSTEM=="nvme", GROUP="disk", MODE="0660"
+  '';
+
   # What this box is, as metrics next to how it is doing: cores, model,
   # instruction sets, memory, disks, gpu, kernel, generation. Rewritten
   # hourly and at boot, read by node_exporter's textfile collector. The
