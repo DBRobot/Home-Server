@@ -28,8 +28,12 @@ const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
 const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
 const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
 /// Where a person's signed entry lives. Any box can hold one; a client that
-/// names several sees whether they agree.
-const DEFAULT_DIRECTORY: &str = "https://files.distributed-datacenter.duckdns.org/_dd/directory";
+/// names several sees whether they agree. node2 has no public name yet, so
+/// its copy is reachable on the tailnet only.
+const DEFAULT_DIRECTORIES: [&str; 2] = [
+    "https://files.distributed-datacenter.duckdns.org/_dd/directory",
+    "http://100.95.10.10:4181/_dd/directory",
+];
 /// keyring account holding the name the device key signs for
 const USER: &str = "user";
 
@@ -72,7 +76,7 @@ enum Command {
         issuer: String,
         #[arg(long, default_value = "dd")]
         client_id: String,
-        #[arg(long = "directory", default_value = DEFAULT_DIRECTORY, global = true)]
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
     /// Who you are: a root key here, a recovery key on paper, and the entry
@@ -80,14 +84,14 @@ enum Command {
     Identity {
         #[command(subcommand)]
         cmd: IdentityCmd,
-        #[arg(long = "directory", default_value = DEFAULT_DIRECTORY, global = true)]
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
     /// This device's key.
     Device {
         #[command(subcommand)]
         cmd: DeviceCmd,
-        #[arg(long = "directory", default_value = DEFAULT_DIRECTORY, global = true)]
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
     /// Unlock ente. Asks for the ente password once, then stores the derived
@@ -141,6 +145,9 @@ enum IdentityCmd {
     },
     /// What every directory has for you, and whether it is yours.
     Show,
+    /// Bring every directory up to the newest entry any of them holds. No
+    /// signing: the entry carries its own, so a copy needs no key here.
+    Publish,
     /// Lost every device? The paper key installs a new root and starts the
     /// device list over with this one.
     Recover {
@@ -477,6 +484,24 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
+                }
+            }
+            IdentityCmd::Publish => {
+                let name = keys
+                    .get(USER)?
+                    .context("no name here - `dd login` or `dd identity new`")?
+                    .to_string();
+                let found = who::fetch(&directories, &name).await;
+                let newest = who::newest(&found).context("no directory has an entry")?;
+                let behind: Vec<String> = found
+                    .iter()
+                    .filter(|(_, r)| !matches!(r, Ok(Some(e)) if e.entry.version >= newest.entry.version))
+                    .map(|(d, _)| d.clone())
+                    .collect();
+                if behind.is_empty() {
+                    println!("every directory has version {}", newest.entry.version);
+                } else {
+                    who::publish(&behind, &newest).await?;
                 }
             }
             IdentityCmd::Recover { name, key_stdin } => {
