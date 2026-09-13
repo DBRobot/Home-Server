@@ -71,7 +71,12 @@ in
           ENABLE_PUSH_CREATE_USER = true;
         };
         mailer.ENABLED = false;
-        actions.ENABLED = true; # the runner is modules/forgejo-runner.nix
+        actions = {
+          ENABLED = true; # the runner is modules/forgejo-runner.nix
+          # `uses: actions/checkout@v4` is written out in full in our
+          # workflows; this is where a bare one would be looked up
+          DEFAULT_ACTIONS_URL = "github";
+        };
         "ui.meta".DESCRIPTION = "git for the distributed datacenter";
         other.SHOW_FOOTER_VERSION = false;
       };

@@ -23,6 +23,7 @@
     ../../modules/webdav-media.nix
     ../../modules/verify.nix
     ../../modules/forgejo.nix
+    ../../modules/forgejo-runner.nix
   ];
 
   boot.loader.systemd-boot.enable = true;

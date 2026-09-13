@@ -1,0 +1,52 @@
+# The entry point, for the forge on node1. Same tree as .github/workflows,
+# for the runner there: jobs run on this box with nix already present, so
+# nothing is installed and every build lands in the box's own store.
+# files_modified decides what changed; the leaves run only for the parts
+# that did.
+name: entry_point
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  files_modified:
+    runs-on: nix
+    outputs:
+      nix: ${{ steps.detect.outputs.nix }}
+      rust: ${{ steps.detect.outputs.rust }}
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          fetch-depth: 0 # the diff against the base needs history
+
+      # Allowlists, not denylists: a new directory should not silently cost
+      # a system build until someone remembers to exclude it. A push to main
+      # builds everything regardless, so a wrong list here is caught there.
+      - name: what changed?
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "nix=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD)
+          echo "changed files:"; echo "$changed" | sed 's/^/  /'
+          nix=false; rust=false
+          # the client is built by the flake too, so a rust change is a nix change
+          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|hosts/|modules/|secrets/|client/|\.forgejo/workflows/)' && nix=true
+          echo "$changed" | grep -qE '^(client/|\.forgejo/workflows/)' && rust=true
+          echo "nix=$nix" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "nix: $nix  rust: $rust"
+
+  nix_checks:
+    needs: files_modified
+    if: needs.files_modified.outputs.nix == 'true'
+    uses: ./.forgejo/workflows/nix_checks.yml
+
+  rust_checks:
+    needs: files_modified
+    if: needs.files_modified.outputs.rust == 'true'
+    uses: ./.forgejo/workflows/rust_checks.yml

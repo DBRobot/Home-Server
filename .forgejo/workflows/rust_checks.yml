@@ -1,0 +1,29 @@
+# Everything in client/: formatted, lint-clean, and the tests pass - the
+# end-to-end ones included, which run boxes in-process and try to break them.
+# Called from entry_point.yml; not triggered on its own. The toolchain is the
+# flake's dev shell, the same one a person gets from `nix develop`.
+name: rust_checks
+
+on:
+  workflow_call:
+
+defaults:
+  run:
+    working-directory: client
+
+jobs:
+  lint:
+    runs-on: nix
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - name: fmt
+        run: nix develop -c cargo fmt --check
+      - name: clippy
+        run: nix develop -c cargo clippy --all-targets -- -D warnings
+
+  test:
+    runs-on: nix
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - name: test
+        run: nix develop -c cargo test
