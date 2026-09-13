@@ -34,15 +34,32 @@ in
         "systemd" # unit states: catches a failed backup even without the mail
         "zfs" # pool state, arc stats, per-dataset space
         "hwmon" # drive and cpu temperatures
+        "thermal_zone" # the acpi view of the same, and package throttling
+        "powersupplyclass" # a laptop's battery is its ups: charge, health, on ac
         "textfile" # the facts below
       ];
       extraFlags = [ "--collector.textfile.directory=${facts}" ];
+    };
+
+    # SMART, read from the drives themselves: health verdict, reallocated
+    # and pending sectors, nvme wear and media errors, power-on hours,
+    # temperature. smartd already mails when a drive turns; this keeps the
+    # slope, which is the part that predicts it.
+    exporters.smartctl = {
+      enable = true;
+      listenAddress = "127.0.0.1";
+      port = 9633;
+      maxInterval = "5m";
     };
 
     scrapeConfigs = [
       {
         job_name = "node";
         static_configs = [ { targets = [ "127.0.0.1:9100" ]; } ];
+      }
+      {
+        job_name = "smartctl";
+        static_configs = [ { targets = [ "127.0.0.1:9633" ]; } ];
       }
     ]
     ++ lib.optional config.services.garage.enable {
