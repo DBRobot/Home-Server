@@ -1,0 +1,57 @@
+# The entry point. files_modified decides what changed; the rest of the tree is
+# reusable workflows that run only for the parts that did. main requires the
+# leaf checks by name, and a leaf that is skipped here still reports
+# (as skipped, which the ruleset accepts) - unlike paths-ignore on the
+# workflow, which would leave a required check pending forever.
+name: entry_point
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  files_modified:
+    runs-on: ubuntu-latest
+    outputs:
+      nix: ${{ steps.detect.outputs.nix }}
+      rust: ${{ steps.detect.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the diff against the base needs history
+
+      # Allowlists, not denylists: a new directory should not silently cost
+      # an 18 minute system build until someone remembers to exclude it. A
+      # push to main builds everything regardless, so a wrong list here is
+      # caught there.
+      - name: what changed?
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "nix=true" >> "$GITHUB_OUTPUT"
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD)
+          echo "changed files:"; echo "$changed" | sed 's/^/  /'
+          nix=false; rust=false
+          # the client is built by the flake too, so a rust change is a nix change
+          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|hosts/|modules/|secrets/|client/|\.github/workflows/)' && nix=true
+          echo "$changed" | grep -qE '^(client/|\.github/workflows/)' && rust=true
+          echo "nix=$nix" >> "$GITHUB_OUTPUT"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "nix: $nix  rust: $rust"
+
+  nix_checks:
+    needs: files_modified
+    if: needs.files_modified.outputs.nix == 'true'
+    uses: ./.github/workflows/nix_checks.yml
+
+  rust_checks:
+    needs: files_modified
+    if: needs.files_modified.outputs.rust == 'true'
+    uses: ./.github/workflows/rust_checks.yml

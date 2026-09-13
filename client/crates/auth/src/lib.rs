@@ -4,7 +4,7 @@
 pub mod device;
 pub mod keystore;
 
-pub use keystore::{KeyStore, OsKeyring};
+pub use keystore::{FileStore, KeyStore, OsKeyring, Store, open};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
