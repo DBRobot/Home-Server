@@ -4,7 +4,7 @@ mod vault;
 mod who;
 
 use anyhow::{Context, Result};
-use auth::{KeyStore, OsKeyring};
+use auth::KeyStore;
 use clap::{Parser, Subcommand};
 use ente::LoginParams;
 use vault::Vault;
@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 
 const SERVICE: &str = "distributed-datacenter";
 /// DD_KEYRING names a different credential-store service: a second "device"
-/// on one machine, for trying the identity flow end to end.
+/// on one machine. DD_KEYRING_FILE swaps the OS store for a file - tests.
 fn service() -> String {
     std::env::var("DD_KEYRING").unwrap_or_else(|_| SERVICE.to_string())
 }
@@ -214,7 +214,7 @@ enum ImageCmd {
 
 fn image(cmd: ImageCmd, repo: String) -> Result<()> {
     use archive::{Archive, Source, Stderr, TokenProvider};
-    let keys = OsKeyring::new(service());
+    let keys = auth::open(&service());
 
     if let ImageCmd::Init { rederive: true } = &cmd {
         let master = Zeroizing::new(rpassword::prompt_password("photo password: ")?);
@@ -224,7 +224,7 @@ fn image(cmd: ImageCmd, repo: String) -> Result<()> {
         "no archive password on this machine - run `dd unlock`, or `dd image init --rederive`",
     )?;
 
-    let tokens = std::sync::Arc::new(TokenProvider::new(OsKeyring::new(service())));
+    let tokens = std::sync::Arc::new(TokenProvider::new(auth::open(&service())));
     let archive = Archive::new(url::Url::parse(&repo)?, tokens, password, Stderr)?;
 
     match cmd {
@@ -274,7 +274,7 @@ fn image(cmd: ImageCmd, repo: String) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let keys = OsKeyring::new(service());
+    let keys = auth::open(&service());
 
     match cli.command {
         Command::Signup {

@@ -1,0 +1,36 @@
+# Everything nix: is the flake well-formed, and does every box still build.
+# Called from entry_point.yml; not triggered on its own.
+name: nix_checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  flake_check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: flake check
+        run: nix flake check --show-trace
+
+  build_host:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [node1, node2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: build ${{ matrix.host }}
+        run: nix build .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel

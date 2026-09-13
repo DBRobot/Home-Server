@@ -197,17 +197,12 @@ impl Directory {
         Ok(taken)
     }
 
-    /// Forever: pull every peer, every five minutes (VERIFY_SYNC_SECS to
-    /// change it). The first time every peer has answered, the box starts
-    /// taking new names from the network.
-    pub async fn sync_forever(self: Arc<Self>) {
+    /// Forever: pull every peer, every `every` seconds. The first time every
+    /// peer has answered, the box starts taking new names from the network.
+    pub async fn sync_forever(self: Arc<Self>, every: u64) {
         if self.peers.is_empty() {
             return;
         }
-        let every = std::env::var("VERIFY_SYNC_SECS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(300);
         let mut ok = vec![false; self.peers.len()];
         loop {
             for (i, p) in self.peers.iter().enumerate() {
