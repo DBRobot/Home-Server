@@ -875,6 +875,19 @@ dependencies = [
 
 [[package]]
 name = "chacha20poly1305"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
+dependencies = [
+ "aead 0.5.2",
+ "chacha20 0.9.1",
+ "cipher 0.4.4",
+ "poly1305 0.8.0",
+ "zeroize",
+]
+
+[[package]]
+name = "chacha20poly1305"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b89e1c441e926b9c82a8d023f6e1b7ae0adcfaa7d621814e4d60789bac751cb"
@@ -1187,6 +1200,21 @@ dependencies = [
  "tracing",
  "uuid",
  "x509-cert",
+ "zeroize",
+]
+
+[[package]]
+name = "crypto_box"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16182b4f39a82ec8a6851155cc4c0cda3065bb1db33651726a29e1951de0f009"
+dependencies = [
+ "aead 0.5.2",
+ "blake2",
+ "crypto_secretbox",
+ "curve25519-dalek 4.1.3",
+ "salsa20 0.10.2",
+ "subtle",
  "zeroize",
 ]
 
@@ -2105,6 +2133,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-remote-dd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auth",
+ "base64 0.22.1",
+ "biscuit-auth",
+ "chacha20poly1305 0.10.1",
+ "crypto_box",
+ "ed25519-dalek",
+ "identity",
+ "rand_core 0.6.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "zeroize",
+]
+
+[[package]]
 name = "globset"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2261,7 +2309,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5324110b02044183df000f0bd7d2d7e61f1000631508627e77f63983b6fdffb"
 dependencies = [
  "aead 0.6.1",
- "chacha20poly1305",
+ "chacha20poly1305 0.11.0",
  "getrandom 0.4.3",
  "hkdf 0.13.0",
  "hybrid-array",

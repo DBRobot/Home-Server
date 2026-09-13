@@ -87,6 +87,12 @@ enum Command {
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
+    /// Encrypted repositories: `git remote add origin dd::<url>` and push.
+    /// The forge holds ciphertext; whoever holds the key reads.
+    Repo {
+        #[command(subcommand)]
+        cmd: RepoCmd,
+    },
     /// This device's key.
     Device {
         #[command(subcommand)]
@@ -168,6 +174,19 @@ enum PasskeyCmd {
     /// Sign in a credential record from a file - the one a box used to keep
     /// in <name>.passkeys.json before passkeys lived in the entry.
     Add { file: String },
+}
+
+#[derive(Subcommand)]
+enum RepoCmd {
+    /// Give another device the key: it reads and pushes from then on.
+    Share {
+        /// the remote, with or without the dd:: prefix
+        url: String,
+        /// their device public key, from `dd device show` there
+        public_key: String,
+    },
+    /// Who holds the key, and where the remote stands.
+    Readers { url: String },
 }
 
 #[derive(Subcommand)]
@@ -574,6 +593,26 @@ async fn main() -> Result<()> {
                 );
             }
         },
+
+        Command::Repo { cmd } => {
+            // the remote helper owns the format; it lives next to dd
+            let helper = std::env::current_exe()?
+                .parent()
+                .map(|d| d.join("git-remote-dd"))
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| "git-remote-dd".into());
+            let status = match cmd {
+                RepoCmd::Share { url, public_key } => std::process::Command::new(&helper)
+                    .args(["share", &url, &public_key])
+                    .status()?,
+                RepoCmd::Readers { url } => std::process::Command::new(&helper)
+                    .args(["readers", &url])
+                    .status()?,
+            };
+            if !status.success() {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
 
         Command::Device { cmd, directories } => match cmd {
             DeviceCmd::Show => {
