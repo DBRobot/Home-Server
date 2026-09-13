@@ -6,7 +6,7 @@
  ],
  "timezone": "browser",
  "schemaVersion": 39,
- "version": 1,
+ "version": 2,
  "refresh": "30s",
  "time": {
   "from": "now-6h",
@@ -671,6 +671,480 @@
     "overrides": []
    },
    "options": {}
+  },
+  {
+   "id": 18,
+   "type": "row",
+   "title": "Hardware",
+   "gridPos": {
+    "x": 0,
+    "y": 44,
+    "w": 24,
+    "h": 1
+   },
+   "collapsed": false,
+   "panels": []
+  },
+  {
+   "id": 19,
+   "type": "stat",
+   "title": "SMART verdict (1 = passed)",
+   "gridPos": {
+    "x": 0,
+    "y": 45,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "smartctl_device_smart_status",
+     "legendFormat": "{{device}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 20,
+   "type": "stat",
+   "title": "Drive temperature",
+   "gridPos": {
+    "x": 6,
+    "y": 45,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "smartctl_device_temperature{temperature_type=\"current\"}",
+     "legendFormat": "{{device}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 21,
+   "type": "stat",
+   "title": "NVMe wear (% used)",
+   "gridPos": {
+    "x": 12,
+    "y": 45,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "smartctl_device_percentage_used",
+     "legendFormat": "{{device}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 22,
+   "type": "stat",
+   "title": "Power-on",
+   "gridPos": {
+    "x": 18,
+    "y": 45,
+    "w": 6,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "smartctl_device_power_on_seconds",
+     "legendFormat": "{{device}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 23,
+   "type": "timeseries",
+   "title": "Reallocated / pending / uncorrectable sectors",
+   "gridPos": {
+    "x": 0,
+    "y": 49,
+    "w": 12,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "smartctl_device_attribute{attribute_name=~\"Reallocated_Sector_Ct|Current_Pending_Sector|Offline_Uncorrectable|Reported_Uncorrect\",attribute_value_type=\"raw\"}",
+     "legendFormat": "{{device}} {{attribute_name}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 24,
+   "type": "timeseries",
+   "title": "NVMe media and error-log entries",
+   "gridPos": {
+    "x": 12,
+    "y": 49,
+    "w": 12,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "smartctl_device_media_errors or smartctl_device_num_err_log_entries",
+     "legendFormat": "{{device}} {{__name__}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 25,
+   "type": "timeseries",
+   "title": "ZFS pool state (1 = online)",
+   "gridPos": {
+    "x": 0,
+    "y": 56,
+    "w": 8,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "node_zfs_zpool_state{state=\"online\"}",
+     "legendFormat": "{{zpool}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 26,
+   "type": "timeseries",
+   "title": "ZFS read / write / checksum errors",
+   "gridPos": {
+    "x": 8,
+    "y": 56,
+    "w": 8,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "node_zfs_zpool_rerrors or node_zfs_zpool_werrors or node_zfs_zpool_cerrors",
+     "legendFormat": "{{zpool}} {{__name__}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 27,
+   "type": "timeseries",
+   "title": "Memory errors (EDAC)",
+   "gridPos": {
+    "x": 16,
+    "y": 56,
+    "w": 8,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "node_edac_correctable_errors_total or node_edac_uncorrectable_errors_total",
+     "legendFormat": "{{controller}} {{__name__}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 28,
+   "type": "timeseries",
+   "title": "Package temperature and throttling",
+   "gridPos": {
+    "x": 0,
+    "y": 62,
+    "w": 8,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "node_thermal_zone_temp",
+     "legendFormat": "{{type}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 29,
+   "type": "timeseries",
+   "title": "CPU throttle events",
+   "gridPos": {
+    "x": 8,
+    "y": 62,
+    "w": 8,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "rate(node_cpu_core_throttles_total[5m]) or rate(node_cpu_package_throttles_total[5m])",
+     "legendFormat": "{{__name__}} {{core}}{{package}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 30,
+   "type": "timeseries",
+   "title": "Battery: charge and health",
+   "gridPos": {
+    "x": 16,
+    "y": 62,
+    "w": 8,
+    "h": 6
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "node_power_supply_capacity or (100 * node_power_supply_energy_full / node_power_supply_energy_full_design) or (100 * node_power_supply_charge_full / node_power_supply_charge_full_design)",
+     "legendFormat": "{{power_supply}} {{__name__}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": false
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 31,
+   "type": "stat",
+   "title": "On AC power (1 = yes)",
+   "gridPos": {
+    "x": 0,
+    "y": 68,
+    "w": 8,
+    "h": 4
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${box}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "node_power_supply_online",
+     "legendFormat": "{{power_supply}}",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${box}"
+     },
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   }
   }
  ]
 }
