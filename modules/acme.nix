@@ -31,5 +31,12 @@ in
   services.nginx = {
     enable = true;
     recommendedProxySettings = true;
+    # A name nothing here serves (a retired one, or a guess) used to land on
+    # whichever vhost nginx listed first. Now it gets no tls handshake at all.
+    virtualHosts."_" = {
+      default = true;
+      rejectSSL = true;
+      locations."/".return = "444";
+    };
   };
 }
