@@ -1,5 +1,7 @@
 # Evaluation only, no vm: an untrusted box configured with a plaintext
-# service must fail to build, naming the service; a trusted one must not.
+# service must trip the placement assertion, naming the service; a trusted
+# one must not. Only the assertions are evaluated, not the whole system,
+# so this needs no certificates, secrets or disks.
 {
   pkgs,
   self,
@@ -7,7 +9,7 @@
   ...
 }:
 let
-  eval =
+  assertionsFor =
     trusted:
     (lib.nixosSystem {
       modules = [
@@ -16,18 +18,19 @@ let
         {
           dd.box.ownerTrusted = trusted;
           nixpkgs.hostPlatform = pkgs.stdenv.hostPlatform.system;
-          boot.loader.grub.enable = false;
-          fileSystems."/" = {
-            device = "/dev/null";
-            fsType = "ext4";
-          };
         }
       ];
       specialArgs = { inherit self; };
-    }).config.system.build.toplevel.drvPath;
-  untrusted = builtins.tryEval (builtins.deepSeq (eval false) true);
-  trustedOk = builtins.deepSeq (eval true) true;
+    }).config.assertions;
+  tripped =
+    trusted:
+    builtins.filter (a: !a.assertion && lib.hasInfix "not owner-trusted" a.message) (
+      assertionsFor trusted
+    );
+  untrusted = tripped false;
+  trustedOk = tripped true == [ ];
 in
-assert !untrusted.success;
+assert builtins.length untrusted == 1;
+assert lib.hasInfix "jellyfin" (builtins.head untrusted).message;
 assert trustedOk;
 pkgs.runCommand "placement-rule" { } "echo ok > $out"
