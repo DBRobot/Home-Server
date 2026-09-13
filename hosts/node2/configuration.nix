@@ -10,7 +10,14 @@
   imports = [
     ./hardware-configuration.nix
     ./disko.nix
+    ../../modules/verify.nix
   ];
+
+  # node2's first job: a second copy of the directory, reachable over the
+  # tailnet. It holds no secret at all - not a sops recipient, no domain, no
+  # service - because the entries it keeps are signed by their owners and
+  # would be equally good from any box.
+  dd.verify.role = "directory";
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;

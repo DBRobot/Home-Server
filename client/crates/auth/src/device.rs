@@ -1,10 +1,10 @@
 //! The key a person actually holds.
 //!
-//! `login` proves who you are to kanidm once per device. After that, this
-//! device signs its own tokens: an ed25519 key, generated here, private half in
-//! the OS keyring, public half registered with the verifier on the server. No
-//! server ever holds anything that can sign as you - the most a compromised
-//! one can do is serve what it already serves.
+//! An ed25519 key, generated here, private half in the OS keyring. Its public
+//! half is admitted to the person's own signed entry (the identity crate),
+//! and from then on this device signs its own tokens. No server ever holds
+//! anything that can sign as you - the most a compromised one can do is
+//! serve what it already serves.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -82,66 +82,8 @@ pub fn mint(kp: &KeyPair, user: &str, ttl: Duration) -> Result<String> {
     token.to_base64().map_err(err)
 }
 
-/// A ten-minute token from a registered device saying "admit this one too".
-/// The verifier accepts it in place of trusting the identity server twice.
-pub fn vouch(kp: &KeyPair, user: &str, fingerprint: &str) -> Result<String> {
-    let exp = (SystemTime::now() + Duration::from_secs(600))
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let err = |e: biscuit_auth::error::Token| crate::Error::Discovery(format!("vouch: {e}"));
-    Biscuit::builder()
-        .fact(format!("user({:?})", user).as_str())
-        .map_err(err)?
-        .fact(format!("vouch({:?})", fingerprint).as_str())
-        .map_err(err)?
-        .check(format!("check if time($t), $t < {exp}").as_str())
-        .map_err(err)?
-        .build(kp)
-        .map_err(err)?
-        .to_base64()
-        .map_err(err)
-}
-
-/// Short, stable name for a key: the first bytes of its public half.
+/// Short, stable name for a key, the same one the directory entry shows.
 pub fn fingerprint(kp: &KeyPair) -> String {
     let b = kp.public().to_bytes();
     b.iter().take(6).map(|x| format!("{x:02x}")).collect()
-}
-
-/// Ask the verifier to record this device's public key for `user`. `id_token`
-/// is the kanidm id token from the login that just happened: the one moment
-/// a server's word is taken for who this is. Once a user has a device, the
-/// verifier requires an existing device to vouch for the next one, and
-/// `voucher` is that signature.
-pub async fn register(
-    verifier: &str,
-    id_token: &str,
-    kp: &KeyPair,
-    voucher: Option<&str>,
-) -> Result<()> {
-    let http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| crate::Error::Discovery(e.to_string()))?;
-    let body = serde_json::json!({
-        "public_key": public_b64(kp),
-        "fingerprint": fingerprint(kp),
-        "voucher": voucher,
-    });
-    let r = http
-        .post(format!("{}/register", verifier.trim_end_matches('/')))
-        .bearer_auth(id_token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| crate::Error::Discovery(format!("registering the device: {e}")))?;
-    if !r.status().is_success() {
-        let status = r.status();
-        let text = r.text().await.unwrap_or_default();
-        return Err(crate::Error::Discovery(format!(
-            "the verifier refused this device: {status} {text}"
-        )));
-    }
-    Ok(())
 }

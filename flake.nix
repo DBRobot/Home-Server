@@ -113,6 +113,7 @@
       # disko.devices into fileSystems + boot entries; nothing else here has
       # to know about the nvme at all.
       nixosConfigurations.node2 = nixpkgs.lib.nixosSystem {
+        specialArgs = { inherit self; };
         modules = [
           ./hosts/node2/configuration.nix
           disko.nixosModules.disko

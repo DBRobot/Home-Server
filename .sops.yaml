@@ -1,13 +1,25 @@
-# Public age recipients, derived from SSH keys that already exist.
-# node1 decrypts at boot with its host key; david edits with his own.
-# Nothing private lives here - these encrypt, they cannot decrypt.
+# Public age recipients, derived from SSH keys that already exist. Each box
+# decrypts at boot with its host key; david edits with his own. Nothing
+# private lives here - these encrypt, they cannot decrypt.
+#
+# One file per box, and a box is a recipient of its own file only. No box is
+# trusted with another's secrets: node2 sits in someone else's house one day
+# and must never be able to read what node1 runs on.
 keys:
   - &node1 age1dn3jhfmr8se645k3v2ar2wv69ayk0ts2kx3udp90u63ej7yfhyssla9f9t
+  - &node2 age1ttsgyu66t9xuwt5qa9g0wrnnudlzy2hjyr4dt4v6vcawjqjzfq0qexvrxt
   - &david age18cw3l0s8w85spjne4u7sfvedpdwgqvkw626yqjl9lar9drtlqvps4jdd7x
 
 creation_rules:
-  - path_regex: secrets/[^/]+\.yaml$
+  # node1's: every service secret there is today
+  - path_regex: secrets/secrets\.yaml$
     key_groups:
       - age:
           - *node1
+          - *david
+  # node2's: empty so far. Its only role, the directory, needs no secret.
+  - path_regex: secrets/node2\.yaml$
+    key_groups:
+      - age:
+          - *node2
           - *david

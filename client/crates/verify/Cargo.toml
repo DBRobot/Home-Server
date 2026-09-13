@@ -15,8 +15,7 @@ identity = { path = "../identity" }
 base64 = "0.22"
 # the token format devices sign; the verifier only ever holds public keys
 biscuit-auth = "6"
-# to check the kanidm id token that bootstraps a user's FIRST device - the
-# one moment a server's word is taken for who somebody is
+# signs the per-box id token for jellyfin's oidc plugin (oidc.rs)
 jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
 # the box's own browser login: passkeys verified HERE, against keys enrolled
 # here, issuing a cookie only this box's services accept. kanidm's mint is not

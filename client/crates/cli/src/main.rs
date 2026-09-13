@@ -1,6 +1,7 @@
 mod derive;
 mod ui;
 mod vault;
+mod who;
 
 use anyhow::{Context, Result};
 use auth::{KeyStore, OsKeyring};
@@ -10,6 +11,11 @@ use vault::Vault;
 use zeroize::Zeroizing;
 
 const SERVICE: &str = "distributed-datacenter";
+/// DD_KEYRING names a different credential-store service: a second "device"
+/// on one machine, for trying the identity flow end to end.
+fn service() -> String {
+    std::env::var("DD_KEYRING").unwrap_or_else(|_| SERVICE.to_string())
+}
 /// Keyring account holding the kanidm refresh token. Separate from "ente":
 /// these authorise services, that one decrypts photos, and conflating them
 /// would mean one `dd lock` throwing away more than the user asked.
@@ -21,9 +27,10 @@ const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2
 const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
 const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
 const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
-/// The verifier's public face: where a device registers its key.
-const DEFAULT_VERIFIER: &str = "https://files.distributed-datacenter.duckdns.org/_dd";
-/// keyring account holding the username the device key signs for
+/// Where a person's signed entry lives. Any box can hold one; a client that
+/// names several sees whether they agree.
+const DEFAULT_DIRECTORY: &str = "https://files.distributed-datacenter.duckdns.org/_dd/directory";
+/// keyring account holding the name the device key signs for
 const USER: &str = "user";
 
 #[derive(Parser)]
@@ -57,25 +64,31 @@ enum Command {
         #[arg(long)]
         password_stdin: bool,
     },
-    /// Sign in once on this device. Proves who you are to kanidm, then
-    /// registers this device's own key so every later token is signed here,
-    /// by you, and no server can mint one in your name.
+    /// Sign in to kanidm once on this device, for the services that still
+    /// ask it. Tokens come from this device's own key, admitted to your
+    /// identity by you - `dd identity new` or `dd device admit`.
     Login {
         #[arg(long, default_value = DEFAULT_IDM)]
         issuer: String,
         #[arg(long, default_value = "dd")]
         client_id: String,
-        #[arg(long, default_value = DEFAULT_VERIFIER)]
-        verifier: String,
-        /// A voucher from a device already registered (`dd device vouch`),
-        /// needed once you have one - a login alone can no longer add a key.
-        #[arg(long)]
-        voucher: Option<String>,
+        #[arg(long = "directory", default_value = DEFAULT_DIRECTORY, global = true)]
+        directories: Vec<String>,
+    },
+    /// Who you are: a root key here, a recovery key on paper, and the entry
+    /// you sign listing your devices. No server issues it.
+    Identity {
+        #[command(subcommand)]
+        cmd: IdentityCmd,
+        #[arg(long = "directory", default_value = DEFAULT_DIRECTORY, global = true)]
+        directories: Vec<String>,
     },
     /// This device's key.
     Device {
         #[command(subcommand)]
         cmd: DeviceCmd,
+        #[arg(long = "directory", default_value = DEFAULT_DIRECTORY, global = true)]
+        directories: Vec<String>,
     },
     /// Unlock ente. Asks for the ente password once, then stores the derived
     /// keys in the OS credential store so it is not asked again.
@@ -109,20 +122,50 @@ enum Command {
     },
     /// What is cached on this machine.
     Status,
-    /// Forget the stored ente keys and kanidm token on this machine.
-    Lock,
+    /// Forget the stored ente keys, kanidm token and device key on this machine.
+    Lock {
+        /// Also remove the identity root. Not undoable except by recovery.
+        #[arg(long)]
+        forget_identity: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityCmd {
+    /// Create your identity and publish it, with this device as the first.
+    /// Prints the recovery key once.
+    New {
+        /// Your name; defaults to the one `dd login` recorded.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// What every directory has for you, and whether it is yours.
+    Show,
+    /// Lost every device? The paper key installs a new root and starts the
+    /// device list over with this one.
+    Recover {
+        #[arg(long)]
+        name: Option<String>,
+        /// Read the recovery key from stdin instead of prompting.
+        #[arg(long)]
+        key_stdin: bool,
+    },
+    /// Print the root secret, to move it to another device you own.
+    Export,
+    /// Read a root secret from stdin and keep it here.
+    Import {
+        #[arg(long)]
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
 enum DeviceCmd {
-    /// Show this device's key fingerprint.
+    /// Show this device's key: fingerprint and the public key to admit.
     Show,
-    /// Vouch for a new device: prints a short-lived token to paste into
-    /// `dd login --voucher` on it. Only a registered device can do this.
-    Vouch {
-        /// The new device's fingerprint, from `dd device show` there.
-        fingerprint: String,
-    },
+    /// Admit a device to your identity by its public key, from `dd device
+    /// show` there. Needs the root key on this machine.
+    Admit { public_key: String },
 }
 
 #[derive(Subcommand)]
@@ -160,7 +203,7 @@ enum ImageCmd {
 
 fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
     use archive::{Archive, Source, Stderr, TokenProvider};
-    let keys = OsKeyring::new(SERVICE);
+    let keys = OsKeyring::new(service());
 
     if let ImageCmd::Init { rederive: true } = &cmd {
         let master = Zeroizing::new(rpassword::prompt_password("photo password: ")?);
@@ -173,7 +216,7 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
     let tokens = std::sync::Arc::new(TokenProvider::new(
         &issuer,
         "dd",
-        OsKeyring::new(SERVICE),
+        OsKeyring::new(service()),
         KANIDM,
     )?);
     let archive = Archive::new(url::Url::parse(&repo)?, tokens, password, Stderr)?;
@@ -225,7 +268,7 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let keys = OsKeyring::new(SERVICE);
+    let keys = OsKeyring::new(service());
 
     match cli.command {
         Command::Signup {
@@ -339,8 +382,7 @@ async fn main() -> Result<()> {
         Command::Login {
             issuer,
             client_id,
-            verifier,
-            voucher,
+            directories,
         } => {
             let session = auth::login(&issuer, &client_id).await?;
             let user = session
@@ -350,48 +392,149 @@ async fn main() -> Result<()> {
             if let Some(rt) = &session.refresh_token {
                 keys.set(KANIDM, rt)?;
             }
+            keys.set(USER, &user)?;
             println!("signed in to kanidm as {user}");
 
-            // The device key: made here, kept here. The id token from the login
-            // just now is what admits it - for the first device. Afterwards a
-            // registered device has to vouch.
-            let (kp, fresh) = auth::device::load_or_create(&keys)?;
-            let idt = session
-                .id_token
-                .as_deref()
-                .context("no id token to register with")?;
-            match auth::device::register(&verifier, idt, &kp, voucher.as_deref()).await {
-                Ok(()) => {
-                    keys.set(USER, &user)?;
-                    println!(
-                        "device {} {} - tokens are signed here from now on",
-                        auth::device::fingerprint(&kp),
-                        if fresh { "registered" } else { "confirmed" }
-                    );
+            // The device key: made here, kept here. Whether it may sign for
+            // you is a question for your own entry, never for the server
+            // that just answered.
+            let (kp, _) = auth::device::load_or_create(&keys)?;
+            let public_key = auth::device::public_b64(&kp);
+            let fp = identity::fingerprint(&public_key);
+            let found = who::fetch(&directories, &user).await;
+            match who::newest(&found) {
+                Some(e) if e.entry.devices.iter().any(|d| d.public_key == public_key) => {
+                    println!("device {fp} is in your entry - tokens are signed here");
                 }
-                Err(e) => {
-                    println!("device not registered: {e}");
-                    println!(
-                        "  on a device that already works, run: dd device vouch {}",
-                        auth::device::fingerprint(&kp)
-                    );
-                    println!("  then here: dd login --voucher <that token>");
+                Some(_) => match who::load_root(&keys)? {
+                    Some(root) => {
+                        println!("admitting device {fp} with the root held here");
+                        who::admit(&directories, &user, &root, &public_key).await?;
+                    }
+                    None => {
+                        println!("device {fp} is not in your entry yet. On a device that holds");
+                        println!("your identity, run:  dd device admit {public_key}");
+                    }
+                },
+                None => {
+                    println!("no identity published for {user} yet - run `dd identity new`");
                 }
             }
         }
 
-        Command::Device { cmd } => match cmd {
-            DeviceCmd::Show => match auth::device::load(&keys)? {
-                Some(kp) => println!("{}", auth::device::fingerprint(&kp)),
-                None => println!("no device key - run `dd login`"),
-            },
-            DeviceCmd::Vouch { fingerprint } => {
-                let kp =
-                    auth::device::load(&keys)?.context("no device key here - run `dd login`")?;
-                let user = keys
+        Command::Identity { cmd, directories } => match cmd {
+            IdentityCmd::New { name } => {
+                let name = match name.or(keys.get(USER)?.map(|z| z.to_string())) {
+                    Some(n) => n,
+                    None => anyhow::bail!("no name: pass --name or `dd login` first"),
+                };
+                let (kp, _) = auth::device::load_or_create(&keys)?;
+                let recovery = who::create(&keys, &directories, &name, &kp).await?;
+                keys.set(USER, &name)?;
+                println!(
+                    "identity {name} published; device {} is its first",
+                    auth::device::fingerprint(&kp)
+                );
+                who::print_recovery(&recovery);
+            }
+            IdentityCmd::Show => {
+                let name = keys
                     .get(USER)?
-                    .context("no user recorded - run `dd login`")?;
-                println!("{}", auth::device::vouch(&kp, &user, &fingerprint)?);
+                    .context("no name here - `dd login` or `dd identity new`")?
+                    .to_string();
+                let mine =
+                    who::load_root(&keys)?.map(|r| identity::encode_public(&r.verifying_key()));
+                let here = auth::device::load(&keys)?.map(|kp| auth::device::public_b64(&kp));
+                println!("{name}");
+                println!(
+                    "root here:   {}",
+                    mine.as_deref()
+                        .map(identity::fingerprint)
+                        .unwrap_or("none".into())
+                );
+                for (d, r) in who::fetch(&directories, &name).await {
+                    match r {
+                        Ok(None) => println!("{d}: no entry"),
+                        Err(e) => println!("{d}: unreachable ({e})"),
+                        Ok(Some(e)) => {
+                            let owner = match &mine {
+                                Some(m) if *m == e.entry.root => "yours",
+                                Some(_) => "NOT YOURS - different root",
+                                None => "root not held here",
+                            };
+                            println!(
+                                "{d}: version {} root {} ({owner})",
+                                e.entry.version,
+                                identity::fingerprint(&e.entry.root)
+                            );
+                            for dev in &e.entry.devices {
+                                let this = here.as_deref() == Some(dev.public_key.as_str());
+                                println!(
+                                    "  device {}{}",
+                                    dev.fingerprint,
+                                    if this { " (this one)" } else { "" }
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            IdentityCmd::Recover { name, key_stdin } => {
+                let name = match name.or(keys.get(USER)?.map(|z| z.to_string())) {
+                    Some(n) => n,
+                    None => anyhow::bail!("no name: pass --name"),
+                };
+                let key = if key_stdin {
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line)?;
+                    Zeroizing::new(line.trim().to_string())
+                } else {
+                    Zeroizing::new(rpassword::prompt_password("recovery key: ")?)
+                };
+                let (kp, _) = auth::device::load_or_create(&keys)?;
+                let next = who::recover(&keys, &directories, &name, &key, &kp).await?;
+                keys.set(USER, &name)?;
+                println!("recovered {name}: new root here, every other device dropped");
+                who::print_recovery(&next);
+            }
+            IdentityCmd::Export => {
+                let root = who::load_root(&keys)?.context("no identity here")?;
+                println!("{}", *identity::encode_secret(&root));
+            }
+            IdentityCmd::Import { name } => {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                let root = identity::decode_secret(line.trim()).context("bad root secret")?;
+                keys.set(who::ROOT, &identity::encode_secret(&root))?;
+                keys.set(USER, &name)?;
+                println!(
+                    "root for {name} stored ({})",
+                    identity::fingerprint(&identity::encode_public(&root.verifying_key()))
+                );
+            }
+        },
+
+        Command::Device { cmd, directories } => match cmd {
+            DeviceCmd::Show => {
+                // made on first sight: a new device's first step is to show
+                // its key to one that can admit it, before any login
+                let (kp, _) = auth::device::load_or_create(&keys)?;
+                println!("{}", auth::device::fingerprint(&kp));
+                println!("{}", auth::device::public_b64(&kp));
+            }
+            DeviceCmd::Admit { public_key } => {
+                let root = who::load_root(&keys)?.context(
+                    "no root key on this machine - `dd identity export` on one that has it",
+                )?;
+                let name = keys
+                    .get(USER)?
+                    .context("no name recorded - run `dd login`")?;
+                let signed = who::admit(&directories, &name, &root, &public_key).await?;
+                println!(
+                    "device {} admitted; version {}",
+                    identity::fingerprint(&public_key),
+                    signed.entry.version
+                );
             }
         },
 
@@ -465,6 +608,15 @@ async fn main() -> Result<()> {
         }
 
         Command::Status => {
+            match who::load_root(&keys)? {
+                Some(r) => println!(
+                    "identity: {} root held here",
+                    identity::fingerprint(&identity::encode_public(&r.verifying_key()))
+                ),
+                None => {
+                    println!("identity: no root here - `dd identity new` or `dd identity import`")
+                }
+            }
             match auth::device::load(&keys)? {
                 Some(kp) => println!(
                     "device:  {} - signs its own tokens",
@@ -489,13 +641,23 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Lock => {
+        Command::Lock { forget_identity } => {
             keys.clear(auth::device::ACCOUNT)?;
             keys.clear(USER)?;
             keys.clear(ARCHIVE)?;
             keys.clear("ente")?;
             keys.clear(KANIDM)?;
-            println!("ente keys and kanidm token removed from this machine's credential store");
+            println!(
+                "ente keys, kanidm token and device key removed from this machine's credential store"
+            );
+            if keys.get(who::ROOT)?.is_some() {
+                if forget_identity {
+                    keys.clear(who::ROOT)?;
+                    println!("identity root removed too - only the paper key gets it back");
+                } else {
+                    println!("the identity root stays; `dd lock --forget-identity` removes it");
+                }
+            }
         }
     }
     Ok(())

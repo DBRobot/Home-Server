@@ -82,8 +82,13 @@ pub fn encode_secret(k: &SigningKey) -> Zeroizing<String> {
 }
 
 pub fn decode_secret(s: &str) -> Result<SigningKey> {
-    let b = Zeroizing::new(B64.decode(s.trim()).map_err(|e| Error::Key(e.to_string()))?);
-    let arr: [u8; 32] = b[..].try_into().map_err(|_| Error::Key("secret is not 32 bytes".into()))?;
+    let b = Zeroizing::new(
+        B64.decode(s.trim())
+            .map_err(|e| Error::Key(e.to_string()))?,
+    );
+    let arr: [u8; 32] = b[..]
+        .try_into()
+        .map_err(|_| Error::Key("secret is not 32 bytes".into()))?;
     Ok(SigningKey::from_bytes(&arr))
 }
 
@@ -92,8 +97,12 @@ pub fn encode_public(k: &VerifyingKey) -> String {
 }
 
 pub fn decode_public(s: &str) -> Result<VerifyingKey> {
-    let b = B64.decode(s.trim()).map_err(|e| Error::Key(e.to_string()))?;
-    let arr: [u8; 32] = b[..].try_into().map_err(|_| Error::Key("public key is not 32 bytes".into()))?;
+    let b = B64
+        .decode(s.trim())
+        .map_err(|e| Error::Key(e.to_string()))?;
+    let arr: [u8; 32] = b[..]
+        .try_into()
+        .map_err(|_| Error::Key("public key is not 32 bytes".into()))?;
     VerifyingKey::from_bytes(&arr).map_err(|e| Error::Key(e.to_string()))
 }
 
@@ -120,10 +129,14 @@ pub fn sign(entry: Entry, key: &SigningKey, signer: Signer_) -> Result<SignedEnt
     })
 }
 
-fn verify_with(signed: &SignedEntry, key: &VerifyingKey) -> Result<()> {
-    let sig = B64.decode(&signed.signature).map_err(|_| Error::Signature)?;
+/// Does `key` vouch for exactly these bytes?
+pub fn verify(signed: &SignedEntry, key: &VerifyingKey) -> Result<()> {
+    let sig = B64
+        .decode(&signed.signature)
+        .map_err(|_| Error::Signature)?;
     let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
-    key.verify(&canonical(&signed.entry)?, &sig).map_err(|_| Error::Signature)
+    key.verify(&canonical(&signed.entry)?, &sig)
+        .map_err(|_| Error::Signature)
 }
 
 /// The rule a box applies before storing `new` in place of `existing`.
@@ -151,9 +164,11 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
                 return Err(Error::Rejected("a first entry has version 1".into()));
             }
             if new.signer != Signer_::Root {
-                return Err(Error::Rejected("a first entry is signed by its root".into()));
+                return Err(Error::Rejected(
+                    "a first entry is signed by its root".into(),
+                ));
             }
-            verify_with(new, &decode_public(&new.entry.root)?)
+            verify(new, &decode_public(&new.entry.root)?)
         }
         Some(old) => {
             if new.entry.name != old.entry.name {
@@ -168,11 +183,13 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
             match new.signer {
                 Signer_::Root => {
                     if new.entry.root != old.entry.root {
-                        return Err(Error::Rejected("only the recovery key may change the root".into()));
+                        return Err(Error::Rejected(
+                            "only the recovery key may change the root".into(),
+                        ));
                     }
-                    verify_with(new, &decode_public(&old.entry.root)?)
+                    verify(new, &decode_public(&old.entry.root)?)
                 }
-                Signer_::Recovery => verify_with(new, &decode_public(&old.entry.recovery)?),
+                Signer_::Recovery => verify(new, &decode_public(&old.entry.recovery)?),
             }
         }
     }
@@ -181,7 +198,8 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
 pub fn valid_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'))
         && !s.starts_with('.')
 }
 
@@ -198,7 +216,11 @@ mod tests {
 
     fn dev(k: &SigningKey) -> Device {
         let p = encode_public(&k.verifying_key());
-        Device { fingerprint: fingerprint(&p), public_key: p, added: 1 }
+        Device {
+            fingerprint: fingerprint(&p),
+            public_key: p,
+            added: 1,
+        }
     }
 
     #[test]
@@ -222,7 +244,13 @@ mod tests {
         let mut e2 = e1.clone();
         e2.version = 2;
         e2.devices.push(dev(&generate()));
-        assert!(accept(Some(&s1), &sign(e2.clone(), &stranger, Signer_::Root).unwrap()).is_err());
+        assert!(
+            accept(
+                Some(&s1),
+                &sign(e2.clone(), &stranger, Signer_::Root).unwrap()
+            )
+            .is_err()
+        );
         // the root can
         let s2 = sign(e2.clone(), &root, Signer_::Root).unwrap();
         accept(Some(&s1), &s2).unwrap();

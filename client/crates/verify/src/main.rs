@@ -6,11 +6,11 @@
 //! kanidm id token) is handed to oauth2-proxy unchanged, so the two can
 //! coexist while services move over.
 //!
-//! `/register` records a device's public key. The first device for a user is
-//! admitted on a kanidm id token - the bootstrap, the single point where an
-//! identity server is trusted. Every later device must be vouched for by an
-//! existing one, so from then on no server can add a key that speaks for you.
+//! Which keys are a user's is the directory (directory.rs): an entry the
+//! person signs with a key they alone hold. This box stores and serves it and
+//! can add nothing to it. With VERIFY_ROLE=directory that is all a box does.
 
+mod directory;
 mod oidc;
 mod pages;
 mod session;
@@ -37,6 +37,7 @@ use webauthn_rs::prelude::*;
 struct App {
     http: reqwest::Client,
     dir: PathBuf,
+    directory: Arc<directory::Directory>,
     upstream_auth: String,
     sessions: session::Sessions,
     webauthn: Webauthn,
@@ -80,23 +81,8 @@ fn valid_user(s: &str) -> bool {
 }
 
 impl App {
-    /// The person's own signed entry, as last accepted by this box.
     fn entry(&self, user: &str) -> Result<Option<identity::SignedEntry>> {
-        let p = self.dir.join(format!("{user}.json"));
-        match std::fs::read(&p) {
-            Ok(b) => Ok(Some(serde_json::from_slice(&b)?)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn store_entry(&self, signed: &identity::SignedEntry) -> Result<()> {
-        let name = &signed.entry.name;
-        let p = self.dir.join(format!("{name}.json"));
-        let tmp = self.dir.join(format!(".{name}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(signed)?)?;
-        std::fs::rename(&tmp, &p)?;
-        Ok(())
+        self.directory.entry(user)
     }
 
     fn load(&self, user: &str) -> Result<Passkeys> {
@@ -126,7 +112,9 @@ impl App {
             .context("unreadable authority block")?;
         let user = peek_user(&source).context("no user fact")?;
         anyhow::ensure!(valid_user(&user), "bad user in token");
-        let signed = self.entry(&user)?.context("no identity published for that name")?;
+        let signed = self
+            .entry(&user)?
+            .context("no identity published for that name")?;
         let mut verified: Option<Biscuit> = None;
         for k in &signed.entry.devices {
             let pk = match B64
@@ -157,7 +145,6 @@ impl App {
             .map_err(|e| anyhow!("refused: {e}"))?;
         Ok(user)
     }
-
 }
 
 impl App {
@@ -291,57 +278,6 @@ async fn verify(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
             StatusCode::BAD_GATEWAY.into_response()
         }
     }
-}
-
-/// A person's published entry. Public: it holds only public keys.
-async fn directory_get(State(app): State<Arc<App>>, axum::extract::Path(name): axum::extract::Path<String>) -> Response {
-    if !identity::valid_name(&name) {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    match app.entry(&name) {
-        Ok(Some(e)) => Json(e).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => {
-            eprintln!("directory: {e:#}");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
-}
-
-/// Publish or update an entry. No credential, no token, no admin: the only
-/// thing that admits an update is a signature by the key already on file
-/// (or the recovery key), and a first entry is signed by its own root. What
-/// this box can do wrong is refuse or forget - never accept a forgery.
-async fn directory_put(
-    State(app): State<Arc<App>>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-    Json(signed): Json<identity::SignedEntry>,
-) -> Response {
-    if signed.entry.name != name {
-        return (StatusCode::BAD_REQUEST, "name in path and entry differ").into_response();
-    }
-    let existing = match app.entry(&name) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("directory: {e:#}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-    if let Err(e) = identity::accept(existing.as_ref(), &signed) {
-        eprintln!("directory: refused update for {name}: {e}");
-        return (StatusCode::FORBIDDEN, format!("refused: {e}")).into_response();
-    }
-    if let Err(e) = app.store_entry(&signed) {
-        eprintln!("directory: {e:#}");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    eprintln!(
-        "directory: {name} version {} ({} device(s), signed by {:?})",
-        signed.entry.version,
-        signed.entry.devices.len(),
-        signed.signer
-    );
-    Json(serde_json::json!({ "accepted": true, "version": signed.entry.version })).into_response()
 }
 
 fn with_challenge(v: impl Serialize, ceremony: String) -> Response {
@@ -624,6 +560,18 @@ async fn main() -> Result<()> {
     let bind: std::net::SocketAddr = env_or("VERIFY_BIND", "127.0.0.1:4181").parse()?;
     let dir: PathBuf = env("VERIFY_DIR")?.into();
     std::fs::create_dir_all(&dir)?;
+    let directory = Arc::new(directory::Directory::open(dir.clone())?);
+    // a box with nothing else on it: no domain, no sessions, no secrets. It
+    // serves entries and accepts the ones that verify, and that is all.
+    if env_or("VERIFY_ROLE", "full") == "directory" {
+        let router = Router::new()
+            .route("/health", get(|| async { "ok" }))
+            .merge(directory::router(directory));
+        let listener = tokio::net::TcpListener::bind(bind).await?;
+        eprintln!("directory listening on {bind}");
+        axum::serve(listener, router).await?;
+        return Ok(());
+    }
     let state_dir = dir
         .parent()
         .map(|p| p.to_path_buf())
@@ -653,6 +601,7 @@ async fn main() -> Result<()> {
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
         dir,
+        directory: directory.clone(),
         upstream_auth: env("VERIFY_UPSTREAM_AUTH")?,
         sessions: session::Sessions::open(&state_dir, &domain)?,
         webauthn,
@@ -670,7 +619,6 @@ async fn main() -> Result<()> {
         .route("/_dd/enrol", get(|| async { Html(pages::ENROL) }))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
-        .route("/_dd/directory/{name}", get(directory_get).put(directory_put))
         // the per-box issuer for jellyfin
         .route(
             "/_dd/oidc/.well-known/openid-configuration",
@@ -680,7 +628,8 @@ async fn main() -> Result<()> {
         .route("/_dd/oidc/token", post(oidc_token))
         .route("/_dd/oidc/userinfo", get(oidc_userinfo))
         .route("/_dd/oidc/jwks", get(oidc_jwks))
-        .with_state(app);
+        .with_state(app)
+        .merge(directory::router(directory));
     let listener = tokio::net::TcpListener::bind(bind).await?;
     eprintln!("verify listening on {bind}");
     axum::serve(listener, router).await?;
