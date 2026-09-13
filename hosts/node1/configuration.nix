@@ -24,6 +24,7 @@
     ../../modules/webdav-media.nix
     ../../modules/kanidm-service-accounts.nix
     ../../modules/kanidm-mail-sender.nix
+    ../../modules/kanidm-key-rotation.nix
     ../../modules/signup.nix
   ];
 
