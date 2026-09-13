@@ -5,11 +5,11 @@
 }:
 let
   kanidm = "${config.services.kanidm.package}/bin/kanidm";
+  # the two oauth2 clients kanidm still has: both exist only to bootstrap a
+  # device key or a browser passkey with an id token (modules/verify.nix)
   clients = [
     "llm"
     "dd"
-    "grafana"
-    "jellyfin"
   ];
   # A refresh token lives 16 hours, an access token 15 minutes. A key that
   # has not signed anything for eight days has signed nothing still valid, so

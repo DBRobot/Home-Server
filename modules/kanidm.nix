@@ -108,6 +108,12 @@ in
       # promotion. Append mode is the cost of that: removing someone from the
       # roster no longer removes them from the group, which is correct now that
       # the roster is not the authority on membership.
+      # grafana and jellyfin are no longer oauth2 clients of kanidm: grafana
+      # trusts a header from nginx, jellyfin its own per-box issuer, both
+      # behind the verifier (modules/verify.nix). What remains here is `dd`,
+      # which bootstraps a device or a browser passkey with an id token, and
+      # `llm`, which is oauth2-proxy's own client for that same bootstrap.
+      # kanidm's mint signs nothing any service trusts for access any more.
       groups.users = {
         overwriteMembers = false;
       };
@@ -174,42 +180,6 @@ in
           # without this kanidm issues no refresh token, and every access
           # token expiry would mean another browser round trip
           "offline_access"
-        ];
-      };
-
-      systems.oauth2.grafana = {
-        displayName = "Grafana";
-        originUrl = "https://grafana.${base}/login/generic_oauth";
-        originLanding = "https://grafana.${base}/";
-        # the secret is ours, not kanidm's: provisioning it from sops means
-        # both sides read one source instead of copying a generated value
-        basicSecretFile = config.sops.secrets.grafana-oauth-secret.path;
-        preferShortUsername = true; # "david", not the full spn
-        scopeMaps.users = [
-          "openid"
-          "profile"
-          "email"
-          "groups"
-        ];
-      };
-
-      systems.oauth2.jellyfin = {
-        displayName = "Jellyfin";
-        # /r/ not /redirect/: the plugin config has NewPath=false, so it uses
-        # the old short path. Must be an exact match or kanidm rejects
-        # the authorise with invalid_origin.
-        originUrl = "https://jellyfin.${base}/sso/OID/r/kanidm";
-        # the sso entrypoint, not the root: jellyfin's root is its own
-        # login form, so landing there from kanidm's app list asks for
-        # a password instead of starting the sso flow
-        originLanding = "https://jellyfin.${base}/sso/OID/p/kanidm";
-        basicSecretFile = config.sops.secrets.jellyfin-oauth-secret.path;
-        preferShortUsername = true;
-        scopeMaps.users = [
-          "openid"
-          "profile"
-          "email"
-          "groups"
         ];
       };
 

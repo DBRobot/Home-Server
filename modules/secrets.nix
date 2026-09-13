@@ -19,10 +19,6 @@
       ente-jwt-secret.owner = "ente";
       ente-smtp-password.owner = "ente";
       grafana-secret-key.owner = "grafana";
-      # read by kanidm to provision the client, and by grafana to use it
-      grafana-oauth-secret.owner = "grafana";
-      grafana-oauth-secret.mode = "0440";
-      grafana-oauth-secret.group = "kanidm";
       # read by kanidm's provisioning (owner) and by the verifier's per-box
       # oidc issuer for jellyfin (group) - the same secret, two readers
       jellyfin-oauth-secret.owner = "kanidm";
