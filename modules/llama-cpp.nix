@@ -83,9 +83,9 @@ in
     enable = true;
     package = llamaCppTuned;
     inherit model;
-    # localhost only: litellm in modules/litellm.nix is the front door and
-    # does the kanidm jwt check. Before this, 8081 was the one service open
-    # on every interface with no authentication at all.
+    # localhost only: nginx in modules/llm.nix is the front door and asks the
+    # verifier. Before this, 8081 was the one service open on every interface
+    # with no authentication at all.
     host = "127.0.0.1";
     port = 8081; # 8080 is taken by ente's museum
     openFirewall = false;

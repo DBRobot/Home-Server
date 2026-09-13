@@ -7,12 +7,15 @@ license.workspace = true
 [dependencies]
 ente = { path = "../ente" }
 auth = { path = "../auth" }
+identity = { path = "../identity" }
+ed25519-dalek = "2"
+biscuit-auth = "6"
 archive = { path = "../archive" }
 # already in the tree through ente; used to derive the archive password
 hkdf = "0.12"
 sha2 = "0.10"
 url = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 anyhow = "1"
 rpassword = "7"
 zeroize = "1"

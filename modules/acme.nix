@@ -1,6 +1,6 @@
 { config, ... }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
 in
 {
   # One wildcard cert for every subdomain. DNS-01 needs no inbound ports,
@@ -19,8 +19,8 @@ in
       domain = "*.${base}";
       dnsProvider = "duckdns";
       environmentFile = config.sops.templates."duckdns.env".path;
-      # not "nginx": kanidm terminates its own tls and needs to read
-      # these too, so both services share a group instead
+      # a group rather than the nginx user: kanidm once read these too, and
+      # the next service that terminates its own tls will again
       group = "acmecerts";
     };
   };
@@ -31,5 +31,12 @@ in
   services.nginx = {
     enable = true;
     recommendedProxySettings = true;
+    # A name nothing here serves (a retired one, or a guess) used to land on
+    # whichever vhost nginx listed first. Now it gets no tls handshake at all.
+    virtualHosts."_" = {
+      default = true;
+      rejectSSL = true;
+      locations."/".return = "444";
+    };
   };
 }

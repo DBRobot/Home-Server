@@ -67,24 +67,26 @@
             # time, so nothing extra is needed here.
           };
 
-          # Built separately from dd rather than as another binary in the same
-          # derivation: this one runs on a server and has no business pulling in
-          # the keyring/dbus stack that the cli needs.
-          signup = pkgs.rustPlatform.buildRustPackage {
-            pname = "signup";
+          # The verifier behind nginx's auth_request. Built separately from dd
+          # rather than as another binary in the same derivation: this one
+          # runs on a server and has no business pulling in the keyring/dbus
+          # stack that the cli needs.
+          verify = pkgs.rustPlatform.buildRustPackage {
+            pname = "verify";
             version = "0.1.0";
             src = ./client;
             inherit cargoLock;
             cargoBuildFlags = [
               "-p"
-              "signup"
+              "verify"
             ];
             nativeBuildInputs = [ pkgs.pkg-config ];
           };
+
         };
 
       nixosConfigurations.node1 = nixpkgs.lib.nixosSystem {
-        # modules/signup.nix runs a binary built from this same flake, so it
+        # modules/verify.nix runs a binary built from this same flake, so it
         # needs a way to name it. specialArgs rather than an overlay because
         # there is exactly one such package and an overlay would rebuild the
         # world's pkgs to deliver it.
@@ -100,6 +102,7 @@
       # disko.devices into fileSystems + boot entries; nothing else here has
       # to know about the nvme at all.
       nixosConfigurations.node2 = nixpkgs.lib.nixosSystem {
+        specialArgs = { inherit self; };
         modules = [
           ./hosts/node2/configuration.nix
           disko.nixosModules.disko

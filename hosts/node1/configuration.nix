@@ -2,6 +2,7 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ../../modules/domain.nix
     ../../modules/zfs-datasets.nix
     ../../modules/llama-cpp.nix
     ../../modules/secrets.nix
@@ -18,12 +19,9 @@
     ../../modules/jellyfin.nix
     ../../modules/archive-catalog.nix
     ../../modules/user-accounts.nix
-    ../../modules/kanidm.nix
-    ../../modules/llm-auth.nix
+    ../../modules/llm.nix
     ../../modules/webdav-media.nix
-    ../../modules/kanidm-service-accounts.nix
-    ../../modules/kanidm-mail-sender.nix
-    ../../modules/signup.nix
+    ../../modules/verify.nix
   ];
 
   boot.loader.systemd-boot.enable = true;
@@ -40,6 +38,10 @@
   boot.extraModprobeConfig = ''
     options zfs zfs_arc_max=8589934592
   '';
+
+  dd.domain = "distributed-datacenter.duckdns.org";
+  # node2's directory copy, over the tailnet
+  dd.verify.peers = [ "http://100.95.10.10:4181/_dd/directory" ];
 
   networking.hostName = "node1";
   networking.hostId = "0195f284";

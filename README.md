@@ -8,7 +8,8 @@ committed encrypted rather than kept out of tree.
 
     flake.nix          entry point; `nixosConfigurations.node1`
     hosts/             per-machine configuration
-    modules/           services: ente, garage, harmonia, llama-cpp, zfs, secrets
+    modules/           one file per service; hosts import what they run
+    client/            the dd cli: signup, sso, photos, encrypted archives
     secrets/           sops-encrypted values (safe to publish)
 
 ## Deploying

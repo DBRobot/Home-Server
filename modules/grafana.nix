@@ -1,6 +1,6 @@
 { config, ... }:
 let
-  base = "distributed-datacenter.duckdns.org";
+  base = config.dd.domain;
   host = "grafana.${base}";
 in
 {
@@ -15,24 +15,17 @@ in
       };
       analytics.reporting_enabled = false;
 
-      # Kanidm is the only way in. Its own login form stays enabled as a
-      # break-glass path: if kanidm is down, oidc is down, and locking
-      # yourself out of the dashboards that would tell you why is a bad
-      # failure mode.
-      "auth.generic_oauth" = {
+      # No oidc. nginx asks the verifier who this is (a passkey session on
+      # this box, or a device-signed token) and passes the name in a header
+      # grafana is told to trust from this proxy alone.
+      "auth.proxy" = {
         enabled = true;
-        name = "Kanidm";
-        client_id = "grafana";
-        client_secret = "$__file{${config.sops.secrets.grafana-oauth-secret.path}}";
-        scopes = "openid profile email groups";
-        auth_url = "https://idm.${base}/ui/oauth2";
-        token_url = "https://idm.${base}/oauth2/token";
-        api_url = "https://idm.${base}/oauth2/openid/grafana/userinfo";
-        use_pkce = true;
-        # kanidm returns groups as full spns, hence the contains() rather
-        # than a bare equality test
-        role_attribute_path = "contains(groups[*], 'admins@idm.${base}') && 'Admin' || 'Viewer'";
+        header_name = "X-WEBAUTH-USER";
+        header_property = "username";
+        auto_sign_up = true;
+        enable_login_token = false;
       };
+      auth.disable_login_form = true;
       # $__file{} is grafana's own indirection, so the key never enters the
       # nix store - same property as every other secret here.
       security.secret_key = "$__file{${config.sops.secrets.grafana-secret-key.path}}";
@@ -57,6 +50,15 @@ in
     locations."/" = {
       proxyPass = "http://127.0.0.1:3000";
       proxyWebsockets = true; # live dashboards
+      extraConfig = ''
+        # who is this? the verifier says, from a passkey session on this box
+        # or a device-signed token. grafana trusts the header from this proxy
+        # only (auth.proxy above), so nothing else can set it.
+        auth_request /_dd/verify;
+        auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;
+        proxy_set_header X-WEBAUTH-USER $auth_user;
+        error_page 401 = @login;
+      '';
     };
   };
 }

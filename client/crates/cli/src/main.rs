@@ -1,6 +1,7 @@
 mod derive;
 mod ui;
 mod vault;
+mod who;
 
 use anyhow::{Context, Result};
 use auth::{KeyStore, OsKeyring};
@@ -10,17 +11,27 @@ use vault::Vault;
 use zeroize::Zeroizing;
 
 const SERVICE: &str = "distributed-datacenter";
-/// Keyring account holding the kanidm refresh token. Separate from "ente":
-/// these authorise services, that one decrypts photos, and conflating them
-/// would mean one `dd lock` throwing away more than the user asked.
-const KANIDM: &str = "kanidm-refresh";
+/// DD_KEYRING names a different credential-store service: a second "device"
+/// on one machine, for trying the identity flow end to end.
+fn service() -> String {
+    std::env::var("DD_KEYRING").unwrap_or_else(|_| SERVICE.to_string())
+}
 /// The archive password. Separate again: it decrypts old computers, not
 /// photos, and `dd lock` should be able to forget one without the other.
 const ARCHIVE: &str = "archive";
-const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2/openid/dd";
 const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
-const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
 const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
+/// Any browser-facing host does; the session cookie covers the whole domain.
+const DEFAULT_ENROL: &str = "https://files.distributed-datacenter.duckdns.org/_dd/enrol";
+/// Where a person's signed entry lives. Any box can hold one; a client that
+/// names several sees whether they agree. node2 has no public name yet, so
+/// its copy is reachable on the tailnet only.
+const DEFAULT_DIRECTORIES: [&str; 2] = [
+    "https://files.distributed-datacenter.duckdns.org/_dd/directory",
+    "http://100.95.10.10:4181/_dd/directory",
+];
+/// keyring account holding the name the device key signs for
+const USER: &str = "user";
 
 #[derive(Parser)]
 #[command(name = "dd", about = "distributed datacenter client")]
@@ -31,19 +42,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create an account, from nothing. Asks the signup service for the
-    /// services account, then creates the end-to-end encrypted photo account,
-    /// which no server-side flow can do for you.
+    /// Join, from nothing. Publishes your identity with this device as its
+    /// first (that IS the account - nobody approves it), then creates the
+    /// end-to-end encrypted photo account, which no server can do for you.
     Signup {
         #[arg(long)]
         username: String,
-        /// Your name, as other people will see it.
-        #[arg(long)]
-        name: String,
+        /// For the photo account only; nothing else here has an email.
         #[arg(long)]
         email: String,
-        #[arg(long, default_value = DEFAULT_SIGNUP)]
-        url: String,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES)]
+        directories: Vec<String>,
         #[arg(long, default_value = DEFAULT_ENTE)]
         ente_origin: String,
         /// Stop after the services account and leave photos for later.
@@ -53,12 +62,37 @@ enum Command {
         #[arg(long)]
         password_stdin: bool,
     },
-    /// Sign in to kanidm. Proves who you are to services; touches no keys.
-    Login {
-        #[arg(long, default_value = DEFAULT_IDM)]
-        issuer: String,
-        #[arg(long, default_value = "dd")]
-        client_id: String,
+    /// A browser login: prints a link, signed by this device and good for ten
+    /// minutes, that sets up a passkey in the browser that opens it. Waits
+    /// for that, then signs the passkey into your entry with the root held
+    /// here - a box can run the ceremony but cannot add the result.
+    Enrol {
+        #[arg(long, default_value = DEFAULT_ENROL)]
+        url: String,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES)]
+        directories: Vec<String>,
+    },
+    /// The browser passkeys in your entry.
+    Passkey {
+        #[command(subcommand)]
+        cmd: PasskeyCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
+        directories: Vec<String>,
+    },
+    /// Who you are: a root key here, a recovery key on paper, and the entry
+    /// you sign listing your devices. No server issues it.
+    Identity {
+        #[command(subcommand)]
+        cmd: IdentityCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
+        directories: Vec<String>,
+    },
+    /// This device's key.
+    Device {
+        #[command(subcommand)]
+        cmd: DeviceCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
+        directories: Vec<String>,
     },
     /// Unlock ente. Asks for the ente password once, then stores the derived
     /// keys in the OS credential store so it is not asked again.
@@ -72,14 +106,9 @@ enum Command {
         #[arg(long)]
         password_stdin: bool,
     },
-    /// Print a token for the gateways. Renews silently from the stored
-    /// refresh token, so this is what scripts and rclone should call.
-    Token {
-        #[arg(long, default_value = DEFAULT_IDM)]
-        issuer: String,
-        #[arg(long, default_value = "dd")]
-        client_id: String,
-    },
+    /// Print a token for the services, signed by this device. Good for an
+    /// hour, made offline; this is what scripts and rclone should call.
+    Token,
     /// Encrypted archives of old computers. restic's format, in your own
     /// directory on the server; the password never leaves this machine.
     Image {
@@ -87,13 +116,67 @@ enum Command {
         cmd: ImageCmd,
         #[arg(long, default_value = DEFAULT_IMAGES, global = true)]
         repo: String,
-        #[arg(long, default_value = DEFAULT_IDM, global = true)]
-        issuer: String,
     },
     /// What is cached on this machine.
     Status,
-    /// Forget the stored ente keys and kanidm token on this machine.
-    Lock,
+    /// Forget the stored ente keys and device key on this machine.
+    Lock {
+        /// Also remove the identity root. Not undoable except by recovery.
+        #[arg(long)]
+        forget_identity: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityCmd {
+    /// Create your identity and publish it, with this device as the first.
+    /// Prints the recovery key once.
+    New {
+        /// Your name; defaults to the one already on this machine.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// What every directory has for you, and whether it is yours.
+    Show,
+    /// Bring every directory up to the newest entry any of them holds. No
+    /// signing: the entry carries its own, so a copy needs no key here.
+    Publish,
+    /// Lost every device? The paper key installs a new root and starts the
+    /// device list over with this one.
+    Recover {
+        #[arg(long)]
+        name: Option<String>,
+        /// Read the recovery key from stdin instead of prompting.
+        #[arg(long)]
+        key_stdin: bool,
+    },
+    /// Print the root secret, to move it to another device you own.
+    Export,
+    /// Read a root secret from stdin and keep it here.
+    Import {
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PasskeyCmd {
+    /// Every passkey in your entry, by id.
+    List,
+    /// Drop one; the browser that holds it stops working everywhere at once.
+    Remove { id: String },
+    /// Sign in a credential record from a file - the one a box used to keep
+    /// in <name>.passkeys.json before passkeys lived in the entry.
+    Add { file: String },
+}
+
+#[derive(Subcommand)]
+enum DeviceCmd {
+    /// Show this device's key: fingerprint and the public key to admit.
+    Show,
+    /// Admit a device to your identity by its public key, from `dd device
+    /// show` there. Needs the root key on this machine.
+    Admit { public_key: String },
 }
 
 #[derive(Subcommand)]
@@ -117,6 +200,9 @@ enum ImageCmd {
     },
     /// Every archive in your repository.
     List,
+    /// Rebuild the index from what is on the server. After an interrupted
+    /// push, this lets the rerun skip everything already uploaded.
+    Repair,
     /// Write an archive back out to stdout.
     Pull {
         name: String,
@@ -126,9 +212,9 @@ enum ImageCmd {
     },
 }
 
-fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
+fn image(cmd: ImageCmd, repo: String) -> Result<()> {
     use archive::{Archive, Source, Stderr, TokenProvider};
-    let keys = OsKeyring::new(SERVICE);
+    let keys = OsKeyring::new(service());
 
     if let ImageCmd::Init { rederive: true } = &cmd {
         let master = Zeroizing::new(rpassword::prompt_password("photo password: ")?);
@@ -138,12 +224,7 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
         "no archive password on this machine - run `dd unlock`, or `dd image init --rederive`",
     )?;
 
-    let tokens = std::sync::Arc::new(TokenProvider::new(
-        &issuer,
-        "dd",
-        OsKeyring::new(SERVICE),
-        KANIDM,
-    )?);
+    let tokens = std::sync::Arc::new(TokenProvider::new(OsKeyring::new(service())));
     let archive = Archive::new(url::Url::parse(&repo)?, tokens, password, Stderr)?;
 
     match cmd {
@@ -162,6 +243,10 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
                 "archived {} as {}  ({} bytes)  snapshot {}",
                 name, e.name, e.bytes, e.id
             );
+        }
+        ImageCmd::Repair => {
+            archive.repair()?;
+            println!("index rebuilt - rerun the push, it will skip what is already there");
         }
         ImageCmd::List => {
             let entries = archive.list()?;
@@ -189,50 +274,30 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let keys = OsKeyring::new(SERVICE);
+    let keys = OsKeyring::new(service());
 
     match cli.command {
         Command::Signup {
             username,
-            name,
             email,
-            url,
+            directories,
             ente_origin,
             skip_photos,
             password_stdin,
         } => {
-            // The signup service answers json when asked to, so this never
-            // parses the html page a browser gets.
-            #[derive(serde::Deserialize)]
-            struct Reply {
-                status: String,
-                message: String,
-            }
-
-            let reply: Reply = reqwest::Client::new()
-                .post(&url)
-                .header(reqwest::header::ACCEPT, "application/json")
-                .form(&[
-                    ("username", &username),
-                    ("display_name", &name),
-                    ("email", &email),
-                ])
-                .send()
-                .await
-                .context("reaching the signup service")?
-                .json()
-                .await
-                .context("the signup service did not answer json")?;
-
-            if reply.status != "created" {
-                anyhow::bail!("{}", reply.message);
-            }
-            println!("{}", reply.message);
+            let (kp, _) = auth::device::load_or_create(&keys)?;
+            let recovery = who::create(&keys, &directories, &username, &kp).await?;
+            keys.set(USER, &username)?;
+            println!(
+                "identity {username} published; device {} is its first",
+                auth::device::fingerprint(&kp)
+            );
+            who::print_recovery(&recovery);
 
             if skip_photos {
                 println!(
-                    "\nphotos: skipped - run `dd signup --skip-photos=false` or create it \
-                     in the photos app later"
+                    "\nphotos: skipped - `dd unlock --email you@example.com` once you have \
+                     made the account in the photos app"
                 );
                 return Ok(());
             }
@@ -297,29 +362,242 @@ async fn main() -> Result<()> {
             println!("  It is the only way back in if you forget the photo password.");
             println!("  Nobody running this service can recover it for you.\n");
             println!("    {recovery}\n");
-            println!("Once you have set a passkey from the emailed link, run `dd login`.");
+            println!("For a browser: `dd enrol` prints a link that sets up a passkey.");
         }
 
-        Command::Login { issuer, client_id } => {
-            let session = auth::login(&issuer, &client_id)
-                .await
-                .context("kanidm login failed")?;
-            let who = session
-                .preferred_username
-                .clone()
-                .unwrap_or_else(|| session.subject.clone());
-            println!("signed in to kanidm as {who}");
-            match &session.refresh_token {
-                Some(rt) => {
-                    keys.set(KANIDM, rt)?;
-                    println!("token stored - `dd token` renews without a browser");
+        Command::Enrol { url, directories } => {
+            let kp = auth::device::load(&keys)?.context("no device key here - `dd device show`")?;
+            let root = who::load_root(&keys)?
+                .context("no root key on this machine - the passkey has to be signed in")?;
+            let user = keys
+                .get(USER)?
+                .context("no name on this machine - `dd identity new` or `dd identity import`")?;
+            let tok = auth::device::mint_for(
+                &kp,
+                &user,
+                std::time::Duration::from_secs(600),
+                Some("enrol"),
+            )?;
+            println!(
+                "open this within ten minutes, in the browser that should get the passkey:
+"
+            );
+            println!(
+                "  {url}?t={tok}
+"
+            );
+            println!("waiting for the browser...");
+            let http = reqwest::Client::new();
+            let result = format!("{}/result", url.trim_end_matches('/'));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+            let cred = loop {
+                if std::time::Instant::now() > deadline {
+                    anyhow::bail!("no passkey arrived within ten minutes");
                 }
-                None => println!(
-                    "no refresh token: the `offline_access` scope was not granted, \
-                     so every expiry needs another login"
-                ),
-            }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let r = http.get(&result).bearer_auth(&tok).send().await?;
+                match r.status().as_u16() {
+                    200 => break r.json::<identity::Passkey>().await?,
+                    204 => continue,
+                    s => anyhow::bail!("{s} {}", r.text().await.unwrap_or_default()),
+                }
+            };
+            let id = cred.id.clone();
+            let signed = who::admit_passkey(&directories, &user, &root, cred).await?;
+            println!(
+                "passkey {id} signed into your entry; version {}",
+                signed.entry.version
+            );
+            println!("the browser can sign in now, on every box that has your entry.");
         }
+
+        Command::Passkey { cmd, directories } => match cmd {
+            PasskeyCmd::List => {
+                let name = keys
+                    .get(USER)?
+                    .context("no name here - `dd identity new` or `dd identity import`")?
+                    .to_string();
+                let found = who::fetch(&directories, &name).await;
+                let e = who::newest(&found).context("no directory has an entry")?;
+                if e.entry.passkeys.is_empty() {
+                    println!("no passkeys - `dd enrol` adds one");
+                }
+                for p in &e.entry.passkeys {
+                    println!("{}  added {}", p.id, p.added);
+                }
+            }
+            PasskeyCmd::Remove { id } => {
+                let root = who::load_root(&keys)?.context("no root key on this machine")?;
+                let name = keys.get(USER)?.context("no name here")?.to_string();
+                let signed = who::remove_passkey(&directories, &name, &root, &id).await?;
+                println!("passkey {id} removed; version {}", signed.entry.version);
+            }
+            PasskeyCmd::Add { file } => {
+                let root = who::load_root(&keys)?.context("no root key on this machine")?;
+                let name = keys.get(USER)?.context("no name here")?.to_string();
+                let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file)?)?;
+                let creds: Vec<serde_json::Value> = match v.get("passkeys") {
+                    Some(serde_json::Value::Array(a)) => a.clone(),
+                    _ => vec![v],
+                };
+                for cred in creds {
+                    let id = cred
+                        .pointer("/cred/cred_id")
+                        .and_then(|x| x.as_str())
+                        .context("no cred.cred_id in that record")?
+                        .to_string();
+                    let signed = who::admit_passkey(
+                        &directories,
+                        &name,
+                        &root,
+                        identity::Passkey {
+                            id: id.clone(),
+                            cred,
+                            added: identity::now(),
+                        },
+                    )
+                    .await?;
+                    println!("passkey {id} signed in; version {}", signed.entry.version);
+                }
+            }
+        },
+
+        Command::Identity { cmd, directories } => match cmd {
+            IdentityCmd::New { name } => {
+                let name = match name.or(keys.get(USER)?.map(|z| z.to_string())) {
+                    Some(n) => n,
+                    None => anyhow::bail!("no name: pass --name"),
+                };
+                let (kp, _) = auth::device::load_or_create(&keys)?;
+                let recovery = who::create(&keys, &directories, &name, &kp).await?;
+                keys.set(USER, &name)?;
+                println!(
+                    "identity {name} published; device {} is its first",
+                    auth::device::fingerprint(&kp)
+                );
+                who::print_recovery(&recovery);
+            }
+            IdentityCmd::Show => {
+                let name = keys
+                    .get(USER)?
+                    .context("no name here - `dd identity new` or `dd identity import`")?
+                    .to_string();
+                let mine =
+                    who::load_root(&keys)?.map(|r| identity::encode_public(&r.verifying_key()));
+                let here = auth::device::load(&keys)?.map(|kp| auth::device::public_b64(&kp));
+                println!("{name}");
+                println!(
+                    "root here:   {}",
+                    mine.as_deref()
+                        .map(identity::fingerprint)
+                        .unwrap_or("none".into())
+                );
+                for (d, r) in who::fetch(&directories, &name).await {
+                    match r {
+                        Ok(None) => println!("{d}: no entry"),
+                        Err(e) => println!("{d}: unreachable ({e})"),
+                        Ok(Some(e)) => {
+                            let owner = match &mine {
+                                Some(m) if *m == e.entry.root => "yours",
+                                Some(_) => "NOT YOURS - different root",
+                                None => "root not held here",
+                            };
+                            println!(
+                                "{d}: version {} root {} ({owner})",
+                                e.entry.version,
+                                identity::fingerprint(&e.entry.root)
+                            );
+                            for dev in &e.entry.devices {
+                                let this = here.as_deref() == Some(dev.public_key.as_str());
+                                println!(
+                                    "  device {}{}",
+                                    dev.fingerprint,
+                                    if this { " (this one)" } else { "" }
+                                );
+                            }
+                            for p in &e.entry.passkeys {
+                                println!("  passkey {}", p.id);
+                            }
+                        }
+                    }
+                }
+            }
+            IdentityCmd::Publish => {
+                let name = keys
+                    .get(USER)?
+                    .context("no name here - `dd identity new` or `dd identity import`")?
+                    .to_string();
+                let found = who::fetch(&directories, &name).await;
+                let newest = who::newest(&found).context("no directory has an entry")?;
+                let behind: Vec<String> = found
+                    .iter()
+                    .filter(|(_, r)| !matches!(r, Ok(Some(e)) if e.entry.version >= newest.entry.version))
+                    .map(|(d, _)| d.clone())
+                    .collect();
+                if behind.is_empty() {
+                    println!("every directory has version {}", newest.entry.version);
+                } else {
+                    who::publish(&behind, &newest).await?;
+                }
+            }
+            IdentityCmd::Recover { name, key_stdin } => {
+                let name = match name.or(keys.get(USER)?.map(|z| z.to_string())) {
+                    Some(n) => n,
+                    None => anyhow::bail!("no name: pass --name"),
+                };
+                let key = if key_stdin {
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line)?;
+                    Zeroizing::new(line.trim().to_string())
+                } else {
+                    Zeroizing::new(rpassword::prompt_password("recovery key: ")?)
+                };
+                let (kp, _) = auth::device::load_or_create(&keys)?;
+                let next = who::recover(&keys, &directories, &name, &key, &kp).await?;
+                keys.set(USER, &name)?;
+                println!("recovered {name}: new root here, every other device dropped");
+                who::print_recovery(&next);
+            }
+            IdentityCmd::Export => {
+                let root = who::load_root(&keys)?.context("no identity here")?;
+                println!("{}", *identity::encode_secret(&root));
+            }
+            IdentityCmd::Import { name } => {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                let root = identity::decode_secret(line.trim()).context("bad root secret")?;
+                keys.set(who::ROOT, &identity::encode_secret(&root))?;
+                keys.set(USER, &name)?;
+                println!(
+                    "root for {name} stored ({})",
+                    identity::fingerprint(&identity::encode_public(&root.verifying_key()))
+                );
+            }
+        },
+
+        Command::Device { cmd, directories } => match cmd {
+            DeviceCmd::Show => {
+                // made on first sight: a new device's first step is to show
+                // its key to one that can admit it, before any login
+                let (kp, _) = auth::device::load_or_create(&keys)?;
+                println!("{}", auth::device::fingerprint(&kp));
+                println!("{}", auth::device::public_b64(&kp));
+            }
+            DeviceCmd::Admit { public_key } => {
+                let root = who::load_root(&keys)?.context(
+                    "no root key on this machine - `dd identity export` on one that has it",
+                )?;
+                let name = keys
+                    .get(USER)?
+                    .context("no name here - `dd identity new` or `dd identity import`")?;
+                let signed = who::admit(&directories, &name, &root, &public_key).await?;
+                println!(
+                    "device {} admitted; version {}",
+                    identity::fingerprint(&public_key),
+                    signed.entry.version
+                );
+            }
+        },
 
         Command::Unlock {
             origin,
@@ -351,37 +629,43 @@ async fn main() -> Result<()> {
             println!("unlocked and stored for user_id {}", account.user_id);
         }
 
-        Command::Token { issuer, client_id } => {
-            let stored = keys
-                .get(KANIDM)?
-                .context("not signed in to kanidm - run `dd login`")?;
-            let session = auth::refresh(&issuer, &client_id, &stored)
-                .await
-                .context("renewing the kanidm token failed - run `dd login` again")?;
-            // Kanidm rotates: the token just used is dead, so failing to store
-            // the replacement would make this the last renewal that works.
-            if let Some(rt) = &session.refresh_token {
-                keys.set(KANIDM, rt)?;
-            }
-            // The ID token, not the access token. Kanidm's access token carries
-            // nothing but `sub`, and oauth2-proxy builds its identity from the
-            // id token - see the note in modules/webdav-media.nix.
-            let idt = session
-                .id_token
-                .context("kanidm returned no id token, so there is no identity to present")?;
-            println!("{idt}");
+        Command::Token => {
+            let kp = auth::device::load(&keys)?.context("no device key here - `dd device show`")?;
+            let user = keys
+                .get(USER)?
+                .context("no name on this machine - `dd identity new` or `dd identity import`")?;
+            println!(
+                "{}",
+                auth::device::mint(&kp, &user, std::time::Duration::from_secs(3600))?
+            );
         }
 
         // rustic_core is synchronous and the token provider blocks on its own
         // small runtime. Neither may run on a tokio worker thread, so the
         // whole command gets a plain thread of its own.
-        Command::Image { cmd, repo, issuer } => {
-            return std::thread::spawn(move || image(cmd, repo, issuer))
+        Command::Image { cmd, repo } => {
+            return std::thread::spawn(move || image(cmd, repo))
                 .join()
                 .map_err(|_| anyhow::anyhow!("image command panicked"))?;
         }
 
         Command::Status => {
+            match who::load_root(&keys)? {
+                Some(r) => println!(
+                    "identity: {} root held here",
+                    identity::fingerprint(&identity::encode_public(&r.verifying_key()))
+                ),
+                None => {
+                    println!("identity: no root here - `dd identity new` or `dd identity import`")
+                }
+            }
+            match auth::device::load(&keys)? {
+                Some(kp) => println!(
+                    "device:  {} - signs its own tokens",
+                    auth::device::fingerprint(&kp)
+                ),
+                None => println!("device:  none - `dd device show` makes one"),
+            }
             match keys.get(ARCHIVE)? {
                 Some(_) => println!("archive: password stored - `dd image push` works"),
                 None => println!("archive: none - run `dd image init`"),
@@ -393,17 +677,22 @@ async fn main() -> Result<()> {
                 }
                 None => println!("ente:   locked - run `dd unlock --email you@example.com`"),
             }
-            match keys.get(KANIDM)? {
-                Some(_) => println!("kanidm: signed in - `dd token` mints one on demand"),
-                None => println!("kanidm: signed out - run `dd login`"),
-            }
         }
 
-        Command::Lock => {
+        Command::Lock { forget_identity } => {
+            keys.clear(auth::device::ACCOUNT)?;
+            keys.clear(USER)?;
             keys.clear(ARCHIVE)?;
             keys.clear("ente")?;
-            keys.clear(KANIDM)?;
-            println!("ente keys and kanidm token removed from this machine's credential store");
+            println!("ente keys and device key removed from this machine's credential store");
+            if keys.get(who::ROOT)?.is_some() {
+                if forget_identity {
+                    keys.clear(who::ROOT)?;
+                    println!("identity root removed too - only the paper key gets it back");
+                } else {
+                    println!("the identity root stays; `dd lock --forget-identity` removes it");
+                }
+            }
         }
     }
     Ok(())
