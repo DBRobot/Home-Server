@@ -87,6 +87,14 @@ enum Command {
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
+    /// Commits signed by your device key and checked against the directory:
+    /// anyone who has your entry can verify what you wrote.
+    Git {
+        #[command(subcommand)]
+        cmd: GitCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
+        directories: Vec<String>,
+    },
     /// Encrypted repositories: `git remote add origin dd::<url>` and push.
     /// The forge holds ciphertext; whoever holds the key reads.
     Repo {
@@ -174,6 +182,16 @@ enum PasskeyCmd {
     /// Sign in a credential record from a file - the one a box used to keep
     /// in <name>.passkeys.json before passkeys lived in the entry.
     Add { file: String },
+}
+
+#[derive(Subcommand)]
+enum GitCmd {
+    /// Point git at this device's key for signing and at the signers file
+    /// for verifying. Writes the key as an OpenSSH file under ~/.config/dd.
+    Setup,
+    /// Write git's allowed-signers file from every entry in the directory:
+    /// each person's devices, so `git log --show-signature` names them.
+    Signers,
 }
 
 #[derive(Subcommand)]
@@ -593,6 +611,120 @@ async fn main() -> Result<()> {
                 );
             }
         },
+
+        Command::Git { cmd, directories } => {
+            let dir = std::env::var("XDG_CONFIG_HOME")
+                .map(std::path::PathBuf::from)
+                .or_else(|_| {
+                    std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+                })
+                .context("no HOME")?
+                .join("dd");
+            std::fs::create_dir_all(&dir)?;
+            let signers = dir.join("allowed_signers");
+            match cmd {
+                GitCmd::Setup => {
+                    let (kp, _) = auth::device::load_or_create(&keys)?;
+                    let seed: [u8; 32] = kp.private().to_bytes()[..]
+                        .try_into()
+                        .context("device key is not 32 bytes")?;
+                    let name = keys.get(USER)?.map(|n| n.to_string()).unwrap_or_default();
+                    let mut key = ssh_key::PrivateKey::from(
+                        ssh_key::private::Ed25519Keypair::from_seed(&seed),
+                    );
+                    key.set_comment(format!("dd device of {name}"));
+                    let path = dir.join("device_ed25519");
+                    // the same key the keyring holds, as a file git's ssh signing
+                    // can read; 0600, no passphrase, the standing of any ssh key
+                    std::fs::write(&path, key.to_openssh(ssh_key::LineEnding::LF)?.as_bytes())?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt as _;
+                        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+                    }
+                    std::fs::write(
+                        dir.join("device_ed25519.pub"),
+                        format!("{}\n", key.public_key().to_openssh()?),
+                    )?;
+                    for (k, v) in [
+                        ("gpg.format", "ssh".to_string()),
+                        ("user.signingkey", path.display().to_string()),
+                        ("gpg.ssh.allowedSignersFile", signers.display().to_string()),
+                        ("commit.gpgsign", "true".to_string()),
+                        ("tag.gpgsign", "true".to_string()),
+                    ] {
+                        let s = std::process::Command::new("git")
+                            .args(["config", "--global", k, &v])
+                            .status()?;
+                        anyhow::ensure!(s.success(), "git config {k}");
+                    }
+                    println!(
+                        "git signs with device {} from {}",
+                        auth::device::fingerprint(&kp),
+                        path.display()
+                    );
+                    if !signers.exists() {
+                        println!(
+                            "run `dd git signers` so verification has something to check against"
+                        );
+                    }
+                }
+                GitCmd::Signers => {
+                    let http = reqwest::Client::new();
+                    let mut lines = std::collections::BTreeSet::new();
+                    let mut people = 0;
+                    for d in &directories {
+                        let Ok(r) = http.get(d.trim_end_matches('/')).send().await else {
+                            continue;
+                        };
+                        let Ok(list) = r.json::<Vec<serde_json::Value>>().await else {
+                            continue;
+                        };
+                        for l in list {
+                            let Some(name) = l["name"].as_str() else {
+                                continue;
+                            };
+                            let Ok(r) = http
+                                .get(format!("{}/{name}", d.trim_end_matches('/')))
+                                .send()
+                                .await
+                            else {
+                                continue;
+                            };
+                            let Ok(e) = r.json::<identity::SignedEntry>().await else {
+                                continue;
+                            };
+                            if identity::verify(&e).is_err() {
+                                continue;
+                            }
+                            people += 1;
+                            for dev in &e.entry.devices {
+                                let Ok(vk) = identity::decode_public(&dev.public_key) else {
+                                    continue;
+                                };
+                                let pk = ssh_key::PublicKey::from(
+                                    ssh_key::public::Ed25519PublicKey(vk.to_bytes()),
+                                );
+                                // git matches the principal against the signer's email;
+                                // name@domain is what `dd git setup` puts in user.email
+                                lines.insert(format!(
+                                    "{name}@dd {}",
+                                    pk.to_openssh().unwrap_or_default()
+                                ));
+                            }
+                        }
+                    }
+                    let body: String = lines.iter().map(|l| format!("{l}\n")).collect();
+                    std::fs::write(&signers, body)?;
+                    println!(
+                        "{} signer(s) from {} entries -> {}",
+                        lines.len(),
+                        people,
+                        signers.display()
+                    );
+                }
+            }
+        }
 
         Command::Repo { cmd } => {
             // the remote helper owns the format; it lives next to dd
