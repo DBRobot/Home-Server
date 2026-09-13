@@ -61,8 +61,20 @@
             cargoBuildFlags = [
               "-p"
               "dd"
+              "-p"
+              "git-remote-dd" # `git remote add origin dd::...`; dd repo calls it too
+            ];
+            # the tests of these two, not the workspace's: the helper's test
+            # drives the dd binary, which only this derivation builds
+            cargoTestFlags = [
+              "-p"
+              "dd"
+              "-p"
+              "git-remote-dd"
             ];
             nativeBuildInputs = [ pkgs.pkg-config ];
+            # the encrypted-remote test drives real git
+            nativeCheckInputs = [ pkgs.git ];
             # keyring talks to the secret service over dbus at runtime, not build
             # time, so nothing extra is needed here.
           };
@@ -77,6 +89,10 @@
             src = ./client;
             inherit cargoLock;
             cargoBuildFlags = [
+              "-p"
+              "verify"
+            ];
+            cargoTestFlags = [
               "-p"
               "verify"
             ];
