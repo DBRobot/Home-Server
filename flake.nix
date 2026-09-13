@@ -73,8 +73,11 @@
               "git-remote-dd"
             ];
             nativeBuildInputs = [ pkgs.pkg-config ];
-            # the encrypted-remote test drives real git
-            nativeCheckInputs = [ pkgs.git ];
+            # the encrypted-remote and signed-commit tests drive real git and ssh-keygen
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.openssh
+            ];
             # keyring talks to the secret service over dbus at runtime, not build
             # time, so nothing extra is needed here.
           };
