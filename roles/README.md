@@ -16,5 +16,6 @@ that machine (disks, network, lid).
     forge     forgejo, its runner, the github mirror
     observe   grafana, alerting, mail, database dumps
 
-Roles that read people's plaintext register with `dd.box.plaintext`; an
-untrusted box refuses them at build time (modules/box.nix).
+No box is trusted. Roles that read people's plaintext register with
+`dd.box.plaintext`; the box publishes that list as a metric so the services
+still to fix stay in view (modules/box.nix). Nothing refuses anything.

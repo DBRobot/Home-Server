@@ -20,7 +20,6 @@ let
           (builtins.all (r: builtins.pathExists (../roles + "/${r}.nix")) box.roles)
           (builtins.hasAttr name cfgs)
           (cfgs.${name}.config.networking.hostName == name)
-          (cfgs.${name}.config.dd.box.ownerTrusted == box.trusted)
           # peers: every other box, none of itself
           (
             builtins.length cfgs.${name}.config.dd.verify.peers

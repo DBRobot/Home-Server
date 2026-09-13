@@ -152,7 +152,6 @@
                 ./hosts/${name}/hardware.nix
                 {
                   networking.hostName = name;
-                  dd.box.ownerTrusted = box.trusted;
                   dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);
                 }
               ]

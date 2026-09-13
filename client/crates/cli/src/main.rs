@@ -679,12 +679,7 @@ async fn main() -> Result<()> {
                         .map(|a| a.iter().filter_map(|r| r.as_str()).collect())
                         .unwrap_or_default();
                     println!(
-                        "{name}  {}  {} {}  tailnet {}  {}",
-                        if b["trusted"].as_bool().unwrap_or(false) {
-                            "trusted  "
-                        } else {
-                            "untrusted"
-                        },
+                        "{name}  {} {}  tailnet {}  {}",
                         b["siteId"].as_str().unwrap_or("-"),
                         b["regionId"].as_str().unwrap_or("-"),
                         b["tailnet"].as_str().unwrap_or("-"),
