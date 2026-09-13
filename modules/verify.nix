@@ -9,7 +9,7 @@ let
   cfg = config.dd.verify;
   full = cfg.role == "full";
   base = config.dd.domain;
-  port = 4181; # 4180 is oauth2-proxy, which this fronts
+  port = 4181;
   user = "dd-verify";
 in
 {
@@ -34,16 +34,15 @@ in
     users.groups.${user} = { };
 
     # The verifier answers nginx's auth_request for every protected service on
-    # this box. A bearer biscuit is checked against the public keys the user's
-    # own devices registered; it holds no key that can sign, so there is nothing
-    # in it worth stealing. Everything else is relayed to oauth2-proxy, so
-    # browser sessions and legacy kanidm tokens keep working while services move.
+    # this box. A bearer biscuit is checked against the devices in the user's
+    # own signed entry; a cookie against the passkeys enrolled here. It holds
+    # no key that can sign, so there is nothing in it worth stealing, and it
+    # asks no identity server because there is none.
     systemd.services.dd-verify = {
-      description = "Verify user-signed tokens; relay the rest to oauth2-proxy";
+      description = "Verify user-signed tokens and this box's passkey sessions";
       after = [
         "network-online.target"
-      ]
-      ++ lib.optional full "oauth2-proxy.service";
+      ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
       environment = {
@@ -55,7 +54,6 @@ in
         VERIFY_DIR = "/var/lib/dd-verify/keys";
       }
       // lib.optionalAttrs full {
-        VERIFY_UPSTREAM_AUTH = "http://127.0.0.1:4180/oauth2/auth";
         # the browser login: passkeys scoped to the whole domain, so one login
         # covers every service on this box and the session cookie rides along
         VERIFY_DOMAIN = base;
@@ -97,9 +95,10 @@ in
     };
 
     # The verifier's browser side on every vhost that has one: the passkey
-    # login and enrolment pages, device registration, and on jellyfin's the
-    # per-box issuer. /verify itself stays internal to nginx. A 401 from
-    # auth_request lands a browser on the login page and back where it was.
+    # login and enrolment pages, the directory, and on jellyfin's the per-box
+    # issuer. /_dd/verify is the auth_request target and internal to nginx. A
+    # 401 from auth_request lands a browser on the login page and back where
+    # it was.
     services.nginx.virtualHosts = lib.mkIf full (
       builtins.listToAttrs (
         map
@@ -119,24 +118,24 @@ in
               "@login".extraConfig = ''
                 return 302 /_dd/login?rd=$request_uri;
               '';
-            }
-            # the bootstrap for a first browser passkey is an oauth2-proxy login,
-            # and its callback is per-host - files and llm already carry the
-            # /oauth2/ path, these two need it as well. Added INSIDE locations:
-            # `//` on the vhost would replace the whole set, which is exactly the
-            # bug that once dropped /_dd/ from these two hosts.
-            //
-              lib.optionalAttrs
-                (builtins.elem h [
-                  "grafana"
-                  "jellyfin"
-                ])
-                {
-                  "/oauth2/" = {
-                    proxyPass = "http://127.0.0.1:4180";
-                    extraConfig = "proxy_set_header X-Scheme $scheme;";
-                  };
-                };
+              # the subrequest every protected location makes
+              "= /_dd/verify" = {
+                proxyPass = "http://127.0.0.1:${toString port}/verify";
+                extraConfig = ''
+                  internal;
+                  proxy_pass_request_body off;
+                  proxy_set_header Content-Length "";
+                  proxy_set_header X-Original-URI $request_uri;
+                  # The subrequest inherits nothing from the location that
+                  # made it, so it ran with nginx's default 1m body limit.
+                  # When a large PUT was still arriving as the auth phase ran,
+                  # discarding it tripped that limit: "auth request unexpected
+                  # status: 413", surfaced as a 500. The limit belongs on the
+                  # dav location; here it must not exist.
+                  client_max_body_size 0;
+                '';
+              };
+            };
           })
           [
             "files"

@@ -10,10 +10,9 @@ button span{color:Canvas}#msg{margin-top:1rem;min-height:1.5em}a{color:inherit}<
 <label for="u" style="display:block;font-weight:600;margin-top:1rem">Username</label>
 <input id="u" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" style="width:100%;box-sizing:border-box;padding:.6rem .7rem;font:inherit;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit">
 <button id="go"><span>Use passkey</span></button><div id="msg"></div>
-<p style="font-size:.9rem">First time in a browser? <a id="enrol" href="/_dd/enrol">Set up a passkey</a>.</p>
+<p style="font-size:.9rem">First time in a browser? On a device that holds your key, run <code>dd enrol</code> and open the link it prints.</p>
 <script>
 const rd=new URLSearchParams(location.search).get('rd')||'/';
-document.getElementById('enrol').href='/_dd/enrol?rd='+encodeURIComponent(rd);
 const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const u8b64=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function go(){const m=document.getElementById('msg');m.textContent='…';try{
@@ -37,15 +36,17 @@ pub const ENROL: &str = r#"<!doctype html><html lang="en"><head><meta charset="u
 <style>:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:2rem 1rem;display:flex;justify-content:center}
 main{width:100%;max-width:24rem}h1{font-size:1.4rem;margin:0 0 .5rem}p{opacity:.75}button{width:100%;padding:.7rem;font:inherit;font-weight:600;border:0;border-radius:6px;cursor:pointer;background:currentColor;margin-top:1rem}
 button span{color:Canvas}#msg{margin-top:1rem;min-height:1.5em}</style></head><body><main>
-<h1>Set up a passkey</h1><p>For signing in to this network from a browser. It is checked here, on this box, against a key that only your device holds.</p>
+<h1>Set up a passkey</h1><p>For signing in to this network from a browser. You got here from a link that a device of yours signed; the passkey is checked here, on this box, and nowhere else.</p>
 <button id="go"><span>Create passkey</span></button><div id="msg"></div>
+<p id="how" style="font-size:.9rem" hidden>No signed link? On a device that holds your key, run <code>dd enrol</code> and open the address it prints.</p>
 <script>
-const rd=new URLSearchParams(location.search).get('rd')||'/';
+const q=new URLSearchParams(location.search);const rd=q.get('rd')||'/';const t=q.get('t');
+const hdr=t?{'authorization':'Bearer '+t}:{};
 const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const u8b64=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function go(){const m=document.getElementById('msg');m.textContent='…';try{
-const r=await fetch('/_dd/enrol/start',{method:'POST'});
-if(r.status===401){location.href='/oauth2/start?rd='+encodeURIComponent(location.pathname+location.search);return}
+const r=await fetch('/_dd/enrol/start',{method:'POST',headers:hdr});
+if(r.status===401){m.textContent='This link is not valid, or has expired.';document.getElementById('how').hidden=false;return}
 if(!r.ok)throw new Error(await r.text());
 const {publicKey,ceremony}=await r.json();
 publicKey.challenge=b64u(publicKey.challenge);publicKey.user.id=b64u(publicKey.user.id);
@@ -53,7 +54,7 @@ if(publicKey.excludeCredentials)publicKey.excludeCredentials=publicKey.excludeCr
 const cred=await navigator.credentials.create({publicKey});
 const body={id:cred.id,rawId:u8b64(cred.rawId),type:cred.type,extensions:cred.getClientExtensionResults(),response:{
 attestationObject:u8b64(cred.response.attestationObject),clientDataJSON:u8b64(cred.response.clientDataJSON)}};
-const f=await fetch('/_dd/enrol/finish',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':ceremony},body:JSON.stringify(body)});
+const f=await fetch('/_dd/enrol/finish',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':ceremony,...hdr},body:JSON.stringify(body)});
 if(!f.ok)throw new Error(await f.text());m.textContent='Done. Signing you in…';location.href=rd;}catch(e){m.textContent='Failed: '+e.message}}
 document.getElementById('go').onclick=go;
 </script></main></body></html>"#;

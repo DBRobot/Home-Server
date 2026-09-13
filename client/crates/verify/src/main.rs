@@ -1,10 +1,10 @@
 //! The verifier: answers nginx's auth_request for every service on this box.
 //!
-//! A bearer token that is a biscuit is checked against the public keys the
-//! user's own devices registered - nothing here can sign, so nothing here can
-//! be stolen to become someone. Anything else (a browser cookie, a legacy
-//! kanidm id token) is handed to oauth2-proxy unchanged, so the two can
-//! coexist while services move over.
+//! Two credentials exist and nothing else: a biscuit signed by one of the
+//! devices in the person's own entry, or this box's session cookie from a
+//! passkey login. The passkey itself was enrolled on a link that a device
+//! signed. Nothing here can sign as anyone, so nothing here is worth taking;
+//! no identity server is asked, because there is none.
 //!
 //! Which keys are a user's is the directory (directory.rs): an entry the
 //! person signs with a key they alone hold. This box stores and serves it and
@@ -35,10 +35,8 @@ use serde::{Deserialize, Serialize};
 use webauthn_rs::prelude::*;
 
 struct App {
-    http: reqwest::Client,
     dir: PathBuf,
     directory: Arc<directory::Directory>,
-    upstream_auth: String,
     sessions: session::Sessions,
     webauthn: Webauthn,
     ceremonies: Mutex<HashMap<String, (Instant, Ceremony)>>,
@@ -102,8 +100,11 @@ impl App {
         Ok(())
     }
 
-    /// Verify a biscuit against the user's registered keys. Returns the user.
-    fn verify_biscuit(&self, token: &str) -> Result<String> {
+    /// Verify a biscuit against the devices in the user's entry. `operation`
+    /// is what the request is for: a token minted for enrolment carries a
+    /// check that only "enrol" satisfies, so a leaked enrol link cannot read
+    /// a file, and an access token is not an enrol link.
+    fn verify_biscuit(&self, token: &str, operation: &str) -> Result<String> {
         let unverified = UnverifiedBiscuit::from_base64(token).context("not a biscuit")?;
         // the user is named in the authority block; it has to be read before the
         // signature can be checked, because the key to check with depends on it
@@ -136,6 +137,8 @@ impl App {
         let mut authorizer = biscuit_auth::builder::AuthorizerBuilder::new()
             .fact(format!("time({now})").as_str())
             .map_err(|e| anyhow!("{e}"))?
+            .fact(format!("operation({operation:?})").as_str())
+            .map_err(|e| anyhow!("{e}"))?
             .policy(format!("allow if user({:?})", user).as_str())
             .map_err(|e| anyhow!("{e}"))?
             .build(&biscuit)
@@ -159,43 +162,22 @@ impl App {
         self.ceremonies.lock().unwrap().remove(id).map(|(_, c)| c)
     }
 
-    /// Who this request is, if anyone: a device-signed biscuit, this box's
-    /// own session cookie, or - the bootstrap - a session oauth2-proxy vouches
-    /// for. Used for /verify and for deciding who may enrol a passkey.
-    async fn identify(&self, headers: &HeaderMap) -> Option<String> {
+    /// Who this request is, if anyone: a device-signed biscuit or this box's
+    /// own session cookie. Nothing else counts.
+    fn identify(&self, headers: &HeaderMap, operation: &str) -> Option<String> {
         if let Some(tok) = bearer(headers)
             && UnverifiedBiscuit::from_base64(tok).is_ok()
         {
-            return self.verify_biscuit(tok).ok();
+            return match self.verify_biscuit(tok, operation) {
+                Ok(u) => Some(u),
+                Err(e) => {
+                    eprintln!("biscuit refused: {e:#}");
+                    None
+                }
+            };
         }
         let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
-        if let Some(u) = self.sessions.user(cookie) {
-            return Some(u);
-        }
-        let mut req = self.http.get(&self.upstream_auth);
-        for name in [
-            "authorization",
-            "cookie",
-            "x-original-uri",
-            "x-forwarded-for",
-            "x-forwarded-proto",
-            "host",
-        ] {
-            if let Some(v) = headers.get(name) {
-                req = req.header(name, v);
-            }
-        }
-        let up = req.send().await.ok()?;
-        if !up.status().is_success() {
-            return None;
-        }
-        let u = up
-            .headers()
-            .get("x-auth-request-preferred-username")?
-            .to_str()
-            .ok()?
-            .to_string();
-        valid_user(&u).then_some(u)
+        self.sessions.user(cookie)
     }
 }
 
@@ -218,65 +200,16 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 
 /// nginx auth_request lands here for every request to a protected service.
 async fn verify(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
-    if let Some(tok) = bearer(&headers)
-        && UnverifiedBiscuit::from_base64(tok).is_ok()
-    {
-        return match app.verify_biscuit(tok) {
-            Ok(user) => {
-                let mut r = StatusCode::OK.into_response();
-                let v = HeaderValue::from_str(&user).unwrap();
-                r.headers_mut()
-                    .insert("X-Auth-Request-Preferred-Username", v.clone());
-                r.headers_mut().insert("X-Auth-Request-User", v);
-                r
-            }
-            Err(e) => {
-                eprintln!("biscuit refused: {e:#}");
-                StatusCode::UNAUTHORIZED.into_response()
-            }
-        };
-    }
-    // this box's own session cookie, from a passkey login at the verifier
-    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
-    if let Some(user) = app.sessions.user(cookie) {
-        let mut r = StatusCode::OK.into_response();
-        let v = HeaderValue::from_str(&user).unwrap();
-        r.headers_mut()
-            .insert("X-Auth-Request-Preferred-Username", v.clone());
-        r.headers_mut().insert("X-Auth-Request-User", v);
-        return r;
-    }
-    // not ours: an oauth2-proxy cookie or a legacy kanidm token. oauth2-proxy's
-    // answer is relayed as-is, headers included, so nginx sees no difference.
-    let mut req = app.http.get(&app.upstream_auth);
-    for name in [
-        "authorization",
-        "cookie",
-        "x-original-uri",
-        "x-forwarded-for",
-        "x-forwarded-proto",
-        "host",
-    ] {
-        if let Some(v) = headers.get(name) {
-            req = req.header(name, v);
-        }
-    }
-    match req.send().await {
-        Ok(up) => {
-            let mut r = StatusCode::from_u16(up.status().as_u16())
-                .unwrap_or(StatusCode::BAD_GATEWAY)
-                .into_response();
-            for (k, v) in up.headers() {
-                if k.as_str().starts_with("x-auth-request-") {
-                    r.headers_mut().insert(k.clone(), v.clone());
-                }
-            }
+    match app.identify(&headers, "access") {
+        Some(user) => {
+            let mut r = StatusCode::OK.into_response();
+            let v = HeaderValue::from_str(&user).unwrap();
+            r.headers_mut()
+                .insert("X-Auth-Request-Preferred-Username", v.clone());
+            r.headers_mut().insert("X-Auth-Request-User", v);
             r
         }
-        Err(e) => {
-            eprintln!("upstream auth unreachable: {e}");
-            StatusCode::BAD_GATEWAY.into_response()
-        }
+        None => StatusCode::UNAUTHORIZED.into_response(),
     }
 }
 
@@ -287,7 +220,7 @@ fn with_challenge(v: impl Serialize, ceremony: String) -> Response {
 }
 
 async fn enrol_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
-    let Some(user) = app.identify(&headers).await else {
+    let Some(user) = app.identify(&headers, "enrol") else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let dir = match app.load(&user) {
@@ -597,12 +530,8 @@ async fn main() -> Result<()> {
         Err(_) => None,
     };
     let app = Arc::new(App {
-        http: reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?,
         dir,
         directory: directory.clone(),
-        upstream_auth: env("VERIFY_UPSTREAM_AUTH")?,
         sessions: session::Sessions::open(&state_dir, &domain)?,
         webauthn,
         ceremonies: Mutex::new(HashMap::new()),

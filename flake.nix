@@ -67,10 +67,10 @@
             # time, so nothing extra is needed here.
           };
 
-          # Built separately from dd rather than as another binary in the same
-          # derivation: this one runs on a server and has no business pulling in
-          # the keyring/dbus stack that the cli needs.
-          # The verifier behind nginx's auth_request. Same shape as signup.
+          # The verifier behind nginx's auth_request. Built separately from dd
+          # rather than as another binary in the same derivation: this one
+          # runs on a server and has no business pulling in the keyring/dbus
+          # stack that the cli needs.
           verify = pkgs.rustPlatform.buildRustPackage {
             pname = "verify";
             version = "0.1.0";
@@ -83,21 +83,10 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
           };
 
-          signup = pkgs.rustPlatform.buildRustPackage {
-            pname = "signup";
-            version = "0.1.0";
-            src = ./client;
-            inherit cargoLock;
-            cargoBuildFlags = [
-              "-p"
-              "signup"
-            ];
-            nativeBuildInputs = [ pkgs.pkg-config ];
-          };
         };
 
       nixosConfigurations.node1 = nixpkgs.lib.nixosSystem {
-        # modules/signup.nix runs a binary built from this same flake, so it
+        # modules/verify.nix runs a binary built from this same flake, so it
         # needs a way to name it. specialArgs rather than an overlay because
         # there is exactly one such package and an overlay would rebuild the
         # world's pkgs to deliver it.

@@ -15,13 +15,9 @@ in
       };
       analytics.reporting_enabled = false;
 
-      # Kanidm is the only way in. Its own login form stays enabled as a
-      # break-glass path: if kanidm is down, oidc is down, and locking
-      # yourself out of the dashboards that would tell you why is a bad
-      # failure mode.
-      # No oidc, no kanidm. nginx asks the verifier who this is (a passkey
-      # session on this box, or a device-signed token) and passes the name in
-      # a header grafana is told to trust from this proxy alone.
+      # No oidc. nginx asks the verifier who this is (a passkey session on
+      # this box, or a device-signed token) and passes the name in a header
+      # grafana is told to trust from this proxy alone.
       "auth.proxy" = {
         enabled = true;
         header_name = "X-WEBAUTH-USER";
@@ -58,20 +54,10 @@ in
         # who is this? the verifier says, from a passkey session on this box
         # or a device-signed token. grafana trusts the header from this proxy
         # only (auth.proxy above), so nothing else can set it.
-        auth_request /oauth2/auth;
+        auth_request /_dd/verify;
         auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;
         proxy_set_header X-WEBAUTH-USER $auth_user;
         error_page 401 = @login;
-      '';
-    };
-    locations."= /oauth2/auth" = {
-      proxyPass = "http://127.0.0.1:4181/verify";
-      extraConfig = ''
-        internal;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI $request_uri;
-        client_max_body_size 0;
       '';
     };
   };

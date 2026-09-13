@@ -12,12 +12,7 @@ let
   # crypt on the client), so nothing on this host can read them and nothing
   # gets an acl. See modules/user-accounts.nix for the directories.
   dav = dir: listing: ''
-    auth_request /oauth2/auth;
-    # NOT x_auth_request_user: oauth2-proxy fills that from the `sub`
-    # claim and there is no flag to change it - providers/provider_data.go
-    # hardcodes UserClaim to "sub". It is the account uuid, so nginx built
-    # /srv/users/bb02d34e-... and every PUT landed nowhere. The
-    # preferred-username header is the same identity as a name.
+    auth_request /_dd/verify;
     auth_request_set $dav_user $upstream_http_x_auth_request_preferred_username;
     # $dav_dir is $dav_user filtered through the map below, so a missing
     # or malformed header cannot name a directory
@@ -40,20 +35,12 @@ let
 in
 {
   # Authenticated upload with no new service: nginx already ships the dav
-  # modules, and oauth2-proxy from modules/llm-auth.nix already validates
-  # kanidm tokens. This is the only way files reach /srv/users now - samba was
-  # retired with modules/smb-media.nix, having never carried a file.
-  #
-  # Present the ID TOKEN here, not the access token. oauth2-proxy's bearer
-  # mode is built for id tokens - providers/oidc.go names the function
-  # "CreateSessionFromToken converts Bearer IDTokens into sessions" and
-  # explicitly skips the profile url in that path ("we can't hit the
-  # ProfileURL"). Kanidm's access token carries nothing but `sub`, so an
-  # access token authenticates fine and then has no name to build a path
-  # from. Verified: access token 500, id token 201.
+  # modules, and the verifier (modules/verify.nix) says whose request it is.
+  # This is the only way files reach /srv/users - samba was retired with
+  # modules/smb-media.nix, having never carried a file.
   #
   # Not mountable in Finder or Explorer: those speak basic auth only and
-  # cannot present a bearer token. Use rclone or `dd upload`.
+  # cannot present a bearer token. Use rclone with `dd token`, or `dd image`.
   services.nginx.virtualHosts.${host} = {
     useACMEHost = base;
     forceSSL = true;
@@ -66,32 +53,6 @@ in
     # so no scratch copy of the image is ever needed on the client.
     locations."/images/".extraConfig = dav images "json";
 
-    # The verifier first (modules/verify.nix): a user-signed biscuit is checked
-    # against the device keys on file, anything else is relayed to
-    # oauth2-proxy. Same variables come out either way.
-    locations."= /oauth2/auth" = {
-      proxyPass = "http://127.0.0.1:4181/verify";
-      extraConfig = ''
-        internal;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI $request_uri;
-        # The subrequest inherits nothing from the dav location, so it ran with
-        # nginx's default 1m limit. When the body was still arriving as the
-        # auth phase ran, discarding it tripped that limit: "auth request
-        # unexpected status: 413", surfaced to the client as a 500. Small
-        # uploads passed only because they had already fully arrived. The
-        # limit belongs on the dav location; here it must not exist.
-        client_max_body_size 0;
-      '';
-    };
-
-    locations."/oauth2/" = {
-      proxyPass = "http://127.0.0.1:4180";
-      extraConfig = ''
-        proxy_set_header X-Scheme $scheme;
-      '';
-    };
   };
 
   # An empty $dav_user would make the alias /srv/users/ - the root itself,

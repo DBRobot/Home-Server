@@ -29,10 +29,10 @@ pub fn encode_private(kp: &KeyPair) -> Zeroizing<String> {
 pub fn decode_private(s: &str) -> Result<KeyPair> {
     let bytes = Zeroizing::new(
         B64.decode(s.trim())
-            .map_err(|e| crate::Error::Discovery(format!("device key: {e}")))?,
+            .map_err(|e| crate::Error::Token(format!("device key: {e}")))?,
     );
     let sk = PrivateKey::from_bytes(&bytes, Algorithm::Ed25519)
-        .map_err(|e| crate::Error::Discovery(format!("device key: {e}")))?;
+        .map_err(|e| crate::Error::Token(format!("device key: {e}")))?;
     Ok(KeyPair::from(&sk))
 }
 
@@ -60,14 +60,24 @@ pub fn load_or_create(keys: &impl KeyStore) -> Result<(KeyPair, bool)> {
 }
 
 /// A token good for `ttl` from now, signed by this device, naming the user.
-/// Nothing else is in it yet: attenuation (this copy is read-only, this copy
-/// is for files only) is a block appended later, by whoever holds it.
 pub fn mint(kp: &KeyPair, user: &str, ttl: Duration) -> Result<String> {
+    mint_for(kp, user, ttl, None)
+}
+
+/// The same, restricted to one operation. The verifier states what a request
+/// is for ("access", "enrol") and a token that names one is refused for the
+/// other: an enrol link in a terminal scrollback opens no file.
+pub fn mint_for(
+    kp: &KeyPair,
+    user: &str,
+    ttl: Duration,
+    operation: Option<&str>,
+) -> Result<String> {
     let exp = (SystemTime::now() + ttl)
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let err = |e: biscuit_auth::error::Token| crate::Error::Discovery(format!("mint: {e}"));
+    let err = |e: biscuit_auth::error::Token| crate::Error::Token(format!("mint: {e}"));
     let token = Biscuit::builder()
         .fact(format!("user({:?})", user).as_str())
         .map_err(err)?
@@ -76,10 +86,14 @@ pub fn mint(kp: &KeyPair, user: &str, ttl: Duration) -> Result<String> {
         // the check is in the token itself, so even a verifier that forgot to
         // supply the time could not accept an expired one
         .check(format!("check if time($t), $t < {exp}").as_str())
-        .map_err(err)?
-        .build(kp)
         .map_err(err)?;
-    token.to_base64().map_err(err)
+    let token = match operation {
+        Some(op) => token
+            .check(format!("check if operation({op:?})").as_str())
+            .map_err(err)?,
+        None => token,
+    };
+    token.build(kp).map_err(err)?.to_base64().map_err(err)
 }
 
 /// Short, stable name for a key, the same one the directory entry shows.

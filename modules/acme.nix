@@ -19,8 +19,8 @@ in
       domain = "*.${base}";
       dnsProvider = "duckdns";
       environmentFile = config.sops.templates."duckdns.env".path;
-      # not "nginx": kanidm terminates its own tls and needs to read
-      # these too, so both services share a group instead
+      # a group rather than the nginx user: kanidm once read these too, and
+      # the next service that terminates its own tls will again
       group = "acmecerts";
     };
   };

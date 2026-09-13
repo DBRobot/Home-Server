@@ -1,5 +1,5 @@
 //! Encrypted archives of old computers, in restic's repository format, stored
-//! in a per-user directory behind the kanidm-authenticated webdav on node1.
+//! in a per-user directory behind the verifier-guarded webdav on a box.
 //!
 //! What is ours here is only the plumbing: the place the repository lives and
 //! the token that gets it there. Encryption, chunking, deduplication and

@@ -2,8 +2,9 @@
 {
   sops = {
     defaultSopsFile = ../secrets/secrets.yaml;
-    # node1 decrypts with the ssh host key it has had since install. No new
+    # The box decrypts with the ssh host key it has had since install. No new
     # key material exists, and anyone holding it already owns the machine.
+    # Each box is a recipient of its own file only - see .sops.yaml.
     age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
     secrets = {
@@ -19,29 +20,14 @@
       ente-jwt-secret.owner = "ente";
       ente-smtp-password.owner = "ente";
       grafana-secret-key.owner = "grafana";
-      # read by kanidm's provisioning (owner) and by the verifier's per-box
-      # oidc issuer for jellyfin (group) - the same secret, two readers
-      jellyfin-oauth-secret.owner = "kanidm";
-      jellyfin-oauth-secret.group = "dd-verify";
-      jellyfin-oauth-secret.mode = "0440";
-      llm-oauth-secret.owner = "kanidm";
-      llm-cookie-secret = { }; # reaches oauth2-proxy through the template below
+      # the client secret jellyfin's sso plugin presents to the verifier's
+      # per-box issuer; the seed script in modules/jellyfin.nix runs as root
+      jellyfin-oauth-secret.owner = "dd-verify";
       # read only through sops templates below, so root-only is fine
       garage-media-key-id = { };
       garage-media-key-secret = { };
       rclone-crypt-password = { };
       rclone-crypt-salt = { };
-      kanidm-admin-password.owner = "kanidm";
-      kanidm-idm-admin-password.owner = "kanidm";
-      # Service account api tokens. Minted by kanidm rather than generated
-      # here - it signs them - so these are captured once with
-      # `mint-kanidm-token` and encrypted, not derived from anything.
-      # Two tokens for one account, on purpose. The read-write one is held
-      # only by the worker, which faces no network; the internet-facing page
-      # gets a read-only token that can say "taken" and nothing else.
-      signup-api-token.owner = "signup-worker";
-      signup-readonly-token.owner = "signup";
-      mail-sender-api-token.owner = "kanidm-mail-sender";
       # Where machine mail actually goes. Read only through the msmtp aliases
       # template below, so root-only is right.
       alert-recipient = { };
@@ -73,12 +59,6 @@
       # rclone takes its whole config from the environment, so no config file
       # is written anywhere. PASSWORD/PASSWORD2 are rclone-obscured, which is
       # obfuscation not encryption - sops is what actually protects them.
-      # oauth2-proxy's keyFile is an EnvironmentFile, not a raw secret file -
-      # systemd rejected a bare value with "Ignoring invalid environment
-      # assignment" and oauth2-proxy then started with no cookie secret.
-      "oauth2-proxy.env".owner = "oauth2-proxy";
-      "oauth2-proxy.env".content =
-        "OAUTH2_PROXY_COOKIE_SECRET=${config.sops.placeholder.llm-cookie-secret}";
       "rclone.env".owner = "media";
       "rclone.env".content = ''
         RCLONE_CONFIG_GARAGE_TYPE=s3

@@ -19,13 +19,8 @@
     ../../modules/jellyfin.nix
     ../../modules/archive-catalog.nix
     ../../modules/user-accounts.nix
-    ../../modules/kanidm.nix
-    ../../modules/llm-auth.nix
+    ../../modules/llm.nix
     ../../modules/webdav-media.nix
-    ../../modules/kanidm-service-accounts.nix
-    ../../modules/kanidm-mail-sender.nix
-    ../../modules/kanidm-key-rotation.nix
-    ../../modules/signup.nix
     ../../modules/verify.nix
   ];
 

@@ -5,24 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# The oidc flow. Same family as kanidm itself is not true here - this one is
-# ramosbugs' crate, the de facto rust oidc client.
-openidconnect = { version = "4", features = ["reqwest"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # The OS credential store: secret service on linux, keychain on macos,
 # credential manager on windows. Nothing bespoke, no crypto of ours.
-# default features already cover all three platforms:
-# apple-native-keyring-store, windows-native-keyring-store,
-# zbus-secret-service-keyring-store
 keyring = "4"
 zeroize = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["net", "io-util", "rt", "macros"] }
-url = "2"
 # The user-held key. A device signs its own short-lived tokens with an ed25519
 # key that never leaves the keyring; services verify against the public half.
 # Biscuit is the token format: public-key verification, offline, attenuable.
 biscuit-auth = "6"
 base64 = "0.22"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"

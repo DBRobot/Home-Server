@@ -16,17 +16,13 @@ const SERVICE: &str = "distributed-datacenter";
 fn service() -> String {
     std::env::var("DD_KEYRING").unwrap_or_else(|_| SERVICE.to_string())
 }
-/// Keyring account holding the kanidm refresh token. Separate from "ente":
-/// these authorise services, that one decrypts photos, and conflating them
-/// would mean one `dd lock` throwing away more than the user asked.
-const KANIDM: &str = "kanidm-refresh";
 /// The archive password. Separate again: it decrypts old computers, not
 /// photos, and `dd lock` should be able to forget one without the other.
 const ARCHIVE: &str = "archive";
-const DEFAULT_IDM: &str = "https://idm.distributed-datacenter.duckdns.org/oauth2/openid/dd";
 const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
-const DEFAULT_SIGNUP: &str = "https://signup.distributed-datacenter.duckdns.org/";
 const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
+/// Any browser-facing host does; the session cookie covers the whole domain.
+const DEFAULT_ENROL: &str = "https://files.distributed-datacenter.duckdns.org/_dd/enrol";
 /// Where a person's signed entry lives. Any box can hold one; a client that
 /// names several sees whether they agree. node2 has no public name yet, so
 /// its copy is reachable on the tailnet only.
@@ -46,19 +42,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create an account, from nothing. Asks the signup service for the
-    /// services account, then creates the end-to-end encrypted photo account,
-    /// which no server-side flow can do for you.
+    /// Join, from nothing. Publishes your identity with this device as its
+    /// first (that IS the account - nobody approves it), then creates the
+    /// end-to-end encrypted photo account, which no server can do for you.
     Signup {
         #[arg(long)]
         username: String,
-        /// Your name, as other people will see it.
-        #[arg(long)]
-        name: String,
+        /// For the photo account only; nothing else here has an email.
         #[arg(long)]
         email: String,
-        #[arg(long, default_value = DEFAULT_SIGNUP)]
-        url: String,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES)]
+        directories: Vec<String>,
         #[arg(long, default_value = DEFAULT_ENTE)]
         ente_origin: String,
         /// Stop after the services account and leave photos for later.
@@ -68,16 +62,12 @@ enum Command {
         #[arg(long)]
         password_stdin: bool,
     },
-    /// Sign in to kanidm once on this device, for the services that still
-    /// ask it. Tokens come from this device's own key, admitted to your
-    /// identity by you - `dd identity new` or `dd device admit`.
-    Login {
-        #[arg(long, default_value = DEFAULT_IDM)]
-        issuer: String,
-        #[arg(long, default_value = "dd")]
-        client_id: String,
-        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
-        directories: Vec<String>,
+    /// A browser login: prints a link, signed by this device and good for ten
+    /// minutes, that sets up a passkey on the box it points at. No server
+    /// vouches for you; your own key does.
+    Enrol {
+        #[arg(long, default_value = DEFAULT_ENROL)]
+        url: String,
     },
     /// Who you are: a root key here, a recovery key on paper, and the entry
     /// you sign listing your devices. No server issues it.
@@ -106,14 +96,9 @@ enum Command {
         #[arg(long)]
         password_stdin: bool,
     },
-    /// Print a token for the gateways. Renews silently from the stored
-    /// refresh token, so this is what scripts and rclone should call.
-    Token {
-        #[arg(long, default_value = DEFAULT_IDM)]
-        issuer: String,
-        #[arg(long, default_value = "dd")]
-        client_id: String,
-    },
+    /// Print a token for the services, signed by this device. Good for an
+    /// hour, made offline; this is what scripts and rclone should call.
+    Token,
     /// Encrypted archives of old computers. restic's format, in your own
     /// directory on the server; the password never leaves this machine.
     Image {
@@ -121,12 +106,10 @@ enum Command {
         cmd: ImageCmd,
         #[arg(long, default_value = DEFAULT_IMAGES, global = true)]
         repo: String,
-        #[arg(long, default_value = DEFAULT_IDM, global = true)]
-        issuer: String,
     },
     /// What is cached on this machine.
     Status,
-    /// Forget the stored ente keys, kanidm token and device key on this machine.
+    /// Forget the stored ente keys and device key on this machine.
     Lock {
         /// Also remove the identity root. Not undoable except by recovery.
         #[arg(long)]
@@ -139,7 +122,7 @@ enum IdentityCmd {
     /// Create your identity and publish it, with this device as the first.
     /// Prints the recovery key once.
     New {
-        /// Your name; defaults to the one `dd login` recorded.
+        /// Your name; defaults to the one already on this machine.
         #[arg(long)]
         name: Option<String>,
     },
@@ -208,7 +191,7 @@ enum ImageCmd {
     },
 }
 
-fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
+fn image(cmd: ImageCmd, repo: String) -> Result<()> {
     use archive::{Archive, Source, Stderr, TokenProvider};
     let keys = OsKeyring::new(service());
 
@@ -220,12 +203,7 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
         "no archive password on this machine - run `dd unlock`, or `dd image init --rederive`",
     )?;
 
-    let tokens = std::sync::Arc::new(TokenProvider::new(
-        &issuer,
-        "dd",
-        OsKeyring::new(service()),
-        KANIDM,
-    )?);
+    let tokens = std::sync::Arc::new(TokenProvider::new(OsKeyring::new(service())));
     let archive = Archive::new(url::Url::parse(&repo)?, tokens, password, Stderr)?;
 
     match cmd {
@@ -280,45 +258,25 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Signup {
             username,
-            name,
             email,
-            url,
+            directories,
             ente_origin,
             skip_photos,
             password_stdin,
         } => {
-            // The signup service answers json when asked to, so this never
-            // parses the html page a browser gets.
-            #[derive(serde::Deserialize)]
-            struct Reply {
-                status: String,
-                message: String,
-            }
-
-            let reply: Reply = reqwest::Client::new()
-                .post(&url)
-                .header(reqwest::header::ACCEPT, "application/json")
-                .form(&[
-                    ("username", &username),
-                    ("display_name", &name),
-                    ("email", &email),
-                ])
-                .send()
-                .await
-                .context("reaching the signup service")?
-                .json()
-                .await
-                .context("the signup service did not answer json")?;
-
-            if reply.status != "created" {
-                anyhow::bail!("{}", reply.message);
-            }
-            println!("{}", reply.message);
+            let (kp, _) = auth::device::load_or_create(&keys)?;
+            let recovery = who::create(&keys, &directories, &username, &kp).await?;
+            keys.set(USER, &username)?;
+            println!(
+                "identity {username} published; device {} is its first",
+                auth::device::fingerprint(&kp)
+            );
+            who::print_recovery(&recovery);
 
             if skip_photos {
                 println!(
-                    "\nphotos: skipped - run `dd signup --skip-photos=false` or create it \
-                     in the photos app later"
+                    "\nphotos: skipped - `dd unlock --email you@example.com` once you have \
+                     made the account in the photos app"
                 );
                 return Ok(());
             }
@@ -383,57 +341,38 @@ async fn main() -> Result<()> {
             println!("  It is the only way back in if you forget the photo password.");
             println!("  Nobody running this service can recover it for you.\n");
             println!("    {recovery}\n");
-            println!("Once you have set a passkey from the emailed link, run `dd login`.");
+            println!("For a browser: `dd enrol` prints a link that sets up a passkey.");
         }
 
-        Command::Login {
-            issuer,
-            client_id,
-            directories,
-        } => {
-            let session = auth::login(&issuer, &client_id).await?;
-            let user = session
-                .preferred_username
-                .clone()
-                .context("kanidm returned no username")?;
-            if let Some(rt) = &session.refresh_token {
-                keys.set(KANIDM, rt)?;
-            }
-            keys.set(USER, &user)?;
-            println!("signed in to kanidm as {user}");
-
-            // The device key: made here, kept here. Whether it may sign for
-            // you is a question for your own entry, never for the server
-            // that just answered.
-            let (kp, _) = auth::device::load_or_create(&keys)?;
-            let public_key = auth::device::public_b64(&kp);
-            let fp = identity::fingerprint(&public_key);
-            let found = who::fetch(&directories, &user).await;
-            match who::newest(&found) {
-                Some(e) if e.entry.devices.iter().any(|d| d.public_key == public_key) => {
-                    println!("device {fp} is in your entry - tokens are signed here");
-                }
-                Some(_) => match who::load_root(&keys)? {
-                    Some(root) => {
-                        println!("admitting device {fp} with the root held here");
-                        who::admit(&directories, &user, &root, &public_key).await?;
-                    }
-                    None => {
-                        println!("device {fp} is not in your entry yet. On a device that holds");
-                        println!("your identity, run:  dd device admit {public_key}");
-                    }
-                },
-                None => {
-                    println!("no identity published for {user} yet - run `dd identity new`");
-                }
-            }
+        Command::Enrol { url } => {
+            let kp = auth::device::load(&keys)?.context("no device key here - `dd device show`")?;
+            let user = keys
+                .get(USER)?
+                .context("no name on this machine - `dd identity new` or `dd identity import`")?;
+            let tok = auth::device::mint_for(
+                &kp,
+                &user,
+                std::time::Duration::from_secs(600),
+                Some("enrol"),
+            )?;
+            println!(
+                "open this within ten minutes, in the browser that should get the passkey:
+"
+            );
+            println!(
+                "  {url}?t={tok}
+"
+            );
+            println!(
+                "it can set up a passkey and nothing else; afterwards the passkey signs you in."
+            );
         }
 
         Command::Identity { cmd, directories } => match cmd {
             IdentityCmd::New { name } => {
                 let name = match name.or(keys.get(USER)?.map(|z| z.to_string())) {
                     Some(n) => n,
-                    None => anyhow::bail!("no name: pass --name or `dd login` first"),
+                    None => anyhow::bail!("no name: pass --name"),
                 };
                 let (kp, _) = auth::device::load_or_create(&keys)?;
                 let recovery = who::create(&keys, &directories, &name, &kp).await?;
@@ -447,7 +386,7 @@ async fn main() -> Result<()> {
             IdentityCmd::Show => {
                 let name = keys
                     .get(USER)?
-                    .context("no name here - `dd login` or `dd identity new`")?
+                    .context("no name here - `dd identity new` or `dd identity import`")?
                     .to_string();
                 let mine =
                     who::load_root(&keys)?.map(|r| identity::encode_public(&r.verifying_key()));
@@ -489,7 +428,7 @@ async fn main() -> Result<()> {
             IdentityCmd::Publish => {
                 let name = keys
                     .get(USER)?
-                    .context("no name here - `dd login` or `dd identity new`")?
+                    .context("no name here - `dd identity new` or `dd identity import`")?
                     .to_string();
                 let found = who::fetch(&directories, &name).await;
                 let newest = who::newest(&found).context("no directory has an entry")?;
@@ -553,7 +492,7 @@ async fn main() -> Result<()> {
                 )?;
                 let name = keys
                     .get(USER)?
-                    .context("no name recorded - run `dd login`")?;
+                    .context("no name here - `dd identity new` or `dd identity import`")?;
                 let signed = who::admit(&directories, &name, &root, &public_key).await?;
                 println!(
                     "device {} admitted; version {}",
@@ -593,41 +532,22 @@ async fn main() -> Result<()> {
             println!("unlocked and stored for user_id {}", account.user_id);
         }
 
-        Command::Token { issuer, client_id } => {
-            // A registered device signs its own token: no server involved, no
-            // fifteen-minute expiry dance, works offline.
-            if let (Some(kp), Some(user)) = (auth::device::load(&keys)?, keys.get(USER)?) {
-                println!(
-                    "{}",
-                    auth::device::mint(&kp, &user, std::time::Duration::from_secs(3600))?
-                );
-                return Ok(());
-            }
-            let stored = keys
-                .get(KANIDM)?
-                .context("not signed in to kanidm - run `dd login`")?;
-            let session = auth::refresh(&issuer, &client_id, &stored)
-                .await
-                .context("renewing the kanidm token failed - run `dd login` again")?;
-            // Kanidm rotates: the token just used is dead, so failing to store
-            // the replacement would make this the last renewal that works.
-            if let Some(rt) = &session.refresh_token {
-                keys.set(KANIDM, rt)?;
-            }
-            // The ID token, not the access token. Kanidm's access token carries
-            // nothing but `sub`, and oauth2-proxy builds its identity from the
-            // id token - see the note in modules/webdav-media.nix.
-            let idt = session
-                .id_token
-                .context("kanidm returned no id token, so there is no identity to present")?;
-            println!("{idt}");
+        Command::Token => {
+            let kp = auth::device::load(&keys)?.context("no device key here - `dd device show`")?;
+            let user = keys
+                .get(USER)?
+                .context("no name on this machine - `dd identity new` or `dd identity import`")?;
+            println!(
+                "{}",
+                auth::device::mint(&kp, &user, std::time::Duration::from_secs(3600))?
+            );
         }
 
         // rustic_core is synchronous and the token provider blocks on its own
         // small runtime. Neither may run on a tokio worker thread, so the
         // whole command gets a plain thread of its own.
-        Command::Image { cmd, repo, issuer } => {
-            return std::thread::spawn(move || image(cmd, repo, issuer))
+        Command::Image { cmd, repo } => {
+            return std::thread::spawn(move || image(cmd, repo))
                 .join()
                 .map_err(|_| anyhow::anyhow!("image command panicked"))?;
         }
@@ -647,7 +567,7 @@ async fn main() -> Result<()> {
                     "device:  {} - signs its own tokens",
                     auth::device::fingerprint(&kp)
                 ),
-                None => println!("device:  none - run `dd login`"),
+                None => println!("device:  none - `dd device show` makes one"),
             }
             match keys.get(ARCHIVE)? {
                 Some(_) => println!("archive: password stored - `dd image push` works"),
@@ -660,10 +580,6 @@ async fn main() -> Result<()> {
                 }
                 None => println!("ente:   locked - run `dd unlock --email you@example.com`"),
             }
-            match keys.get(KANIDM)? {
-                Some(_) => println!("kanidm: signed in - `dd token` mints one on demand"),
-                None => println!("kanidm: signed out - run `dd login`"),
-            }
         }
 
         Command::Lock { forget_identity } => {
@@ -671,10 +587,7 @@ async fn main() -> Result<()> {
             keys.clear(USER)?;
             keys.clear(ARCHIVE)?;
             keys.clear("ente")?;
-            keys.clear(KANIDM)?;
-            println!(
-                "ente keys, kanidm token and device key removed from this machine's credential store"
-            );
+            println!("ente keys and device key removed from this machine's credential store");
             if keys.get(who::ROOT)?.is_some() {
                 if forget_identity {
                     keys.clear(who::ROOT)?;
