@@ -1,12 +1,29 @@
-{ ... }:
 {
+  config,
+  pkgs,
+  lib,
+  ...
+}:
+let
+  facts = "/var/lib/dd-facts";
+in
+{
+  # Every box keeps its own numbers. Prometheus here scrapes this box and
+  # nothing else, and keeps the history on this box's disk. Whoever runs
+  # grafana reads each box over the tailnet; nothing aggregates, and a box
+  # that is gone takes its own history with it, which is correct. A fleet-wide
+  # view, when placement wants one, is Thanos over Garage on top of exactly
+  # this, not a change to it.
+  #
   # Samples, not events: alerting.nix shouts when something breaks, this
-  # notices the gradual things. Started before any dashboard exists because
-  # history cannot be backfilled.
+  # notices the gradual things. History cannot be backfilled, so it starts
+  # before any dashboard exists.
   services.prometheus = {
     enable = true;
     port = 9090;
-    listenAddress = "127.0.0.1"; # tailnet only, via nginx if ever wanted
+    # the tailnet is the only interface the firewall admits; the cable and
+    # the wifi see nothing
+    listenAddress = "0.0.0.0";
     retentionTime = "180d"; # a few hundred MB; enough to answer "when did this start"
 
     exporters.node = {
@@ -17,8 +34,9 @@
         "systemd" # unit states: catches a failed backup even without the mail
         "zfs" # pool state, arc stats, per-dataset space
         "hwmon" # drive and cpu temperatures
-        "textfile"
+        "textfile" # the facts below
       ];
+      extraFlags = [ "--collector.textfile.directory=${facts}" ];
     };
 
     scrapeConfigs = [
@@ -26,11 +44,71 @@
         job_name = "node";
         static_configs = [ { targets = [ "127.0.0.1:9100" ]; } ];
       }
-      {
-        # garage already exports; nothing to install
-        job_name = "garage";
-        static_configs = [ { targets = [ "127.0.0.1:2112" ]; } ];
-      }
+    ]
+    ++ lib.optional config.services.garage.enable {
+      # garage already exports; nothing to install
+      job_name = "garage";
+      static_configs = [ { targets = [ "127.0.0.1:2112" ]; } ];
+    };
+  };
+
+  # What this box is, as metrics next to how it is doing: cores, model,
+  # instruction sets, memory, disks, gpu, kernel, generation. Rewritten
+  # hourly and at boot, read by node_exporter's textfile collector. The
+  # placement program will want the same facts signed by the host key;
+  # that is a second output of this same script, later.
+  systemd.services.dd-facts = {
+    description = "Publish this box's hardware facts as metrics";
+    wantedBy = [ "multi-user.target" ];
+    startAt = "hourly";
+    path = with pkgs; [
+      coreutils
+      gawk
+      gnugrep
+      gnused
+      util-linux
+      pciutils
     ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStartPre = "+${pkgs.coreutils}/bin/install -d -m 0755 -o node-exporter -g node-exporter ${facts}";
+      User = "node-exporter";
+      Group = "node-exporter";
+    };
+    script = ''
+      set -euo pipefail
+      out=${facts}/dd_box.prom.tmp
+      esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+      host=$(hostname)
+      model=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')
+      cores=$(nproc)
+      mem=$(awk '/MemTotal/ {print $2 * 1024}' /proc/meminfo)
+      kernel=$(uname -r)
+      arch=$(uname -m)
+      gen=$(readlink /run/current-system | sed 's|/nix/store/||' | cut -c1-32)
+      {
+        echo "# HELP dd_box_info What this box is."
+        echo "# TYPE dd_box_info gauge"
+        echo "dd_box_info{box=\"$(esc "$host")\",model=\"$(esc "$model")\",arch=\"$arch\",kernel=\"$kernel\",generation=\"$gen\"} 1"
+        echo "# TYPE dd_box_cpu_cores gauge"
+        echo "dd_box_cpu_cores{box=\"$(esc "$host")\"} $cores"
+        echo "# TYPE dd_box_memory_bytes gauge"
+        echo "dd_box_memory_bytes{box=\"$(esc "$host")\"} $mem"
+        echo "# TYPE dd_box_cpu_flag gauge"
+        for f in avx2 avx512f avx512_vnni amx_tile sha_ni aes; do
+          if grep -m1 '^flags' /proc/cpuinfo | grep -qw "$f"; then v=1; else v=0; fi
+          echo "dd_box_cpu_flag{box=\"$(esc "$host")\",flag=\"$f\"} $v"
+        done
+        echo "# TYPE dd_box_disk_bytes gauge"
+        lsblk -dbno NAME,SIZE,ROTA,TRAN,TYPE | awk -v h="$(esc "$host")" '$5=="disk" {
+          kind = ($3=="1") ? "hdd" : (($4=="nvme") ? "nvme" : "ssd");
+          printf "dd_box_disk_bytes{box=\"%s\",device=\"%s\",kind=\"%s\",bus=\"%s\"} %s\n", h, $1, kind, $4, $2 }'
+        echo "# TYPE dd_box_gpu_info gauge"
+        lspci 2>/dev/null | grep -iE 'vga|3d|display' | sed 's/^[^ ]* //; s/^[^:]*: //' | while read -r g; do
+          echo "dd_box_gpu_info{box=\"$(esc "$host")\",name=\"$(esc "$g")\"} 1"
+        done
+      } > "$out"
+      mv "$out" ${facts}/dd_box.prom
+    '';
   };
 }
