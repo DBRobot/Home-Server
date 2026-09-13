@@ -107,7 +107,15 @@ let
     # Admin accounts out of reach of the signup token: the builtin
     # credential-reset profile excludes members of idm_high_privilege, and
     # that is the only scoping kanidm offers here (see the note on signup).
-    ${kanidm} group add-members idm_high_privilege admins >/dev/null
+    # Writing this group needs idm_access_control_admins, which idm_admin
+    # does not keep (least privilege: it was granted once, by the system
+    # admin account, for exactly this). So converge by reading, and only
+    # fail loudly if the membership is somehow missing.
+    if ! ${kanidm} group list-members idm_high_privilege 2>/dev/null | grep -q '"admins@'; then
+      echo "admins is not in idm_high_privilege - grant it once as admin:" >&2
+      echo "  kanidm -D admin group add-members idm_high_privilege admins" >&2
+      exit 1
+    fi
   '';
 
 in
