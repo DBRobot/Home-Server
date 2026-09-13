@@ -117,6 +117,9 @@ enum ImageCmd {
     },
     /// Every archive in your repository.
     List,
+    /// Rebuild the index from what is on the server. After an interrupted
+    /// push, this lets the rerun skip everything already uploaded.
+    Repair,
     /// Write an archive back out to stdout.
     Pull {
         name: String,
@@ -162,6 +165,10 @@ fn image(cmd: ImageCmd, repo: String, issuer: String) -> Result<()> {
                 "archived {} as {}  ({} bytes)  snapshot {}",
                 name, e.name, e.bytes, e.id
             );
+        }
+        ImageCmd::Repair => {
+            archive.repair()?;
+            println!("index rebuilt - rerun the push, it will skip what is already there");
         }
         ImageCmd::List => {
             let entries = archive.list()?;

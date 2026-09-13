@@ -52,29 +52,47 @@ impl<K: KeyStore + Send + Sync + 'static> Webdav<K> {
         Ok(self.base.join(&path)?)
     }
 
-    /// Sends with a bearer token, retrying once on 401 with a fresh one and a
-    /// few times on the transport failures a long upload will meet.
+    /// Sends with a bearer token, retrying once on 401 with a fresh one and
+    /// patiently on the failures a long upload will meet. Patient because a
+    /// nixos-rebuild on the server restarts nginx and oauth2-proxy for a
+    /// minute or two, and an hour of packs was once lost to a 500 in that
+    /// window on the very last pack. Ten attempts, backoff capped at 30 s:
+    /// about four minutes, which outlives a deploy.
     fn send(&self, build: impl Fn() -> RequestBuilder) -> Result<Response> {
+        const ATTEMPTS: u32 = 10;
         let mut delay = Duration::from_secs(1);
         let mut refreshed = false;
-        for attempt in 1..=6 {
+        for attempt in 1..=ATTEMPTS {
             let token = self.tokens.token()?;
             match build().bearer_auth(&*token).send() {
                 Ok(r) if r.status() == StatusCode::UNAUTHORIZED && !refreshed => {
                     self.tokens.invalidate();
                     refreshed = true;
                 }
-                Ok(r) if r.status().is_server_error() && attempt < 6 => {}
+                Ok(r)
+                    if (r.status().is_server_error()
+                        || r.status() == StatusCode::TOO_MANY_REQUESTS)
+                        && attempt < ATTEMPTS =>
+                {
+                    eprintln!(
+                        "server answered {}, retrying in {}s",
+                        r.status(),
+                        delay.as_secs()
+                    );
+                }
                 Ok(r) => return Ok(r),
-                Err(e) if attempt < 6 && (e.is_connect() || e.is_timeout() || e.is_request()) => {
-                    eprintln!("retrying after: {e}");
+                Err(e)
+                    if attempt < ATTEMPTS
+                        && (e.is_connect() || e.is_timeout() || e.is_request()) =>
+                {
+                    eprintln!("retrying in {}s after: {e}", delay.as_secs());
                 }
                 Err(e) => return Err(e.into()),
             }
             std::thread::sleep(delay);
-            delay *= 2;
+            delay = (delay * 2).min(Duration::from_secs(30));
         }
-        Err(anyhow!("gave up after 6 attempts"))
+        Err(anyhow!("gave up after {ATTEMPTS} attempts"))
     }
 
     fn ok(r: Response) -> Result<Response> {

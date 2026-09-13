@@ -22,7 +22,7 @@ use auth::KeyStore;
 use rustic_core::repofile::SnapshotFile;
 use rustic_core::{
     BackupOptions, ConfigOptions, Credentials, KeyOptions, LsOptions, PathList, ProgressBars,
-    Repository, RepositoryBackends, RepositoryOptions, SnapshotOptions,
+    RepairIndexOptions, Repository, RepositoryBackends, RepositoryOptions, SnapshotOptions,
 };
 use url::Url;
 use zeroize::Zeroizing;
@@ -129,6 +129,16 @@ impl<K: KeyStore + Send + Sync + 'static, P: ProgressBars + Clone> Archive<K, P>
         let snap = SnapshotFile::from_options(&SnapshotOptions::default().label(name.to_string()))?;
         let snap = repo.backup(&opts, &paths, snap).context("backup")?;
         Ok(entry(&snap))
+    }
+
+    /// Rebuild the index from the packs that are actually on the server. An
+    /// interrupted push leaves its uploaded packs unindexed, and a rerun would
+    /// upload all of them again; after this it deduplicates against them.
+    pub fn repair(&self) -> Result<()> {
+        let repo = self.repo()?.open(&self.credentials())?;
+        repo.repair_index(&RepairIndexOptions::default(), false)
+            .context("repairing the index")?;
+        Ok(())
     }
 
     pub fn list(&self) -> Result<Vec<Entry>> {
