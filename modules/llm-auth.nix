@@ -41,6 +41,11 @@ in
       # legitimate source.
       trusted-proxy-ip = "127.0.0.1/32";
       skip-provider-button = "true";
+      # kanidm enforces PKCE on every client and oauth2-proxy does not send a
+      # challenge unless asked: "No PKCE code challenge was provided with
+      # client in enforced PKCE mode". Bearer requests never reach the
+      # authorise step, so this only matters for the browser login.
+      code-challenge-method = "S256";
       # No oidc-email-claim or profile-url here on purpose. Clients present
       # an ID token (see modules/webdav-media.nix), which already carries
       # `email` and `preferred_username`, and the bearer path never calls the
@@ -70,8 +75,10 @@ in
       '';
     };
 
+    # rd must be RELATIVE: oauth2-proxy rejects an absolute url unless the
+    # domain is whitelisted, and same-host is all this ever needs.
     locations."@login".extraConfig = ''
-      return 302 /oauth2/start?rd=$scheme://$host$request_uri;
+      return 302 /oauth2/start?rd=$request_uri;
     '';
 
     # the subrequest nginx makes for every request above
