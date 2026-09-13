@@ -46,6 +46,11 @@
   dd.domain = "distributed-datacenter.duckdns.org";
   # david's own box: it may hold plaintext
   dd.box.ownerTrusted = true;
+  # every box's own prometheus, over the tailnet
+  dd.grafana.boxes = {
+    node1 = "http://127.0.0.1:9090";
+    node2 = "http://100.95.10.10:9090";
+  };
   # node2's directory copy, over the tailnet
   dd.verify.peers = [ "http://100.95.10.10:4181/_dd/directory" ];
   dd.forgejo.admin = "david";

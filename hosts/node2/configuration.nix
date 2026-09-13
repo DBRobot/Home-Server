@@ -12,6 +12,7 @@
     ../../modules/box.nix
     ./disko.nix
     ../../modules/verify.nix
+    ../../modules/metrics.nix
   ];
 
   # node2's first job: a second copy of the directory, reachable over the
