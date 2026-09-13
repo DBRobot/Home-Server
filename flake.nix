@@ -123,30 +123,49 @@
           directory = vm ./tests/directory.nix;
           metrics = vm ./tests/metrics.nix;
           placement = import ./tests/placement.nix args;
+          boxes = import ./tests/boxes.nix args;
         };
 
-      nixosConfigurations.node1 = nixpkgs.lib.nixosSystem {
-        # modules/verify.nix runs a binary built from this same flake, so it
-        # needs a way to name it. specialArgs rather than an overlay because
-        # there is exactly one such package and an overlay would rebuild the
-        # world's pkgs to deliver it.
-        specialArgs = { inherit self; };
-        modules = [
-          ./hosts/node1/configuration.nix
-          sops-nix.nixosModules.sops
-        ];
-      };
-
-      # Fresh install: disks are described with disko, not the rolled-by-hand
-      # layout of node1's hardware-configuration.nix. The disko module turns
-      # disko.devices into fileSystems + boot entries; nothing else here has
-      # to know about the nvme at all.
-      nixosConfigurations.node2 = nixpkgs.lib.nixosSystem {
-        specialArgs = { inherit self; };
-        modules = [
-          ./hosts/node2/configuration.nix
-          disko.nixosModules.disko
-        ];
-      };
+      # One box per entry in fleet/boxes.json: its hardware file plus its
+      # roles. What a box runs is data, not a hand-written import list, and
+      # the per-box wiring (who its peers are, which prometheus grafana reads)
+      # is derived from the same list.
+      nixosConfigurations =
+        let
+          boxes = builtins.fromJSON (builtins.readFile ./fleet/boxes.json);
+          lib = nixpkgs.lib;
+          directoryOf =
+            name: box:
+            if box.public then
+              "https://files.distributed-datacenter.duckdns.org/_dd/directory"
+            else
+              "http://${box.tailnet}:4181/_dd/directory";
+          # a role that declares secrets imports roles/_sops.nix; the sops
+          # module has to be present for it. Roles are files; look inside.
+          needsSops =
+            roles: builtins.any (r: lib.hasInfix "_sops.nix" (builtins.readFile ./roles/${r}.nix)) roles;
+          mkBox =
+            name: box:
+            lib.nixosSystem {
+              specialArgs = { inherit self; };
+              modules = [
+                ./hosts/${name}/hardware.nix
+                {
+                  networking.hostName = name;
+                  dd.box.ownerTrusted = box.trusted;
+                  dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);
+                }
+              ]
+              ++ map (r: ./roles/${r}.nix) box.roles
+              ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
+              ++ lib.optional (builtins.pathExists ./hosts/${name}/disko.nix) disko.nixosModules.disko
+              ++ lib.optional (builtins.elem "observe" box.roles) {
+                dd.grafana.boxes = lib.mapAttrs (
+                  n: b: if n == name then "http://127.0.0.1:9090" else "http://${b.tailnet}:9090"
+                ) boxes;
+              };
+            };
+        in
+        lib.mapAttrs mkBox boxes;
     };
 }

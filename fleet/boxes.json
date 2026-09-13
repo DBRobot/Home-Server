@@ -1,0 +1,32 @@
+{
+  "node1": {
+    "hostKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIWdTYyE4+LtV7xankOOhW3T6JHTtVIiJMw/jxWARECN",
+    "tailnet": "100.95.31.105",
+    "public": true,
+    "trusted": true,
+    "siteId": "s-a39c703f",
+    "regionId": "r-ef29c7c2",
+    "roles": [
+      "core",
+      "gateway",
+      "storage",
+      "cache",
+      "photos",
+      "media",
+      "llm",
+      "forge",
+      "observe"
+    ]
+  },
+  "node2": {
+    "hostKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILfEIFrBL+MqJGR0hMv1BKCCgxxRJzImHFpkgv37x1Qz",
+    "tailnet": "100.95.10.10",
+    "public": false,
+    "trusted": false,
+    "siteId": "s-a39c703f",
+    "regionId": "r-ef29c7c2",
+    "roles": [
+      "core"
+    ]
+  }
+}

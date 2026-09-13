@@ -23,6 +23,13 @@ creation_rules:
           - *node1
           - *david
           - *david-dd
+  # The private half of the box list: who owns which box and where it is.
+  # Only the release signer reads it; no box is a recipient.
+  - path_regex: secrets/fleet\.yaml$
+    key_groups:
+      - age:
+          - *david-dd
+          - *david
   # node2's: empty so far. Its only role, the directory, needs no secret.
   - path_regex: secrets/node2\.yaml$
     key_groups:
