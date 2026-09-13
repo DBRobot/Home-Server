@@ -139,7 +139,17 @@ impl App {
             .map_err(|e| anyhow!("{e}"))?
             .fact(format!("operation({operation:?})").as_str())
             .map_err(|e| anyhow!("{e}"))?
-            .policy(format!("allow if user({:?})", user).as_str())
+            // access takes any token of the user's; anything else demands a
+            // token minted for exactly that, so an hour-long access token in
+            // a script cannot enrol a passkey that outlives it
+            .policy(
+                if operation == "access" {
+                    format!("allow if user({user:?})")
+                } else {
+                    format!("allow if user({user:?}), purpose({operation:?})")
+                }
+                .as_str(),
+            )
             .map_err(|e| anyhow!("{e}"))?
             .build(&biscuit)
             .map_err(|e| anyhow!("{e}"))?;

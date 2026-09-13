@@ -87,8 +87,12 @@ pub fn mint_for(
         // supply the time could not accept an expired one
         .check(format!("check if time($t), $t < {exp}").as_str())
         .map_err(err)?;
+    // both directions: the check keeps this token out of everything else,
+    // the fact is what an operation that demands a purpose-built token asks for
     let token = match operation {
         Some(op) => token
+            .fact(format!("purpose({op:?})").as_str())
+            .map_err(err)?
             .check(format!("check if operation({op:?})").as_str())
             .map_err(err)?,
         None => token,
