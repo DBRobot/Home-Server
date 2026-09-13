@@ -8,6 +8,7 @@ name: entry_point
 on:
   pull_request:
   push:
+    branches: [main]
 
 jobs:
   files_modified:
