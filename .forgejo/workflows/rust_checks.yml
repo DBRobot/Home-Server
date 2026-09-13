@@ -7,23 +7,21 @@ name: rust_checks
 on:
   workflow_call:
 
-defaults:
-  run:
-    working-directory: client
-
 jobs:
   lint:
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
+      # an explicit cd: the runner does not honour a workflow-level
+      # working-directory default inside a called workflow
       - name: fmt
-        run: nix develop -c cargo fmt --check
+        run: cd client && nix develop -c cargo fmt --check
       - name: clippy
-        run: nix develop -c cargo clippy --all-targets -- -D warnings
+        run: cd client && nix develop -c cargo clippy --all-targets -- -D warnings
 
   test:
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
       - name: test
-        run: nix develop -c cargo test
+        run: cd client && nix develop -c cargo test
