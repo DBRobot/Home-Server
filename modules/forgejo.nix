@@ -137,6 +137,53 @@ in
       '';
     };
 
+    # main takes merges only, after the forge's own CI has passed on the
+    # pull request. Declared here so a rebuilt box gets it back, and
+    # idempotent: an existing rule is updated, not duplicated. The admin
+    # may still push main directly while GitHub is where merges happen;
+    # that allowance goes when the forge is the only source.
+    systemd.services.forgejo-protection = {
+      description = "Make sure main is protected by the forge's CI";
+      after = [ "forgejo-admin.service" ];
+      requires = [ "forgejo.service" ];
+      wantedBy = [ "multi-user.target" ];
+      path = [
+        pkgs.curl
+        pkgs.jq
+      ];
+      serviceConfig.Type = "oneshot";
+      script = ''
+        set -euo pipefail
+        api=http://127.0.0.1:${toString port}/api/v1
+        as_admin() { curl -fsS -H 'X-WEBAUTH-USER: ${cfg.admin}' "$@"; }
+        for i in $(seq 1 30); do
+          as_admin $api/repos/${cfg.admin}/Home-Server >/dev/null 2>&1 && break
+          sleep 2
+        done
+        rule=$(jq -n --arg admin '${cfg.admin}' '{
+          rule_name: "main", branch_name: "main",
+          enable_push: true, enable_push_whitelist: true, push_whitelist_usernames: [$admin],
+          enable_status_check: true,
+          status_check_contexts: [
+            "entry_point / flake_check (pull_request)",
+            "entry_point / build_host (node1) (pull_request)",
+            "entry_point / build_host (node2) (pull_request)",
+            "entry_point / lint (pull_request)",
+            "entry_point / test (pull_request)"
+          ],
+          block_on_outdated_branch: false,
+          required_approvals: 0
+        }')
+        if as_admin $api/repos/${cfg.admin}/Home-Server/branch_protections/main >/dev/null 2>&1; then
+          echo "$rule" | as_admin -X PATCH -H 'content-type: application/json' -d @- $api/repos/${cfg.admin}/Home-Server/branch_protections/main >/dev/null
+          echo "main protection updated"
+        else
+          echo "$rule" | as_admin -X POST -H 'content-type: application/json' -d @- $api/repos/${cfg.admin}/Home-Server/branch_protections >/dev/null
+          echo "main protection created"
+        fi
+      '';
+    };
+
     services.nginx.virtualHosts.${host} = {
       useACMEHost = base;
       forceSSL = true;
