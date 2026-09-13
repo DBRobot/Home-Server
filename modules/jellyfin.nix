@@ -20,6 +20,8 @@ let
   };
 in
 {
+  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+  dd.box.plaintext = [ "jellyfin (media library, per-user files)" ];
   services.jellyfin = {
     enable = true;
     group = "media"; # reads the union in modules/media-tier.nix

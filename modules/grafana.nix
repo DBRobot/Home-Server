@@ -4,6 +4,8 @@ let
   host = "grafana.${base}";
 in
 {
+  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+  dd.box.plaintext = [ "grafana (metrics)" ];
   services.grafana = {
     enable = true;
     settings = {

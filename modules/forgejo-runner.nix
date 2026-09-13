@@ -8,6 +8,8 @@ let
   base = config.dd.domain;
 in
 {
+  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+  dd.box.plaintext = [ "forgejo-runner (runs contributed code)" ];
   # One runner, on this box, in host mode: a job runs as the runner user with
   # nix on the path and builds straight into this box's store. So the closure
   # a green check just built is already here, and a deploy is a switch.

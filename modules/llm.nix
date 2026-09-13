@@ -4,6 +4,8 @@ let
   host = "llm.${base}";
 in
 {
+  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+  dd.box.plaintext = [ "llm (prompts and answers)" ];
   # The gateway in front of llama-server: nginx asks the verifier who this is
   # (a device-signed token, or a passkey session on this box) and proxies.
   # Nothing here can mint a token.

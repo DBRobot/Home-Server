@@ -2,6 +2,7 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ../../modules/box.nix
     ../../modules/domain.nix
     ../../modules/zfs-datasets.nix
     ../../modules/llama-cpp.nix
@@ -43,6 +44,8 @@
   '';
 
   dd.domain = "distributed-datacenter.duckdns.org";
+  # david's own box: it may hold plaintext
+  dd.box.ownerTrusted = true;
   # node2's directory copy, over the tailnet
   dd.verify.peers = [ "http://100.95.10.10:4181/_dd/directory" ];
   dd.forgejo.admin = "david";
