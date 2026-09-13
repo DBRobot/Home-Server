@@ -1,0 +1,15 @@
+[package]
+name = "identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# ed25519 over canonical json: the person's root key signs their own entry.
+# already in the tree through biscuit.
+ed25519-dalek = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+zeroize = "1"
+thiserror = "2"

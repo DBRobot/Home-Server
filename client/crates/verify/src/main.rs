@@ -32,17 +32,12 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use biscuit_auth::{Biscuit, PublicKey, UnverifiedBiscuit, builder::Algorithm};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use webauthn_rs::prelude::*;
 
 struct App {
     http: reqwest::Client,
     dir: PathBuf,
     upstream_auth: String,
-    issuer: String,
-    audience: String,
-    jwks_url: String,
-    jwks: RwLock<Option<(jsonwebtoken::jwk::JwkSet, SystemTime)>>,
     sessions: session::Sessions,
     webauthn: Webauthn,
     ceremonies: Mutex<HashMap<String, (Instant, Ceremony)>>,
@@ -60,19 +55,12 @@ enum Ceremony {
     },
 }
 
+/// Browser passkeys enrolled on THIS box. Box-local consent state, not part of
+/// the identity: a passkey enrolled through a page this box served is a
+/// decision to trust this box for browser sessions, nothing more.
 #[derive(Serialize, Deserialize, Default)]
-struct Directory {
-    keys: Vec<DeviceKey>,
-    /// browser passkeys, enrolled and verified on this box
-    #[serde(default)]
+struct Passkeys {
     passkeys: Vec<Passkey>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct DeviceKey {
-    fingerprint: String,
-    public_key: String, // base64 ed25519
-    added: u64,
 }
 
 fn env(k: &str) -> Result<String> {
@@ -92,18 +80,37 @@ fn valid_user(s: &str) -> bool {
 }
 
 impl App {
-    fn load(&self, user: &str) -> Result<Directory> {
+    /// The person's own signed entry, as last accepted by this box.
+    fn entry(&self, user: &str) -> Result<Option<identity::SignedEntry>> {
         let p = self.dir.join(format!("{user}.json"));
         match std::fs::read(&p) {
-            Ok(b) => Ok(serde_json::from_slice(&b)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Directory::default()),
+            Ok(b) => Ok(Some(serde_json::from_slice(&b)?)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
 
-    fn store(&self, user: &str, d: &Directory) -> Result<()> {
-        let p = self.dir.join(format!("{user}.json"));
-        let tmp = self.dir.join(format!(".{user}.tmp"));
+    fn store_entry(&self, signed: &identity::SignedEntry) -> Result<()> {
+        let name = &signed.entry.name;
+        let p = self.dir.join(format!("{name}.json"));
+        let tmp = self.dir.join(format!(".{name}.tmp"));
+        std::fs::write(&tmp, serde_json::to_vec_pretty(signed)?)?;
+        std::fs::rename(&tmp, &p)?;
+        Ok(())
+    }
+
+    fn load(&self, user: &str) -> Result<Passkeys> {
+        let p = self.dir.join(format!("{user}.passkeys.json"));
+        match std::fs::read(&p) {
+            Ok(b) => Ok(serde_json::from_slice(&b)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Passkeys::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn store(&self, user: &str, d: &Passkeys) -> Result<()> {
+        let p = self.dir.join(format!("{user}.passkeys.json"));
+        let tmp = self.dir.join(format!(".{user}.passkeys.tmp"));
         std::fs::write(&tmp, serde_json::to_vec_pretty(d)?)?;
         std::fs::rename(&tmp, &p)?;
         Ok(())
@@ -119,11 +126,9 @@ impl App {
             .context("unreadable authority block")?;
         let user = peek_user(&source).context("no user fact")?;
         anyhow::ensure!(valid_user(&user), "bad user in token");
-        let dir = self.load(&user)?;
-        anyhow::ensure!(!dir.keys.is_empty(), "no devices registered for {user}");
-
+        let signed = self.entry(&user)?.context("no identity published for that name")?;
         let mut verified: Option<Biscuit> = None;
-        for k in &dir.keys {
+        for k in &signed.entry.devices {
             let pk = match B64
                 .decode(&k.public_key)
                 .ok()
@@ -153,47 +158,6 @@ impl App {
         Ok(user)
     }
 
-    /// Check a kanidm id token the way oauth2-proxy would: ES256 against the
-    /// client's published jwks, issuer and audience pinned. Returns the user.
-    async fn verify_id_token(&self, token: &str) -> Result<String> {
-        #[derive(Deserialize)]
-        struct Claims {
-            preferred_username: String,
-        }
-        let header = jsonwebtoken::decode_header(token).context("not a jwt")?;
-        let kid = header.kid.context("jwt without kid")?;
-        let jwks = self.jwks().await?;
-        let jwk = jwks.find(&kid).context("unknown signing key")?;
-        let key = jsonwebtoken::DecodingKey::from_jwk(jwk)?;
-        let mut v = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
-        v.set_issuer(&[&self.issuer]);
-        v.set_audience(&[&self.audience]);
-        let data = jsonwebtoken::decode::<Claims>(token, &key, &v).context("id token rejected")?;
-        anyhow::ensure!(
-            valid_user(&data.claims.preferred_username),
-            "bad username claim"
-        );
-        Ok(data.claims.preferred_username)
-    }
-
-    async fn jwks(&self) -> Result<jsonwebtoken::jwk::JwkSet> {
-        if let Some((set, at)) = self.jwks.read().await.as_ref()
-            && at.elapsed().unwrap_or(Duration::MAX) < Duration::from_secs(600)
-        {
-            return Ok(set.clone());
-        }
-        let set: jsonwebtoken::jwk::JwkSet = self
-            .http
-            .get(&self.jwks_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .context("fetching jwks")?;
-        *self.jwks.write().await = Some((set.clone(), SystemTime::now()));
-        Ok(set)
-    }
 }
 
 impl App {
@@ -329,87 +293,55 @@ async fn verify(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     }
 }
 
-#[derive(Deserialize)]
-struct Registration {
-    public_key: String,
-    fingerprint: String,
-    voucher: Option<String>,
+/// A person's published entry. Public: it holds only public keys.
+async fn directory_get(State(app): State<Arc<App>>, axum::extract::Path(name): axum::extract::Path<String>) -> Response {
+    if !identity::valid_name(&name) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match app.entry(&name) {
+        Ok(Some(e)) => Json(e).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            eprintln!("directory: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
-async fn register(
+/// Publish or update an entry. No credential, no token, no admin: the only
+/// thing that admits an update is a signature by the key already on file
+/// (or the recovery key), and a first entry is signed by its own root. What
+/// this box can do wrong is refuse or forget - never accept a forgery.
+async fn directory_put(
     State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    Json(reg): Json<Registration>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(signed): Json<identity::SignedEntry>,
 ) -> Response {
-    let Some(tok) = bearer(&headers) else {
-        return (StatusCode::UNAUTHORIZED, "no id token").into_response();
-    };
-    let user = match app.verify_id_token(tok).await {
-        Ok(u) => u,
-        Err(e) => {
-            eprintln!("register: id token refused: {e:#}");
-            return (StatusCode::UNAUTHORIZED, "id token refused").into_response();
-        }
-    };
-    let Some(pk_bytes) = B64.decode(&reg.public_key).ok() else {
-        return (StatusCode::BAD_REQUEST, "public_key is not base64").into_response();
-    };
-    if PublicKey::from_bytes(&pk_bytes, Algorithm::Ed25519).is_err() {
-        return (StatusCode::BAD_REQUEST, "public_key is not ed25519").into_response();
+    if signed.entry.name != name {
+        return (StatusCode::BAD_REQUEST, "name in path and entry differ").into_response();
     }
-    if !valid_user(&reg.fingerprint) {
-        return (StatusCode::BAD_REQUEST, "bad fingerprint").into_response();
-    }
-    let mut dir = match app.load(&user) {
-        Ok(d) => d,
+    let existing = match app.entry(&name) {
+        Ok(e) => e,
         Err(e) => {
-            eprintln!("register: {e:#}");
+            eprintln!("directory: {e:#}");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    if dir.keys.iter().any(|k| k.public_key == reg.public_key) {
-        return Json(serde_json::json!({ "registered": true, "existing": true })).into_response();
+    if let Err(e) = identity::accept(existing.as_ref(), &signed) {
+        eprintln!("directory: refused update for {name}: {e}");
+        return (StatusCode::FORBIDDEN, format!("refused: {e}")).into_response();
     }
-    // The rule that makes the directory the user's, not the server's: after
-    // the first device, an id token alone adds nothing. A voucher is a biscuit
-    // signed by a device already on file, naming the newcomer.
-    if !dir.keys.is_empty() {
-        let Some(voucher) = reg.voucher.as_deref() else {
-            return (
-                StatusCode::FORBIDDEN,
-                "an existing device must vouch for a new one",
-            )
-                .into_response();
-        };
-        let ok = app
-            .verify_biscuit(voucher)
-            .map(|u| u == user)
-            .unwrap_or(false)
-            && UnverifiedBiscuit::from_base64(voucher)
-                .and_then(|b| b.print_block_source(0))
-                .map(|s| s.contains(&format!("vouch({:?})", reg.fingerprint)))
-                .unwrap_or(false);
-        if !ok {
-            return (StatusCode::FORBIDDEN, "voucher rejected").into_response();
-        }
-    }
-    dir.keys.push(DeviceKey {
-        fingerprint: reg.fingerprint,
-        public_key: reg.public_key,
-        added: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-    });
-    if let Err(e) = app.store(&user, &dir) {
-        eprintln!("register: {e:#}");
+    if let Err(e) = app.store_entry(&signed) {
+        eprintln!("directory: {e:#}");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     eprintln!(
-        "registered a device for {user} ({} on file)",
-        dir.keys.len()
+        "directory: {name} version {} ({} device(s), signed by {:?})",
+        signed.entry.version,
+        signed.entry.devices.len(),
+        signed.signer
     );
-    Json(serde_json::json!({ "registered": true, "existing": false })).into_response()
+    Json(serde_json::json!({ "accepted": true, "version": signed.entry.version })).into_response()
 }
 
 fn with_challenge(v: impl Serialize, ceremony: String) -> Response {
@@ -690,7 +622,6 @@ fn urlencode(s: &str) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     let bind: std::net::SocketAddr = env_or("VERIFY_BIND", "127.0.0.1:4181").parse()?;
-    let issuer = env("VERIFY_ISSUER")?;
     let dir: PathBuf = env("VERIFY_DIR")?.into();
     std::fs::create_dir_all(&dir)?;
     let state_dir = dir
@@ -723,10 +654,6 @@ async fn main() -> Result<()> {
             .build()?,
         dir,
         upstream_auth: env("VERIFY_UPSTREAM_AUTH")?,
-        jwks_url: env_or("VERIFY_JWKS_URL", &format!("{issuer}/public_key.jwk")),
-        issuer,
-        audience: env_or("VERIFY_AUDIENCE", "dd"),
-        jwks: RwLock::new(None),
         sessions: session::Sessions::open(&state_dir, &domain)?,
         webauthn,
         ceremonies: Mutex::new(HashMap::new()),
@@ -734,7 +661,6 @@ async fn main() -> Result<()> {
     });
     let router = Router::new()
         .route("/verify", get(verify))
-        .route("/register", post(register))
         .route("/health", get(|| async { "ok" }))
         // the browser side, served under /_dd/ on every vhost
         .route("/_dd/login", get(|| async { Html(pages::LOGIN) }))
@@ -744,7 +670,7 @@ async fn main() -> Result<()> {
         .route("/_dd/enrol", get(|| async { Html(pages::ENROL) }))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
-        .route("/_dd/register", post(register))
+        .route("/_dd/directory/{name}", get(directory_get).put(directory_put))
         // the per-box issuer for jellyfin
         .route(
             "/_dd/oidc/.well-known/openid-configuration",
