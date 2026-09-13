@@ -57,11 +57,11 @@ in
     # a device added through b alone reaches a
     pub = client.succeed("DD_KEYRING_FILE=/root/phone.json ${dd} device show | tail -1").strip()
     client.succeed(f"{env} ${dd} device admit {pub} --directory http://b:4181/_dd/directory")
-    a.wait_until_succeeds("curl -sf http://localhost:4181/_dd/directory/sarah -o /tmp/out && grep -q '\"version\": 2' /tmp/out")
+    a.wait_until_succeeds("curl -sf http://localhost:4181/_dd/directory/sarah -o /tmp/out && grep -q '\"version\":2' /tmp/out")
 
     # b restarts and still has sarah at version 2
     b.succeed("systemctl restart dd-verify")
     b.wait_for_open_port(4181)
-    b.wait_until_succeeds("curl -sf http://localhost:4181/_dd/directory/sarah -o /tmp/out && grep -q '\"version\": 2' /tmp/out")
+    b.wait_until_succeeds("curl -sf http://localhost:4181/_dd/directory/sarah -o /tmp/out && grep -q '\"version\":2' /tmp/out")
   '';
 }
