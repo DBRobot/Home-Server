@@ -79,7 +79,18 @@ in
 
     # The state dir is a dataset (modules/zfs-datasets.nix); do not start
     # before it is mounted, or forgejo would happily initialise itself onto
-    # the root disk underneath the mountpoint.
+    # the root disk underneath the mountpoint. The secret bootstrap is the
+    # first thing to write there and tmpfiles may have run before the dataset
+    # existed (it did, on the activation that created it), so it makes its
+    # own directory as root before dropping to forgejo.
+    systemd.services.forgejo-secrets = {
+      after = [ "zfs-datasets.service" ];
+      requires = [ "zfs-datasets.service" ];
+      unitConfig.RequiresMountsFor = "/vault/forgejo";
+      serviceConfig.ExecStartPre = [
+        "+${pkgs.coreutils}/bin/install -d -o forgejo -g forgejo -m 0750 /vault/forgejo /vault/forgejo/custom /vault/forgejo/custom/conf"
+      ];
+    };
     systemd.services.forgejo = {
       after = [ "zfs-datasets.service" ];
       requires = [ "zfs-datasets.service" ];
