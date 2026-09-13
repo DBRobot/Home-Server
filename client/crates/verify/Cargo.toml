@@ -16,4 +16,4 @@ base64 = "0.22"
 biscuit-auth = "6"
 # to check the kanidm id token that bootstraps a user's FIRST device - the
 # one moment a server's word is taken for who somebody is
-jsonwebtoken = "11"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
