@@ -58,7 +58,9 @@ in
     useACMEHost = base;
     forceSSL = true;
 
-    locations."/".extraConfig = dav root "html";
+    locations."/".extraConfig = dav root "html" + ''
+      error_page 401 = @login;
+    '';
     # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
     # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,
     # so no scratch copy of the image is ever needed on the client.

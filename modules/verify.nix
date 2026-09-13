@@ -36,6 +36,16 @@ in
       # the id token that bootstraps a user's first device is the dd client's
       VERIFY_ISSUER = "https://idm.${base}/oauth2/openid/dd";
       VERIFY_AUDIENCE = "dd";
+      # the browser login: passkeys scoped to the whole domain, so one login
+      # covers every service on this box and the session cookie rides along
+      VERIFY_DOMAIN = base;
+      # the per-box issuer for jellyfin, the one service that speaks nothing
+      # but oidc. its key is generated on first start and trusted by exactly
+      # this client on exactly this box.
+      VERIFY_OIDC_ISSUER = "https://jellyfin.${base}/_dd/oidc";
+      VERIFY_OIDC_CLIENT_ID = "jellyfin";
+      VERIFY_OIDC_CLIENT_SECRET_FILE = config.sops.secrets.jellyfin-oauth-secret.path;
+      VERIFY_OIDC_REDIRECT = "https://jellyfin.${base}/sso/OID/r/dd";
     };
     serviceConfig = {
       Type = "simple";
@@ -66,12 +76,32 @@ in
     };
   };
 
-  # Device registration, reachable from a client. Nothing else is exposed:
-  # /verify stays internal to nginx.
-  services.nginx.virtualHosts."files.${base}".locations."/_dd/register" = {
-    proxyPass = "http://127.0.0.1:${toString port}/register";
-    extraConfig = ''
-      limit_req zone=signup burst=4 nodelay;
-    '';
-  };
+  # The verifier's browser side on every vhost that has one: the passkey
+  # login and enrolment pages, device registration, and on jellyfin's the
+  # per-box issuer. /verify itself stays internal to nginx. A 401 from
+  # auth_request lands a browser on the login page and back where it was.
+  services.nginx.virtualHosts = builtins.listToAttrs (
+    map
+      (h: {
+        name = "${h}.${base}";
+        value = {
+          locations."/_dd/" = {
+            proxyPass = "http://127.0.0.1:${toString port}/_dd/";
+            extraConfig = ''
+              limit_req zone=signup burst=8 nodelay;
+              proxy_set_header X-Original-URI $request_uri;
+            '';
+          };
+          locations."@login".extraConfig = ''
+            return 302 /_dd/login?rd=$request_uri;
+          '';
+        };
+      })
+      [
+        "files"
+        "llm"
+        "grafana"
+        "jellyfin"
+      ]
+  );
 }

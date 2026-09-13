@@ -23,7 +23,11 @@
       grafana-oauth-secret.owner = "grafana";
       grafana-oauth-secret.mode = "0440";
       grafana-oauth-secret.group = "kanidm";
+      # read by kanidm's provisioning (owner) and by the verifier's per-box
+      # oidc issuer for jellyfin (group) - the same secret, two readers
       jellyfin-oauth-secret.owner = "kanidm";
+      jellyfin-oauth-secret.group = "dd-verify";
+      jellyfin-oauth-secret.mode = "0440";
       llm-oauth-secret.owner = "kanidm";
       llm-cookie-secret = { }; # reaches oauth2-proxy through the template below
       # read only through sops templates below, so root-only is fine

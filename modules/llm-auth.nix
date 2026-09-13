@@ -83,11 +83,8 @@ in
       '';
     };
 
-    # rd must be RELATIVE: oauth2-proxy rejects an absolute url unless the
-    # domain is whitelisted, and same-host is all this ever needs.
-    locations."@login".extraConfig = ''
-      return 302 /oauth2/start?rd=$request_uri;
-    '';
+    # @login is defined once for every browser-facing vhost in modules/verify.nix:
+    # the box's own passkey page, not oauth2-proxy's.
 
     # the subrequest nginx makes for every request above
     # The verifier first (modules/verify.nix): a user-signed biscuit is checked

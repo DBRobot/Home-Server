@@ -98,8 +98,8 @@ in
       dir=${config.services.jellyfin.dataDir}/plugins/configurations
       mkdir -p "$dir"
       cfg=$dir/SSO-Auth.xml
-      if [ -f "$cfg" ] && ${pkgs.gnugrep}/bin/grep -q "<string>kanidm</string>" "$cfg"; then
-        echo "kanidm provider already present; leaving config alone"
+      if [ -f "$cfg" ] && ${pkgs.gnugrep}/bin/grep -q "<string>dd</string>" "$cfg"; then
+        echo "dd provider already present; leaving config alone"
         exit 0
       fi
       secret=$(cat ${config.sops.secrets.jellyfin-oauth-secret.path})
@@ -110,11 +110,11 @@ in
         <OidConfigs>
           <item>
             <key>
-              <string>kanidm</string>
+              <string>dd</string>
             </key>
             <value>
               <PluginConfiguration>
-                <OidEndpoint>https://idm.${base}/oauth2/openid/jellyfin</OidEndpoint>
+                <OidEndpoint>https://jellyfin.${base}/_dd/oidc</OidEndpoint>
                 <OidClientId>jellyfin</OidClientId>
                 <OidSecret>$secret</OidSecret>
                 <Enabled>true</Enabled>
