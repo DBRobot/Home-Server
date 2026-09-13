@@ -3,6 +3,40 @@ let
   base = "distributed-datacenter.duckdns.org";
   host = "files.${base}";
   root = "/srv/users";
+  images = "/srv/images";
+
+  # One dav block, parameterised on where it writes. Both locations share the
+  # auth and the $dav_dir whitelist; they differ only in the root - and in what
+  # reads the result afterwards. /srv/users is media, so jellyfin has an acl on
+  # it. /srv/images is per-user archives that arrive already encrypted (rclone
+  # crypt on the client), so nothing on this host can read them and nothing
+  # gets an acl. See modules/user-accounts.nix for the directories.
+  dav = dir: listing: ''
+    auth_request /oauth2/auth;
+    # NOT x_auth_request_user: oauth2-proxy fills that from the `sub`
+    # claim and there is no flag to change it - providers/provider_data.go
+    # hardcodes UserClaim to "sub". It is the account uuid, so nginx built
+    # /srv/users/bb02d34e-... and every PUT landed nowhere. The
+    # preferred-username header is the same identity as a name.
+    auth_request_set $dav_user $upstream_http_x_auth_request_preferred_username;
+    # $dav_dir is $dav_user filtered through the map below, so a missing
+    # or malformed header cannot name a directory
+    alias ${dir}/$dav_dir/;
+
+    dav_methods PUT DELETE MKCOL COPY MOVE;
+    dav_ext_methods PROPFIND OPTIONS;
+    dav_access user:rw group:rw;
+    create_full_put_path on;
+
+    client_max_body_size 0; # movies, disk images
+    client_body_timeout 600s;
+    send_timeout 600s;
+    autoindex on;
+    # html for a person in a browser; json for `dd image`, which lists a
+    # restic repository's type directories this way rather than parsing
+    # PROPFIND xml
+    autoindex_format ${listing};
+  '';
 in
 {
   # Authenticated upload with no new service: nginx already ships the dav
@@ -24,30 +58,11 @@ in
     useACMEHost = base;
     forceSSL = true;
 
-    locations."/" = {
-      extraConfig = ''
-        auth_request /oauth2/auth;
-        # NOT x_auth_request_user: oauth2-proxy fills that from the `sub`
-        # claim and there is no flag to change it - providers/provider_data.go
-        # hardcodes UserClaim to "sub". It is the account uuid, so nginx built
-        # /srv/users/bb02d34e-... and every PUT landed nowhere. The
-        # preferred-username header is the same identity as a name.
-        auth_request_set $dav_user $upstream_http_x_auth_request_preferred_username;
-        # $dav_dir is $dav_user filtered through the map below, so a missing
-        # or malformed header cannot name a directory
-        alias ${root}/$dav_dir/;
-
-        dav_methods PUT DELETE MKCOL COPY MOVE;
-        dav_ext_methods PROPFIND OPTIONS;
-        dav_access user:rw group:rw;
-        create_full_put_path on;
-
-        client_max_body_size 0; # movies
-        client_body_timeout 600s;
-        send_timeout 600s;
-        autoindex on;
-      '';
-    };
+    locations."/".extraConfig = dav root "html";
+    # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
+    # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,
+    # so no scratch copy of the image is ever needed on the client.
+    locations."/images/".extraConfig = dav images "json";
 
     locations."= /oauth2/auth" = {
       proxyPass = "http://127.0.0.1:4180";
@@ -56,6 +71,13 @@ in
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI $request_uri;
+        # The subrequest inherits nothing from the dav location, so it ran with
+        # nginx's default 1m limit. When the body was still arriving as the
+        # auth phase ran, discarding it tripped that limit: "auth request
+        # unexpected status: 413", surfaced to the client as a 500. Small
+        # uploads passed only because they had already fully arrived. The
+        # limit belongs on the dav location; here it must not exist.
+        client_max_body_size 0;
       '';
     };
 
@@ -91,7 +113,10 @@ in
 
   # nginx's unit is sandboxed with a read-only /srv, so every PUT failed
   # with "mkdir() ... (30: Read-only file system)" despite correct auth.
-  systemd.services.nginx.serviceConfig.ReadWritePaths = [ root ];
+  systemd.services.nginx.serviceConfig.ReadWritePaths = [
+    root
+    images
+  ];
 
   # nginx writes the upload here before moving it into place; without a
   # temp path on the same filesystem every PUT is a cross-device copy

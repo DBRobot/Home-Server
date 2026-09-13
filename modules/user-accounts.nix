@@ -6,6 +6,7 @@
 }:
 let
   root = "/srv/users";
+  images = "/srv/images";
   kanidm = "${config.services.kanidm.package}/bin/kanidm";
 
   # Every per-user account and directory, derived from kanidm at runtime rather
@@ -35,9 +36,11 @@ let
     done
 
     install -d -m 0755 -o root -g root ${root}
+    install -d -m 0755 -o root -g root ${images}
     # where modules/webdav-media.nix sends a request whose token carried no
     # usable username. Root-owned and unwritable on purpose.
     install -d -m 0555 -o root -g root ${root}/__denied__
+    install -d -m 0555 -o root -g root ${images}/__denied__
 
     # Two sources, deliberately. Provisioning at ENROLMENT rather than at
     # promotion is what makes a later `group add-members users` take effect with
@@ -81,6 +84,14 @@ let
       setfacl -m u:nginx:rwx ${root}/"$u"
       setfacl -d -m u:nginx:rwx ${root}/"$u"
       setfacl -d -m "u:$gid:rwx" ${root}/"$u"
+
+      # The archive dir: same owner and the same nginx entry, but deliberately
+      # NO jellyfin entry. Nothing in here is media and nothing in here is
+      # readable by anyone but the uploader anyway - it arrives encrypted.
+      install -d -m 0750 -o "$gid" -g "$gid" ${images}/"$u"
+      setfacl -m u:nginx:rwx ${images}/"$u"
+      setfacl -d -m u:nginx:rwx ${images}/"$u"
+      setfacl -d -m "u:$gid:rwx" ${images}/"$u"
 
       echo "user $u -> uid $gid"
     done
