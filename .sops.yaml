@@ -9,6 +9,11 @@ keys:
   - &node1 age1dn3jhfmr8se645k3v2ar2wv69ayk0ts2kx3udp90u63ej7yfhyssla9f9t
   - &node2 age1ttsgyu66t9xuwt5qa9g0wrnnudlzy2hjyr4dt4v6vcawjqjzfq0qexvrxt
   - &david age18cw3l0s8w85spjne4u7sfvedpdwgqvkw626yqjl9lar9drtlqvps4jdd7x
+  # david's editing key from `dd secret init`: lives in the Legion's
+  # credential store, so `dd secret run -- ...` edits without any box's key.
+  # The ssh-derived one above stays as a fallback but its key now has a
+  # passphrase that neither sops nor ssh-to-age can use.
+  - &david-dd age1deucwdsxdpgg380kjdfq336a04jzpl5dz0m2r4k9xsrevrxjpqwqssdqcw
 
 creation_rules:
   # node1's: every service secret there is today
@@ -17,9 +22,11 @@ creation_rules:
       - age:
           - *node1
           - *david
+          - *david-dd
   # node2's: empty so far. Its only role, the directory, needs no secret.
   - path_regex: secrets/node2\.yaml$
     key_groups:
       - age:
           - *node2
           - *david
+          - *david-dd

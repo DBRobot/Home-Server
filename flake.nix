@@ -35,6 +35,8 @@
           pkgs.clippy # linter that teaches you the language
           pkgs.rustfmt
           pkgs.pkg-config # crates with C dependencies need this to find them
+          pkgs.sops # `dd secret run -- ...` runs this
+          pkgs.age
         ];
         RUST_BACKTRACE = "1";
       };
