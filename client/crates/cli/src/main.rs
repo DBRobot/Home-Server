@@ -87,6 +87,14 @@ enum Command {
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
+    /// The repo's sops files, edited with an age key that lives in this
+    /// machine's credential store. `dd secret run -- <sops arguments>` runs
+    /// sops with that key; `init` makes the key and prints the recipient to
+    /// add to .sops.yaml.
+    Secret {
+        #[command(subcommand)]
+        cmd: SecretCmd,
+    },
     /// Commits signed by your device key and checked against the directory:
     /// anyone who has your entry can verify what you wrote.
     Git {
@@ -182,6 +190,19 @@ enum PasskeyCmd {
     /// Sign in a credential record from a file - the one a box used to keep
     /// in <name>.passkeys.json before passkeys lived in the entry.
     Add { file: String },
+}
+
+#[derive(Subcommand)]
+enum SecretCmd {
+    /// Make the key (once) and print its public recipient.
+    Init,
+    /// Print the public recipient of the key held here.
+    Recipient,
+    /// Run sops with the key: `dd secret run -- set secrets/secrets.yaml '["k"]' '"v"'`.
+    Run {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -612,6 +633,48 @@ async fn main() -> Result<()> {
             }
         },
 
+        Command::Secret { cmd } => {
+            use secrecy::ExposeSecret as _;
+            const AGE: &str = "age-key";
+            match cmd {
+                SecretCmd::Init => {
+                    if keys.get(AGE)?.is_some() {
+                        anyhow::bail!("this machine already holds a key - `dd secret recipient`");
+                    }
+                    let id = age::x25519::Identity::generate();
+                    keys.set(AGE, id.to_string().expose_secret())?;
+                    println!("{}", id.to_public());
+                    println!(
+                        "add that as a recipient in .sops.yaml, then re-encrypt with a key that already can:"
+                    );
+                    println!("  sops updatekeys secrets/secrets.yaml");
+                }
+                SecretCmd::Recipient => {
+                    let id: age::x25519::Identity = keys
+                        .get(AGE)?
+                        .context("no key here - `dd secret init`")?
+                        .parse()
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    println!("{}", id.to_public());
+                }
+                SecretCmd::Run { args } => {
+                    let key = keys.get(AGE)?.context("no key here - `dd secret init`")?;
+                    // sops from PATH, else through nix, so a fresh machine works
+                    let (prog, pre): (&str, Vec<&str>) = if which("sops") {
+                        ("sops", vec![])
+                    } else {
+                        ("nix", vec!["run", "nixpkgs#sops", "--"])
+                    };
+                    let status = std::process::Command::new(prog)
+                        .args(pre)
+                        .args(&args)
+                        .env("SOPS_AGE_KEY", key.as_str())
+                        .status()?;
+                    std::process::exit(status.code().unwrap_or(1));
+                }
+            }
+        }
+
         Command::Git { cmd, directories } => {
             let dir = std::env::var("XDG_CONFIG_HOME")
                 .map(std::path::PathBuf::from)
@@ -867,4 +930,10 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn which(bin: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
+        .unwrap_or(false)
 }
