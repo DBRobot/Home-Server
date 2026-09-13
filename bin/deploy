@@ -63,5 +63,7 @@ if [ "$now" != "$out" ]; then
   echo "!! $host runs $now, not what was built. Rollback stays armed." >&2
   exit 1
 fi
-ssh "$addr" 'sudo systemctl stop deploy-rollback-guard.timer deploy-rollback-guard.service 2>/dev/null'
+# the transient service only exists once the timer has fired, so stopping
+# it "fails" on every successful deploy; that must not be the exit code
+ssh "$addr" 'sudo systemctl stop deploy-rollback-guard.timer deploy-rollback-guard.service 2>/dev/null; true'
 echo "== $host runs $out; rollback disarmed"
