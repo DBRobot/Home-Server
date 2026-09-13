@@ -106,6 +106,25 @@
 
         };
 
+      # Boxes booted as vms and driven through the failure cases, so the
+      # modules the real hosts import are proven before a host sees them.
+      # `nix build .#checks.x86_64-linux.directory`; ci runs them when the
+      # modules or the verifier change. Not part of a plain `nix flake check`
+      # run's build set on a laptop without kvm: `--no-build` there.
+      checks.${system} =
+        let
+          args = {
+            inherit pkgs self;
+            lib = nixpkgs.lib;
+          };
+          vm = path: pkgs.testers.runNixOSTest (import path args);
+        in
+        {
+          directory = vm ./tests/directory.nix;
+          metrics = vm ./tests/metrics.nix;
+          placement = import ./tests/placement.nix args;
+        };
+
       nixosConfigurations.node1 = nixpkgs.lib.nixosSystem {
         # modules/verify.nix runs a binary built from this same flake, so it
         # needs a way to name it. specialArgs rather than an overlay because

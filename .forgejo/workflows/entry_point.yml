@@ -15,6 +15,7 @@ jobs:
     outputs:
       nix: ${{ steps.detect.outputs.nix }}
       rust: ${{ steps.detect.outputs.rust }}
+      vm: ${{ steps.detect.outputs.vm }}
     steps:
       - uses: https://github.com/actions/checkout@v4
         with:
@@ -29,17 +30,22 @@ jobs:
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "nix=true" >> "$GITHUB_OUTPUT"
             echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "vm=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD)
           echo "changed files:"; echo "$changed" | sed 's/^/  /'
-          nix=false; rust=false
+          nix=false; rust=false; vm=false
           # the client is built by the flake too, so a rust change is a nix change
           echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|hosts/|modules/|secrets/|client/|\.forgejo/workflows/)' && nix=true
           echo "$changed" | grep -qE '^(client/|\.forgejo/workflows/)' && rust=true
+          # boxes booted as vms: only when what a box runs changed, not for
+          # every client or host tweak. Minutes, so spent where it counts.
+          echo "$changed" | grep -qE '^(flake\.nix|flake\.lock|modules/|tests/|client/crates/(verify|identity)/|\.forgejo/workflows/)' && vm=true
           echo "nix=$nix" >> "$GITHUB_OUTPUT"
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
-          echo "nix: $nix  rust: $rust"
+          echo "vm=$vm" >> "$GITHUB_OUTPUT"
+          echo "nix: $nix  rust: $rust  vm: $vm"
 
   # Always called; each leaf skips itself when nothing relevant changed. A
   # skipped leaf still reports, which a required check needs - a skipped
@@ -49,6 +55,7 @@ jobs:
     uses: ./.forgejo/workflows/nix_checks.yml
     with:
       run: ${{ needs.files_modified.outputs.nix == 'true' }}
+      vm: ${{ needs.files_modified.outputs.vm == 'true' }}
 
   rust_checks:
     needs: files_modified
