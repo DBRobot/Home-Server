@@ -152,6 +152,7 @@ in
             "llm"
             "grafana"
             "jellyfin"
+            "git"
           ]
       )
     );

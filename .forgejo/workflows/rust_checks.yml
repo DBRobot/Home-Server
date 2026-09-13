@@ -1,0 +1,40 @@
+# Everything in client/: formatted, lint-clean, and the tests pass - the
+# end-to-end ones included, which run boxes in-process and try to break them.
+# Called from entry_point.yml; not triggered on its own. The toolchain is the
+# flake's dev shell, the same one a person gets from `nix develop`.
+name: rust_checks
+
+on:
+  workflow_call:
+    inputs:
+      run:
+        description: "false: report every job as skipped"
+        type: boolean
+        default: true
+
+# One target dir in the runner's home, shared by lint and test and kept
+# between runs: a job recompiles only what changed. Each job's checkout is
+# fresh, so without this every run built the workspace twice from nothing.
+env:
+  CARGO_TARGET_DIR: /var/lib/gitea-runner/cargo-target
+
+jobs:
+  lint:
+    if: ${{ inputs.run }}
+    runs-on: nix
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      # an explicit cd: the runner does not honour a workflow-level
+      # working-directory default inside a called workflow
+      - name: fmt
+        run: cd client && nix develop -c cargo fmt --check
+      - name: clippy
+        run: cd client && nix develop -c cargo clippy --all-targets -- -D warnings
+
+  test:
+    if: ${{ inputs.run }}
+    runs-on: nix
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - name: test
+        run: cd client && nix develop -c cargo test

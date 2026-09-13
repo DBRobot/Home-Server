@@ -58,6 +58,16 @@ let
       "com.sun:auto-snapshot" = "true";
     };
 
+    # The forge: repositories, lfs objects and its own config. Small, hot,
+    # irreplaceable, so snapshots are on and it sits on the pool with the
+    # rest of what people made rather than on the root disk.
+    "vault/forgejo" = {
+      mountpoint = "/vault/forgejo";
+      recordsize = "128K";
+      compression = "zstd";
+      "com.sun:auto-snapshot" = "true";
+    };
+
     "tank/models" = {
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible

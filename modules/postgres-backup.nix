@@ -62,7 +62,10 @@ in
   # .in-progress file and runs as the postgres user.
   services.postgresqlBackup = {
     enable = true;
-    databases = [ "ente" ];
+    databases = [
+      "ente"
+      "forgejo"
+    ];
     location = dir;
     # NOT the default "-C". That emits CREATE DATABASE + \connect ente, so
     # restoring the dump into a scratch database would follow the \connect and
@@ -74,35 +77,37 @@ in
     startAt = "hourly";
   };
 
-  systemd.services.postgresqlBackup-ente = {
-    onFailure = [ "postgres-backup-alert@postgresqlBackup-ente.service" ];
-    unitConfig.RequiresMountsFor = "/vault";
-    serviceConfig.ExecStartPre = [
-      # "+" runs as root despite User=postgres, so it can create the directory
-      # inside the root-owned dataset mountpoint. Doing it here rather than via
-      # tmpfiles avoids racing zfs-datasets on first boot.
-      "+${pkgs.coreutils}/bin/install -d -o postgres -g postgres -m 0700 ${dir}"
-    ];
-  };
+  systemd.services =
+    lib.genAttrs [ "postgresqlBackup-ente" "postgresqlBackup-forgejo" ] (unit: {
+      onFailure = [ "postgres-backup-alert@${unit}.service" ];
+      unitConfig.RequiresMountsFor = "/vault";
+      serviceConfig.ExecStartPre = [
+        # "+" runs as root despite User=postgres, so it can create the directory
+        # inside the root-owned dataset mountpoint. Doing it here rather than via
+        # tmpfiles avoids racing zfs-datasets on first boot.
+        "+${pkgs.coreutils}/bin/install -d -o postgres -g postgres -m 0700 ${dir}"
+      ];
+    })
+    // {
+      postgres-backup-verify = {
+        description = "Restore the newest dump into a scratch database and check it";
+        after = [ "postgresql.service" ];
+        requires = [ "postgresql.service" ];
+        onFailure = [ "postgres-backup-alert@postgres-backup-verify.service" ];
+        startAt = "weekly";
+        serviceConfig = {
+          Type = "oneshot";
+          User = "postgres";
+          ExecStart = verify;
+        };
+      };
 
-  systemd.services.postgres-backup-verify = {
-    description = "Restore the newest dump into a scratch database and check it";
-    after = [ "postgresql.service" ];
-    requires = [ "postgresql.service" ];
-    onFailure = [ "postgres-backup-alert@postgres-backup-verify.service" ];
-    startAt = "weekly";
-    serviceConfig = {
-      Type = "oneshot";
-      User = "postgres";
-      ExecStart = verify;
+      "postgres-backup-alert@" = {
+        description = "Mail out a backup failure for %i";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${alert} %i";
+        };
+      };
     };
-  };
-
-  systemd.services."postgres-backup-alert@" = {
-    description = "Mail out a backup failure for %i";
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${alert} %i";
-    };
-  };
 }
