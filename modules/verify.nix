@@ -86,10 +86,13 @@ in
       (h: {
         name = "${h}.${base}";
         value.locations = {
+          # No limit_req here. jellyfin fetches discovery and jwks from this
+          # very box in quick succession, and a per-ip limit that counted those
+          # answered its sso with 503 the moment anything else probed /_dd/.
+          # Every abusable endpoint there demands a credential first.
           "/_dd/" = {
             proxyPass = "http://127.0.0.1:${toString port}/_dd/";
             extraConfig = ''
-              limit_req zone=signup burst=8 nodelay;
               proxy_set_header X-Original-URI $request_uri;
             '';
           };
