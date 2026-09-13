@@ -196,7 +196,11 @@ enum PasskeyCmd {
     /// Every passkey in your entry, by id.
     List,
     /// Drop one; the browser that holds it stops working everywhere at once.
-    Remove { id: String },
+    Remove {
+        /// base64url, so it may start with a hyphen
+        #[arg(allow_hyphen_values = true)]
+        id: String,
+    },
     /// Sign in a credential record from a file - the one a box used to keep
     /// in <name>.passkeys.json before passkeys lived in the entry.
     Add { file: String },
