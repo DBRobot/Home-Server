@@ -53,10 +53,30 @@ let
     # account and would have been the wrong test. Members of `users` are
     # included regardless so that a password-only account, or one that predates
     # any of this, is never left unprovisioned.
+    # `passkeys` covers a passkey; `primary_credential` a password(+totp).
+    # Either means the person followed their link. Neither means they never did.
     enrolled=$(${kanidm} -o json person list \
-      | jq -r '(. // []) | .[] | select((.passkeys // []) | length > 0) | .name[0]')
+      | jq -r '(. // []) | .[] | select(((.passkeys // []) | length > 0) or ((.primary_credential // []) | length > 0)) | .name[0]')
     granted=$(${kanidm} -o json group list-members users \
       | jq -r '(. // []) | .[] | split("@")[0]')
+
+    # The enrolment deadline that signup sets. Enrolled: the deadline goes
+    # away, they wait for entitlement for as long as that takes. Not enrolled
+    # and past it: the row was never a person, delete it. Open signup with no
+    # sweep would accumulate empty accounts forever.
+    now=$(date -u +%s)
+    for spn in $(${kanidm} -o json group list-members pending | jq -r '(. // []) | .[]'); do
+      u=''${spn%%@*}
+      if printf '%s\n' "$enrolled" | grep -qx "$u"; then
+        ${kanidm} person validity expire-at "$u" never >/dev/null 2>&1 || true
+        continue
+      fi
+      exp=$(${kanidm} -o json person get "$u" | jq -r '.attrs.account_expire[0] // empty')
+      [ -n "$exp" ] || continue
+      if [ "$(date -u -d "$exp" +%s)" -lt "$now" ]; then
+        ${kanidm} person delete "$u" >/dev/null && echo "expired unenrolled account $u"
+      fi
+    done
 
     for u in $(printf '%s\n%s\n' "$enrolled" "$granted" | sort -u); do
       [ -n "$u" ] || continue

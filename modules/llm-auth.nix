@@ -46,6 +46,14 @@ in
       # client in enforced PKCE mode". Bearer requests never reach the
       # authorise step, so this only matters for the browser login.
       code-challenge-method = "S256";
+      # Browser sessions live in a cookie and are otherwise trusted until they
+      # expire. Refreshing every five minutes makes oauth2-proxy go back to
+      # kanidm with the refresh token, and a session revoked there fails that
+      # refresh - "fatal refresh error, clearing session" - so a browser is
+      # out within five minutes. Bearer clients cannot be helped this way:
+      # oauth2-proxy never validates a bearer session, and kanidm's access
+      # token is a hard-coded fifteen minutes. That is the bound for dd.
+      cookie-refresh = "5m";
       # No oidc-email-claim or profile-url here on purpose. Clients present
       # an ID token (see modules/webdav-media.nix), which already carries
       # `email` and `preferred_username`, and the bearer path never calls the

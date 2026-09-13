@@ -88,6 +88,27 @@ impl Client {
             .any(|m| m.split('@').next() == Some(name)))
     }
 
+    /// A new account has a day to enrol. The sweep in modules/user-accounts.nix
+    /// clears this the moment a credential exists and deletes the account if
+    /// it expires with none - so open signup cannot pile up empty rows.
+    async fn set_expiry(&self, name: &str, ttl_secs: u64) -> Result<()> {
+        let when = std::time::SystemTime::now() + std::time::Duration::from_secs(ttl_secs);
+        let secs = when.duration_since(std::time::UNIX_EPOCH)?.as_secs();
+        let r = self
+            .http
+            .put(self.url(&format!("/v1/person/{name}/_attr/account_expire")))
+            .bearer_auth(&self.token)
+            .json(&json!([rfc3339(secs)]))
+            .send()
+            .await
+            .context("PUT account_expire")?;
+        if !r.status().is_success() {
+            let s = r.status();
+            bail!("kanidm answered {s} setting the enrolment deadline");
+        }
+        Ok(())
+    }
+
     async fn send_intent(&self, name: &str, email: &str, ttl_secs: u64) -> Result<()> {
         let r = self
             .post(
@@ -110,8 +131,12 @@ impl Client {
         email: &str,
         ttl_secs: u64,
     ) -> Result<Outcome> {
+        // With access scoped to pending, a person outside it is simply not
+        // visible: exists() is false, create fails on the name, and that is
+        // reported as taken - which it is.
         if self.person_exists(name).await? {
             if self.is_pending(group, name).await? {
+                self.set_expiry(name, ttl_secs).await?;
                 self.send_intent(name, email, ttl_secs).await?;
                 return Ok(Outcome::Resent);
             }
@@ -139,9 +164,9 @@ impl Client {
             bail!("kanidm answered {s} creating the account");
         }
 
-        // Group first, mail second. If the mail fails, the account is already
-        // in `pending`, which is what makes the retry path above work; the
-        // other order would strand it somewhere neither branch can find.
+        // Group FIRST. Everything after this - the deadline, the mail - is
+        // only permitted on members of `pending`, and if any of it fails the
+        // account is already where the retry path above can find it.
         let r = self
             .post(&format!("/v1/group/{group}/_attr/member"), json!([name]))
             .await?;
@@ -150,7 +175,37 @@ impl Client {
             bail!("kanidm answered {s} adding the account to {group}");
         }
 
+        self.set_expiry(name, ttl_secs).await?;
         self.send_intent(name, email, ttl_secs).await?;
         Ok(Outcome::Created)
+    }
+}
+
+/// Seconds since the epoch as the rfc3339 string kanidm wants. Days-from-civil
+/// is the standard algorithm; avoiding a date crate for one format.
+fn rfc3339(secs: u64) -> String {
+    let days = secs / 86400;
+    let rem = secs % 86400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rfc3339_known_values() {
+        assert_eq!(super::rfc3339(0), "1970-01-01T00:00:00Z");
+        assert_eq!(super::rfc3339(951782400), "2000-02-29T00:00:00Z");
+        assert_eq!(super::rfc3339(1_788_998_400), "2026-09-10T00:00:00Z");
     }
 }
