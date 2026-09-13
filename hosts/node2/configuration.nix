@@ -9,6 +9,7 @@
   # install and committed as-is (minus fileSystems, which disko owns).
   imports = [
     ./hardware-configuration.nix
+    ../../modules/box.nix
     ./disko.nix
     ../../modules/verify.nix
   ];
@@ -17,6 +18,8 @@
   # tailnet. It holds no secret at all - not a sops recipient, no domain, no
   # service - because the entries it keeps are signed by their owners and
   # would be equally good from any box.
+  # nobody's plaintext lives here; the assertions in modules/box.nix hold it to that
+  dd.box.ownerTrusted = false;
   dd.verify.role = "directory";
   dd.verify.peers = [ "https://files.distributed-datacenter.duckdns.org/_dd/directory" ];
 

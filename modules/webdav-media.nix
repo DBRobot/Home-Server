@@ -34,6 +34,8 @@ let
   '';
 in
 {
+  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+  dd.box.plaintext = [ "webdav (/srv/users)" ];
   # Authenticated upload with no new service: nginx already ships the dav
   # modules, and the verifier (modules/verify.nix) says whose request it is.
   # This is the only way files reach /srv/users - samba was retired with

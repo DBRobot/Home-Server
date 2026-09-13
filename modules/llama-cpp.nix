@@ -31,6 +31,8 @@ let
   url = "https://huggingface.co/${repo}/resolve/${rev}/${upstream}";
 in
 {
+  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+  dd.box.plaintext = [ "llama-cpp (prompts and answers)" ];
   systemd.services.fetch-model = {
     description = "Fetch ${upstream} into ${dir}";
     after = [

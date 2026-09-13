@@ -20,6 +20,8 @@ in
   };
 
   config = {
+    # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
+    dd.box.plaintext = [ "forgejo (plain repositories)" ];
     # Private repositories here are private from the world, not from whoever
     # runs this box. The forge reads the code; that is what a forge is. What
     # must be private from the box too goes through the dd remote helper,
