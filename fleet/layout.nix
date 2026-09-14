@@ -9,14 +9,12 @@
 {
   device,
   pool ? "tank",
-  rootReservation ? "32G",
+  # root holds /etc and little else (/nix, /var, /home are their own
+  # datasets); this only has to keep it writable when the pool fills
+  rootReservation ? "2G",
 }:
-{ lib, ... }:
+{ ... }:
 {
-  # disko's rehearsal vm gives every disk 4G, too small for the root
-  # reservation; a sparse 64G costs nothing
-  disko.tests.extraConfig.virtualisation.emptyDiskImages = lib.mkForce [ 65536 ];
-
   disko.devices = {
     disk.boot = {
       type = "disk";
