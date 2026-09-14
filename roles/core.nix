@@ -17,7 +17,11 @@
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
   boot.supportedFilesystems = [ "zfs" ];
-  boot.zfs.forceImportRoot = false;
+  # The pool that holds root was created by the installer, under the
+  # installer's host id. The first boot of a template box would refuse it
+  # ("previously in use from another system") and stop in the initrd; with
+  # no other system on the disk that refusal protects nothing. Force it.
+  boot.zfs.forceImportRoot = true;
 
   time.timeZone = "America/New_York";
 
