@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Reinstall one box onto the fleet disk template, keeping its identity,
+# and refuse to call it done until ssh works and the box runs the build:
+#
+#   bin/install-box node2          # main
+#   bin/install-box node2 branch   # a branch
+#
+# 1. build the box and its disko script here, from git, never the tree
+# 2. take the box's identity (ssh host key, tailscale state) into a tree
+#    whose directory modes are what sshd demands; check the host key is
+#    the one in fleet/boxes.json before wiping anything
+# 3. kexec the box into the installer; find the installer by the box's
+#    MAC because it may come up on another address
+# 4. format, install, reboot
+# 5. wait for the box on its own address and check: same host key, root on
+#    zfs, sane modes, the built closure, tailscale, nothing failed
+#
+# node2's first reinstall needed the console twice: the installer's host
+# id on the root pool (core forces the import now) and group-writable
+# directories copied from an extra-files tree (step 2 checks that now).
+set -euo pipefail
+
+box=${1:?box}
+ref=${2:-main}
+case "$box" in
+  node1) lan=10.10.10.2 ;;
+  node2) lan=10.10.10.135 ;;
+  *) echo "unknown box $box" >&2; exit 1 ;;
+esac
+link=enp5s0 # the Legion's side of the direct link
+repo=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
+ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+if ! git -C "$repo" rev-parse --verify -q "refs/heads/$ref" >/dev/null; then
+  echo "no local branch $ref" >&2; exit 1
+fi
+rev=$(git -C "$repo" rev-parse "refs/heads/$ref")
+if [ "$(git -C "$repo" rev-parse "refs/remotes/forge/$ref" 2>/dev/null || true)" != "$rev" ]; then
+  echo "local $ref ($rev) is not what the forge has - push it first" >&2; exit 1
+fi
+want_key=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]]["hostKey"])' "$repo/fleet/boxes.json" "$box")
+want_tailnet=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]]["tailnet"])' "$repo/fleet/boxes.json" "$box")
+
+echo "== build $box from $ref ($rev)"
+flake="git+file://$repo?ref=$ref#nixosConfigurations.$box.config.system.build"
+toplevel=$(nix build --no-link --print-out-paths "$flake.toplevel")
+disko=$(nix build --no-link --print-out-paths "$flake.diskoScript")
+echo "   $toplevel"
+
+echo "== take $box's identity"
+tree=$work/extra
+mkdir -p "$tree"
+ssh "${ssh_opts[@]}" "admin@$lan" 'sudo tar czf - -C / etc/ssh/ssh_host_ed25519_key etc/ssh/ssh_host_ed25519_key.pub var/lib/tailscale' \
+  | (umask 022; tar xzf - -C "$tree" --no-same-owner --no-same-permissions)
+chmod 700 "$tree/var/lib/tailscale"
+have_key=$(awk '{print $1" "$2}' "$tree/etc/ssh/ssh_host_ed25519_key.pub")
+if [ "$have_key" != "$want_key" ]; then
+  echo "   $lan is not $box: its host key is not the one in fleet/boxes.json" >&2; exit 1
+fi
+loose=$(find "$tree" -type d -perm /022 -not -path "$tree")
+if [ -n "$loose" ]; then
+  echo "   group/world-writable directories in the extra-files tree:" >&2; echo "$loose" >&2; exit 1
+fi
+mac=$(ip neigh show dev "$link" "$lan" | awk '{print $3}')
+[ -n "$mac" ] || { echo "   no neighbour entry for $lan on $link" >&2; exit 1; }
+echo "   host key ok, mac $mac, tree modes ok"
+
+echo "== kexec into the installer"
+anywhere=(nix run github:nix-community/nixos-anywhere --)
+"${anywhere[@]}" --phases kexec --target-host "admin@$lan" --store-paths "$disko" "$toplevel" \
+  --ssh-option StrictHostKeyChecking=no --ssh-option UserKnownHostsFile=/dev/null \
+  >"$work/kexec.log" 2>&1 &
+kexec_pid=$!
+installer=
+seen=0
+for _ in $(seq 1 120); do
+  sleep 5
+  # the installer's own phase lines, as they land
+  lines=$(grep -c '^### ' "$work/kexec.log" 2>/dev/null || true)
+  if [ "${lines:-0}" -gt "$seen" ]; then
+    grep '^### ' "$work/kexec.log" | tail -n +"$((seen + 1))" | sed 's/^/   /'; seen=$lines
+  fi
+  for ip in $lan $(ip neigh show dev "$link" | awk -v m="$mac" '$3 == m {print $1}'); do
+    if ssh "${ssh_opts[@]}" "root@$ip" 'test -d /nix/store && [ "$(uname -n)" = nixos-installer ]' 2>/dev/null; then
+      installer=$ip; break 2
+    fi
+  done
+  ping -c1 -W1 -b "${lan%.*}.255" >/dev/null 2>&1 || true
+done
+kill "$kexec_pid" 2>/dev/null || true
+wait "$kexec_pid" 2>/dev/null || true
+if [ -z "$installer" ]; then
+  echo "   the installer never showed up; kexec log:" >&2; tail -20 "$work/kexec.log" >&2; exit 1
+fi
+echo "   installer at $installer"
+
+echo "== format, install, reboot"
+"${anywhere[@]}" --phases disko,install,reboot --target-host "root@$installer" \
+  --store-paths "$disko" "$toplevel" --extra-files "$tree" \
+  --ssh-option StrictHostKeyChecking=no --ssh-option UserKnownHostsFile=/dev/null \
+  >"$work/install.log" 2>&1 &
+install_pid=$!
+seen=0
+while kill -0 "$install_pid" 2>/dev/null; do
+  sleep 5
+  lines=$(grep -c '^### ' "$work/install.log" 2>/dev/null || true)
+  if [ "${lines:-0}" -gt "$seen" ]; then
+    grep '^### ' "$work/install.log" | tail -n +"$((seen + 1))" | sed 's/^/   /'; seen=$lines
+  fi
+done
+if ! wait "$install_pid"; then tail -30 "$work/install.log" >&2; exit 1; fi
+
+echo "== wait for $box"
+up=
+for _ in $(seq 1 120); do
+  sleep 5
+  if ssh "${ssh_opts[@]}" "admin@$lan" true 2>/dev/null; then up=1; break; fi
+done
+[ -n "$up" ] || { echo "   no ssh to admin@$lan after 10 minutes" >&2; exit 1; }
+
+echo "== check"
+fail=0
+check() { # name expected actual
+  if [ "$2" = "$3" ]; then echo "   ok   $1"; else echo "   FAIL $1: want '$2' got '$3'"; fail=1; fi
+}
+got_key=$(ssh-keyscan -t ed25519 "$lan" 2>/dev/null | awk '{print $2" "$3}')
+check "host key" "$want_key" "$got_key"
+check "system" "$toplevel" "$(ssh "${ssh_opts[@]}" "admin@$lan" readlink /run/current-system)"
+check "root fs" zfs "$(ssh "${ssh_opts[@]}" "admin@$lan" findmnt -no FSTYPE /)"
+check "dir modes" "755 755 755 755" "$(ssh "${ssh_opts[@]}" "admin@$lan" stat -c %a /etc /etc/ssh /var /var/lib | xargs)"
+check "host key owner" "root 600" "$(ssh "${ssh_opts[@]}" "admin@$lan" "sudo stat -c '%U %a' /etc/ssh/ssh_host_ed25519_key")"
+check "pool" "all pools are healthy" "$(ssh "${ssh_opts[@]}" "admin@$lan" sudo zpool status -x)"
+tailnet=
+for _ in $(seq 1 12); do # tailscale needs a moment after boot
+  tailnet=$(ssh "${ssh_opts[@]}" "admin@$lan" tailscale ip -4 2>/dev/null || true)
+  [ -n "$tailnet" ] && break; sleep 5
+done
+check "tailnet" "$want_tailnet" "$tailnet"
+check "failed units" "" "$(ssh "${ssh_opts[@]}" "admin@$lan" systemctl --failed --no-legend --plain | awk '{print $1}' | xargs)"
+if [ $fail != 0 ]; then echo "== $box is up but not right" >&2; exit 1; fi
+echo "== $box reinstalled"
