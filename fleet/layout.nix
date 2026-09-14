@@ -17,6 +17,9 @@
     disk.boot = {
       type = "disk";
       inherit device;
+      # only for disko's vm rehearsal and disk images: room for the root
+      # reservation, sparse so it costs nothing
+      imageSize = "64G";
       content = {
         type = "gpt";
         partitions = {
