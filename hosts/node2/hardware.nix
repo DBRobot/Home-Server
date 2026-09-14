@@ -9,7 +9,7 @@
     ./disko.nix
   ];
 
-  boot.zfs.extraPools = [ "tank" ];
+  # root is on tank, so the pool imports at boot on its own
 
   networking.hostId = "083f7ed3";
   networking.networkmanager.ensureProfiles.profiles.direct-link = {
