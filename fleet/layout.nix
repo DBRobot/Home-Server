@@ -11,15 +11,16 @@
   pool ? "tank",
   rootReservation ? "32G",
 }:
-{ ... }:
+{ lib, ... }:
 {
+  # disko's rehearsal vm gives every disk 4G, too small for the root
+  # reservation; a sparse 64G costs nothing
+  disko.tests.extraConfig.virtualisation.emptyDiskImages = lib.mkForce [ 65536 ];
+
   disko.devices = {
     disk.boot = {
       type = "disk";
       inherit device;
-      # only for disko's vm rehearsal and disk images: room for the root
-      # reservation, sparse so it costs nothing
-      imageSize = "64G";
       content = {
         type = "gpt";
         partitions = {
