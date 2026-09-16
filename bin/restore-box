@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# After bin/install-box: put back what lived on the box's boot disk.
+#
+#   bin/restore-box node1
+#
+# The box came back with its identity (host key, tailnet, garage node key,
+# uid map) and its other pools untouched; what the boot disk held is in
+# two places: the box's restic backup in the garage cluster, and, for
+# postgres, the hourly dumps on the vault pool. This waits for the box's
+# garage to be back in the cluster (its metadata comes from the other
+# box, its blocks were never lost), restores the backed-up directories,
+# loads the database dumps, and starts everything again.
+set -euo pipefail
+
+box=${1:?box}
+case "$box" in
+  node1) addr=admin@10.10.10.2 ;;
+  node2) addr=admin@10.10.10.135 ;;
+  *) echo "unknown box $box" >&2; exit 1 ;;
+esac
+ssh "$addr" 'sudo bash -s' <<'EOF'
+set -euo pipefail
+echo "== garage back in the cluster"
+for i in $(seq 1 120); do
+  n=$(garage status 2>/dev/null | grep -cE '^[0-9a-f]{16}\s' || true)
+  [ "$n" -ge 2 ] && break
+  sleep 5
+done
+garage status | tail -n +2
+# this box's blocks are still on its data dir; tell the index so
+garage repair -a --yes blocks >/dev/null
+garage repair -a --yes tables >/dev/null
+
+echo "== restic restore of the backed-up directories"
+# the units that own them are stopped first; a running service would
+# write over what comes back
+units="grafana jellyfin prometheus ente forgejo"
+systemctl stop $units 2>/dev/null || true
+for i in $(seq 1 60); do restic-dd snapshots >/dev/null 2>&1 && break; sleep 5; done
+restic-dd snapshots | tail -3
+# only what lives on the boot disk: the pool paths are still there
+for p in /var/lib/grafana /var/lib/jellyfin /var/lib/prometheus2 /var/lib/garage/meta/snapshots; do
+  if restic-dd ls latest "$p" >/dev/null 2>&1; then
+    echo "   $p"
+    restic-dd restore latest --include "$p" --target / >/dev/null
+  fi
+done
+
+echo "== postgres from the dumps"
+if [ -d /vault/backups/postgres ]; then
+  systemctl start postgresql
+  for db in ente forgejo; do
+    dump=/vault/backups/postgres/$db.sql.zstd
+    [ -s "$dump" ] || { echo "   no dump for $db" >&2; continue; }
+    # the service's own role owns the database, so it owns what comes back
+    if ! sudo -u postgres psql -tAc "select 1 from pg_database where datname='$db'" | grep -q 1; then
+      sudo -u postgres psql -q -c "create database $db owner $db"
+    fi
+    rows=$(sudo -u postgres psql -tAd "$db" -c "select count(*) from information_schema.tables where table_schema='public'")
+    if [ "$rows" -gt 0 ]; then echo "   $db already has $rows tables, leaving it"; continue; fi
+    echo "   $db"
+    zstd -dc "$dump" | sudo -u "$db" psql -q -v ON_ERROR_STOP=1 -d "$db" >/dev/null
+  done
+fi
+
+echo "== start"
+systemctl start $units 2>/dev/null || true
+sleep 5
+systemctl --failed --no-legend
+echo "== done"
+EOF
