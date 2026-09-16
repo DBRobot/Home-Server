@@ -10,6 +10,16 @@
     default = [ ];
     description = "Services on this box that read people's plaintext.";
   };
+  # where the box is, at the two grains placement cares about; from
+  # fleet/boxes.json, published as labels so a dashboard can group by them
+  options.dd.box.site = lib.mkOption {
+    type = lib.types.str;
+    default = "";
+  };
+  options.dd.box.region = lib.mkOption {
+    type = lib.types.str;
+    default = "";
+  };
 
   config.environment.etc."dd/plaintext".text =
     lib.concatStringsSep "\n" config.dd.box.plaintext + "\n";
