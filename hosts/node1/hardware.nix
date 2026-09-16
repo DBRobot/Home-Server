@@ -76,6 +76,8 @@
     };
 
     "tank/models" = {
+      # the template's pool root has no mountpoint, so a dataset needs its own
+      mountpoint = "/tank/models";
       recordsize = "1M"; # large sequential reads of GGUF weights
       compression = "off"; # zstd is inherited pool-wide; weights are incompressible
       primarycache = "metadata"; # llama-server mlocks the weights; ARC caching them is waste
