@@ -34,7 +34,8 @@
     ],
     "garage": {
       "capacity": "400G",
-      "dataDir": "/srv/garage"
+      "dataDir": "/srv/garage",
+      "id": "1ed04b4160b765e2f019a9891afe0919f1645230dea8706d09775fdf60682c6e"
     }
   }
 }
