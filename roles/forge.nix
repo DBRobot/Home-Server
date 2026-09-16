@@ -8,6 +8,7 @@
     ../modules/forgejo-mirror.nix
   ];
   dd.forgejo.admin = "david";
+  dd.backup.paths = [ "/vault/forgejo" ]; # repositories, lfs, custom config; its db is in the postgres dumps
   dd.forgejo.mirrors = [
     {
       repo = "david/Home-Server";

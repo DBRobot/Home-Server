@@ -7,6 +7,8 @@
     ../modules/box.nix
     ../modules/verify.nix
     ../modules/metrics.nix
+    ../modules/zfs-datasets.nix
+    ../modules/backup.nix
   ];
 
   dd.domain = "distributed-datacenter.duckdns.org";

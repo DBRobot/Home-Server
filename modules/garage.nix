@@ -5,147 +5,168 @@
   ...
 }:
 let
-  base = config.dd.domain;
+  cfg = config.dd.garage;
+  meta = "/var/lib/garage/meta";
 in
 {
-  services.garage = {
-    enable = true;
-    package = pkgs.garage; # no default; nixpkgs ships several majors
-    environmentFile = config.sops.templates."garage.env".path;
-    settings = {
-      metadata_dir = "/var/lib/garage/meta";
-      data_dir = "/vault/photos"; # recordsize=1M, auto-snapshot, already declared
-      db_engine = "lmdb";
-      replication_factor = 1; # single vdev, single node
-      rpc_bind_addr = "[::1]:3901";
-      rpc_public_addr = "[::1]:3901";
-      s3_api = {
-        s3_region = "us-east-1"; # ente requires this string regardless of reality
-        api_bind_addr = "127.0.0.1:3900";
-        root_domain = ".s3.${base}";
+  # One garage cluster across every storage box. Each box holds a replica
+  # of every object (replication_factor below), so losing a box loses no
+  # data and reads keep working with a box down. Writes need every replica
+  # up until there are three boxes: a two-box cluster that accepted writes
+  # with one box away would hand out reads that miss what was just written.
+  # No box is trusted, and garage does not change that: a box in the layout
+  # can read and delete every object in the cluster. What it holds is
+  # ciphertext (ente, the media tier and restic all encrypt before garage
+  # sees anything), so the exposure is durability, and the two-copy rule is
+  # the answer to that.
+  options.dd.garage = {
+    zone = lib.mkOption {
+      type = lib.types.str;
+      description = "Layout zone of this box: its region id from fleet/boxes.json.";
+    };
+    capacity = lib.mkOption {
+      type = lib.types.str;
+      description = "Capacity this box offers the layout, e.g. \"3T\".";
+    };
+    dataDir = lib.mkOption {
+      type = lib.types.str;
+      default = "/srv/garage";
+      description = "Where the blocks live; a dataset the box's hardware file declares.";
+    };
+    publicAddr = lib.mkOption {
+      type = lib.types.str;
+      description = "host:port the other boxes reach this box's rpc on; its tailnet address.";
+    };
+    peers = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "The other storage boxes as id@host:port. Empty until a box has started once and published its id.";
+    };
+    replicationFactor = lib.mkOption {
+      type = lib.types.int;
+      default = 2;
+    };
+    envFile = lib.mkOption {
+      type = lib.types.path;
+      description = "File with GARAGE_RPC_SECRET, the same on every storage box.";
+    };
+    setupEnvFiles = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      description = "Files with key ids and secrets the setup snippets below read.";
+    };
+    setup = lib.mkOption {
+      type = lib.types.lines;
+      default = "";
+      description = "Shell run after the layout converges: the buckets and keys a role wants. Must be safe to re-run.";
+    };
+  };
+
+  config = {
+    services.garage = {
+      enable = true;
+      package = pkgs.garage; # no default; nixpkgs ships several majors
+      environmentFile = cfg.envFile;
+      settings = {
+        metadata_dir = meta;
+        data_dir = cfg.dataDir;
+        db_engine = "lmdb";
+        replication_factor = cfg.replicationFactor;
+        consistency_mode = "consistent";
+        # a daily copy of the metadata db, in ${meta}/snapshots; the backup
+        # module ships it, so a cluster whose metadata is gone is rebuilt
+        # from the last snapshot plus the blocks
+        metadata_auto_snapshot_interval = "1d";
+        # rpc on every interface; the firewall admits the tailnet and nothing
+        # else, and the rpc is authenticated by the shared secret regardless
+        rpc_bind_addr = "0.0.0.0:3901";
+        rpc_public_addr = cfg.publicAddr;
+        bootstrap_peers = cfg.peers;
+        s3_api = {
+          s3_region = "us-east-1"; # ente requires this string regardless of reality
+          # every interface, so a box without garage can back up to this one
+          # over the tailnet; the gateway proxies the public name to it
+          api_bind_addr = "0.0.0.0:3900";
+          root_domain = ".s3.${config.dd.domain}";
+        };
       };
     };
-  };
 
-  # The module defaults to DynamicUser, which allocates a UID at runtime - so
-  # there is no stable owner for data on /vault, and garage cannot write there.
-  # A static user is the normal answer for persistent data on an external path.
-  users.users.garage = {
-    isSystemUser = true;
-    group = "garage";
-    home = "/var/lib/garage";
-  };
-  users.groups.garage = { };
-
-  systemd.services.garage.serviceConfig = {
-    DynamicUser = false;
-    User = "garage";
-    Group = "garage";
-  };
-
-  systemd.tmpfiles.rules = [
-    "d /vault/photos 0750 garage garage -"
-    "d /var/lib/garage 0750 garage garage -"
-    "d /var/lib/garage/meta 0700 garage garage -"
-  ];
-
-  # Converging, like modules/zfs-datasets.nix: safe to re-run on every rebuild.
-  # The access key is IMPORTED from sops rather than minted here, so ente can be
-  # configured with the same credentials at deploy time.
-  systemd.services.garage-setup = {
-    description = "Converge garage layout, bucket and access key";
-    after = [ "garage.service" ];
-    requires = [ "garage.service" ];
-    wantedBy = [ "multi-user.target" ];
-    path = [
-      config.services.garage.package
-      pkgs.awscli2
-      pkgs.coreutils
-      pkgs.gnugrep
-    ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      EnvironmentFile = [
-        config.sops.templates."garage.env".path
-        config.sops.templates."garage-key.env".path
-      ];
+    # The module defaults to DynamicUser, which allocates a UID at runtime - so
+    # there is no stable owner for data on the pool, and garage cannot write
+    # there. A static user is the normal answer for persistent data.
+    users.users.garage = {
+      isSystemUser = true;
+      group = "garage";
+      home = "/var/lib/garage";
     };
-    script = ''
-      for i in $(seq 1 60); do garage status >/dev/null 2>&1 && break; sleep 2; done
+    users.groups.garage = { };
 
-      NODE=$(garage node id -q | cut -d@ -f1)
-      if ! garage layout show 2>/dev/null | grep -q "$NODE"; then
-        garage layout assign -z home -c 3T "$NODE"
-      fi
-      # garage prints the version to apply; computing it ourselves gets
-      # "Invalid new layout version"
-      VER=$(garage layout show 2>/dev/null | grep -oE -- "--version [0-9]+" | grep -oE "[0-9]+" | head -1)
-      if [ -n "$VER" ]; then
-        garage layout apply --version "$VER"
-      fi
+    systemd.services.garage = {
+      serviceConfig = {
+        DynamicUser = false;
+        User = "garage";
+        Group = "garage";
+      };
+      # the data dir is a dataset; do not start on an empty mountpoint
+      unitConfig.RequiresMountsFor = [ cfg.dataDir ];
+      after = [ "zfs-datasets.service" ];
+      wants = [ "zfs-datasets.service" ];
+    };
 
-      garage bucket create ente 2>/dev/null || true
-      garage key import "$GARAGE_KEY_ID" "$GARAGE_KEY_SECRET" --yes -n ente 2>/dev/null || true
-      garage bucket allow --read --write --owner ente --key "$GARAGE_KEY_ID" 2>/dev/null || true
+    systemd.tmpfiles.rules = [
+      "d ${cfg.dataDir} 0750 garage garage -"
+      "d /var/lib/garage 0750 garage garage -"
+      "d ${meta} 0700 garage garage -"
+    ];
 
-      # The encrypted media tier. No CORS here: nothing browser-facing touches
-      # it, rclone is a server-side client.
-      garage bucket create media 2>/dev/null || true
-      garage key import "$GARAGE_MEDIA_KEY_ID" "$GARAGE_MEDIA_KEY_SECRET" --yes -n media 2>/dev/null || true
-      garage bucket allow --read --write --owner media --key "$GARAGE_MEDIA_KEY_ID" 2>/dev/null || true
+    # Converging, like zfs-datasets: safe to re-run on every rebuild and on a
+    # timer, because the layout needs every box before it applies and the
+    # other box may join later.
+    systemd.services.garage-setup = {
+      description = "Converge garage layout, buckets and keys";
+      after = [ "garage.service" ];
+      requires = [ "garage.service" ];
+      wantedBy = [ "multi-user.target" ];
+      path = [
+        config.services.garage.package
+        pkgs.awscli2
+        pkgs.coreutils
+        pkgs.gnugrep
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        EnvironmentFile = [ cfg.envFile ] ++ cfg.setupEnvFiles;
+      };
+      script = ''
+        set -u
+        for i in $(seq 1 60); do garage status >/dev/null 2>&1 && break; sleep 2; done
 
+        # this box's own role in the layout; the other boxes stage theirs.
+        # apply fails while the layout has fewer boxes than copies, and that
+        # is fine: the timer tries again once the other box has staged
+        NODE=$(garage node id -q | cut -d@ -f1)
+        # layout show prints ids cut to 16 hex
+        if ! garage layout show 2>/dev/null | grep -q "^''${NODE:0:16}"; then
+          garage layout assign -z ${cfg.zone} -c ${cfg.capacity} "$NODE"
+        fi
+        # garage prints the version to apply; computing it ourselves gets
+        # "Invalid new layout version"
+        VER=$(garage layout show 2>/dev/null | grep -oE -- "--version [0-9]+" | grep -oE "[0-9]+" | head -1)
+        if [ -n "$VER" ]; then
+          garage layout apply --version "$VER" || echo "layout not applied yet: waiting for the other box"
+        fi
 
-      # Browsers upload blobs straight to garage, so the bucket needs CORS or
-      # every upload fails the preflight with "This CORS request is not
-      # allowed". garage has no CLI for this - it is an S3 API call.
-      export AWS_ACCESS_KEY_ID="$GARAGE_KEY_ID"
-      export AWS_SECRET_ACCESS_KEY="$GARAGE_KEY_SECRET"
-      export AWS_DEFAULT_REGION=us-east-1
-      aws --endpoint-url http://127.0.0.1:3900 s3api put-bucket-cors \
-        --bucket ente --cors-configuration '${
-          builtins.toJSON {
-            CORSRules = [
-              {
-                # Must be "*". Ente decrypts in a web worker, which is a sandboxed
-                # context, so the browser sends Origin: null - it cannot send the
-                # photos origin even in principle. Listing real origins also makes
-                # garage emit them comma-separated, which is invalid and silently
-                # rejected. CORS is not the access control here: the presigned URL
-                # signature is, and the objects are ciphertext regardless.
-                AllowedOrigins = [ "*" ];
-                AllowedMethods = [
-                  "GET"
-                  "PUT"
-                  "POST"
-                  "DELETE"
-                  "HEAD"
-                ];
-                AllowedHeaders = [ "*" ];
-                ExposeHeaders = [
-                  "etag"
-                  "ETag"
-                  "x-amz-request-id"
-                ];
-                MaxAgeSeconds = 3000;
-              }
-            ];
-          }
-        }' 2>/dev/null || true
-    '';
-  };
-
-  # garage's public face. Lives here rather than in ente.nix, where it ended up
-  # only because ente needed it first; every future s3 consumer wants it too.
-  services.nginx.virtualHosts."s3.${base}" = {
-    useACMEHost = base;
-    forceSSL = true;
-    locations."/" = {
-      proxyPass = "http://127.0.0.1:3900";
-      extraConfig = ''
-        client_max_body_size 0;
-        proxy_request_buffering off;
+        ${cfg.setup}
       '';
+    };
+    systemd.timers.garage-setup = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "10m";
+        OnUnitActiveSec = "10m";
+        RandomizedDelaySec = "1m";
+      };
     };
   };
 }

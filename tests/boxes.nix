@@ -27,6 +27,12 @@ let
           )
           (builtins.all (p: !lib.hasInfix box.tailnet p) cfgs.${name}.config.dd.verify.peers)
         ]
+        ++ lib.optionals (builtins.elem "storage" box.roles) [
+          # garage: this box's own address is public, its peers never include itself
+          (cfgs.${name}.config.dd.garage.publicAddr == "${box.tailnet}:3901")
+          (builtins.all (p: !lib.hasInfix box.tailnet p) cfgs.${name}.config.dd.garage.peers)
+          (cfgs.${name}.config.dd.garage.zone == box.regionId)
+        ]
         ++ lib.optional (builtins.elem "observe" box.roles) (
           builtins.attrNames cfgs.${name}.config.dd.grafana.boxes == builtins.attrNames boxes
         )
