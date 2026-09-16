@@ -108,14 +108,16 @@ in
         User = "garage";
         Group = "garage";
       };
-      # the data dir is a dataset; do not start on an empty mountpoint
+      # the data dir is a dataset; do not start on an empty mountpoint, and
+      # own it here rather than in tmpfiles, which runs before the dataset
+      # is mounted and owns the directory underneath it
       unitConfig.RequiresMountsFor = [ cfg.dataDir ];
       after = [ "zfs-datasets.service" ];
       wants = [ "zfs-datasets.service" ];
+      serviceConfig.ExecStartPre = "+${pkgs.coreutils}/bin/install -d -o garage -g garage -m 0750 ${cfg.dataDir}";
     };
 
     systemd.tmpfiles.rules = [
-      "d ${cfg.dataDir} 0750 garage garage -"
       "d /var/lib/garage 0750 garage garage -"
       "d ${meta} 0700 garage garage -"
     ];
