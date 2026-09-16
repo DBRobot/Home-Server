@@ -122,6 +122,7 @@
         {
           directory = vm ./tests/directory.nix;
           metrics = vm ./tests/metrics.nix;
+          backup = vm ./tests/backup.nix;
           placement = import ./tests/placement.nix args;
           boxes = import ./tests/boxes.nix args;
         };
@@ -144,6 +145,27 @@
           # module has to be present for it. Roles are files; look inside.
           needsSops =
             roles: builtins.any (r: lib.hasInfix "_sops.nix" (builtins.readFile ./roles/${r}.nix)) roles;
+          storage = lib.filterAttrs (_: b: builtins.elem "storage" b.roles) boxes;
+          # the garage cluster: every storage box, each told about the others
+          # whose ids are known (a box's id exists once it has started once)
+          garageOf =
+            name: box:
+            {
+              dd.garage = {
+                zone = box.regionId;
+                inherit (box.garage) capacity dataDir;
+                publicAddr = "${box.tailnet}:3901";
+                peers = lib.mapAttrsToList (_: b: "${b.garage.id}@${b.tailnet}:3901") (
+                  lib.filterAttrs (n: b: n != name && b.garage ? id) storage
+                );
+              };
+            };
+          # a box without garage backs up to a storage box over the tailnet
+          backupEndpoint =
+            name: box:
+            lib.optionalAttrs (!(builtins.elem "storage" box.roles)) {
+              dd.backup.endpoint = "http://${(builtins.head (builtins.attrValues storage)).tailnet}:3900";
+            };
           mkBox =
             name: box:
             lib.nixosSystem {
@@ -156,6 +178,8 @@
                 }
               ]
               ++ map (r: ./roles/${r}.nix) box.roles
+              ++ lib.optional (builtins.elem "storage" box.roles) (garageOf name box)
+              ++ [ (backupEndpoint name box) ]
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
               ++ lib.optional (builtins.pathExists ./hosts/${name}/disko.nix) disko.nixosModules.disko
               ++ lib.optional (builtins.elem "observe" box.roles) {

@@ -17,7 +17,7 @@ keys:
 
 creation_rules:
   # node1's: every service secret there is today
-  - path_regex: secrets/secrets\.yaml$
+  - path_regex: secrets/node1\.yaml$
     key_groups:
       - age:
           - *node1

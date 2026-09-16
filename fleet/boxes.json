@@ -15,7 +15,12 @@
       "llm",
       "forge",
       "observe"
-    ]
+    ],
+    "garage": {
+      "id": "eca3acbf439670efa8070ef9e1c8baaa9aac7092163aaab9447102f710e81cfe",
+      "capacity": "3T",
+      "dataDir": "/vault/photos"
+    }
   },
   "node2": {
     "hostKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILfEIFrBL+MqJGR0hMv1BKCCgxxRJzImHFpkgv37x1Qz",
@@ -24,7 +29,12 @@
     "siteId": "s-a39c703f",
     "regionId": "r-ef29c7c2",
     "roles": [
-      "core"
-    ]
+      "core",
+      "storage"
+    ],
+    "garage": {
+      "capacity": "400G",
+      "dataDir": "/srv/garage"
+    }
   }
 }

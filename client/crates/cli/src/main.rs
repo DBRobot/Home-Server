@@ -222,7 +222,7 @@ enum SecretCmd {
     Init,
     /// Print the public recipient of the key held here.
     Recipient,
-    /// Run sops with the key: `dd secret run -- set secrets/secrets.yaml '["k"]' '"v"'`.
+    /// Run sops with the key: `dd secret run -- set secrets/node1.yaml '["k"]' '"v"'`.
     Run {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -732,7 +732,7 @@ async fn main() -> Result<()> {
                     println!(
                         "add that as a recipient in .sops.yaml, then re-encrypt with a key that already can:"
                     );
-                    println!("  sops updatekeys secrets/secrets.yaml");
+                    println!("  sops updatekeys secrets/node1.yaml");
                 }
                 SecretCmd::Recipient => {
                     let id: age::x25519::Identity = keys

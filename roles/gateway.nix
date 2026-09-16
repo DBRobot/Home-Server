@@ -16,4 +16,18 @@
   sops.templates."duckdns.env".content = ''
     DUCKDNS_TOKEN=${config.sops.placeholder.duckdns-token}
   '';
+
+  # garage's public face: ente's browser uploads and any other s3 client
+  # reach the cluster through the gateway's name
+  services.nginx.virtualHosts."s3.${config.dd.domain}" = {
+    useACMEHost = config.dd.domain;
+    forceSSL = true;
+    locations."/" = {
+      proxyPass = "http://127.0.0.1:3900";
+      extraConfig = ''
+        client_max_body_size 0;
+        proxy_request_buffering off;
+      '';
+    };
+  };
 }

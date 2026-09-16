@@ -1,0 +1,135 @@
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
+let
+  cfg = config.dd.backup;
+  box = config.networking.hostName;
+  facts = "/var/lib/dd-facts";
+  garage = config.services.garage.enable;
+  mail = config.programs.msmtp.enable;
+
+  mark = pkgs.writeShellScript "backup-mark" ''
+    mkdir -p ${facts}
+    printf 'dd_backup_last_success_seconds{box="${box}"} %s\n' "$(date +%s)" > ${facts}/backup.prom.tmp
+    mv ${facts}/backup.prom.tmp ${facts}/backup.prom
+  '';
+
+  # Backups die silently by default. Where the box can mail, a failed run does.
+  alert = pkgs.writeShellScript "dd-alert" ''
+        set -eu
+        unit="$1"
+        ${pkgs.msmtp}/bin/msmtp --from=distributed.datacenter@gmail.com alerts <<EOF
+    From: ${box} <distributed.datacenter@gmail.com>
+    To: alerts
+    Subject: ${box}: $unit FAILED
+
+    $unit failed on ${box}.
+
+      journalctl -u $unit -n 50
+    EOF
+  '';
+in
+{
+  # A box backs itself up: restic, encrypted here with this box's own
+  # password, into a bucket of its own in the garage cluster, with a key
+  # that reaches no other bucket. The cluster keeps two copies, so the
+  # backup survives the loss of any box, including this one. No box holds
+  # another box's ssh key or password; what leaves a box is ciphertext.
+  # Roles add the paths their state lives in. Garage's own blocks are not
+  # here: the cluster replicates those itself, and its metadata snapshots
+  # ride along so the cluster can be rebuilt from blocks plus snapshot.
+  options.dd.backup = {
+    paths = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Directories on this box worth having tomorrow.";
+    };
+    exclude = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+    };
+    endpoint = lib.mkOption {
+      type = lib.types.str;
+      default = "http://127.0.0.1:3900";
+      description = "S3 endpoint: garage on this box, or a storage box over the tailnet.";
+    };
+    envFile = lib.mkOption {
+      type = lib.types.path;
+      description = "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY of this box's backup key.";
+    };
+    passwordFile = lib.mkOption {
+      type = lib.types.path;
+      description = "The restic repository password; nothing but this box and the release signer's sops key has it.";
+    };
+  };
+
+  config = lib.mkMerge [
+    {
+      # a snapshot of the metadata db before each backup, shipped with it
+      dd.backup.paths = lib.mkIf garage [ "/var/lib/garage/meta/snapshots" ];
+      systemd.services.garage-meta-snapshot = lib.mkIf garage {
+        description = "Snapshot garage's metadata db";
+        after = [ "garage.service" ];
+        requires = [ "garage.service" ];
+        path = [
+          config.services.garage.package
+          pkgs.findutils
+        ];
+        serviceConfig = {
+          Type = "oneshot";
+          EnvironmentFile = config.dd.garage.envFile;
+        };
+        script = ''
+          garage meta snapshot
+          # three days of them: the db is small, its snapshots are not free
+          find /var/lib/garage/meta/snapshots -mindepth 1 -maxdepth 1 -mtime +3 -exec rm -rf {} +
+        '';
+      };
+    }
+    (lib.mkIf (cfg.paths != [ ]) {
+      services.restic.backups.dd = {
+        repository = "s3:${cfg.endpoint}/backups-${box}";
+        environmentFile = toString cfg.envFile;
+        passwordFile = toString cfg.passwordFile;
+        paths = cfg.paths;
+        exclude = cfg.exclude;
+        initialize = true;
+        timerConfig = {
+          OnCalendar = "03:00";
+          RandomizedDelaySec = "1h";
+          Persistent = true; # a box that was off at 03:00 backs up when it wakes
+        };
+        pruneOpts = [
+          "--keep-daily 7"
+          "--keep-weekly 4"
+          "--keep-monthly 6"
+        ];
+        # read a slice of the data back every run: a repository that lists
+        # fine and restores nothing is the common failure
+        checkOpts = [ "--read-data-subset=2%" ];
+        extraBackupArgs = [ "--one-file-system" ];
+      };
+
+      systemd.services.restic-backups-dd = {
+        after = [ "network-online.target" ] ++ lib.optionals garage [ "garage-setup.service" "garage-meta-snapshot.service" ];
+        wants = [ "network-online.target" ];
+        requires = lib.optionals garage [ "garage-meta-snapshot.service" ];
+        # samples, not events: the box dashboard shows the age of the last
+        # good backup; ExecStartPost runs only when the backup succeeded
+        serviceConfig.ExecStartPost = "+${mark}";
+        onFailure = lib.optional mail "dd-alert@restic-backups-dd.service";
+      };
+
+      systemd.services."dd-alert@" = lib.mkIf mail {
+        description = "Mail out a failure of %i";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${alert} %i";
+        };
+      };
+    })
+  ];
+}

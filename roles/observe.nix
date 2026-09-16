@@ -9,6 +9,10 @@
     ../modules/mail.nix
     ../modules/postgres-backup.nix
   ];
+  dd.backup.paths = [
+    "/var/lib/grafana" # dashboards people made, not the provisioned ones
+    "/vault/backups" # the postgres dumps: the ente key hierarchy lives there
+  ];
   environment.systemPackages = with pkgs; [
     vim
     git

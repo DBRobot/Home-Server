@@ -12,6 +12,14 @@
   # root is on tank, so the pool imports at boot on its own
 
   networking.hostId = "083f7ed3";
+
+  # garage's blocks on the one pool there is. Content-addressed ciphertext:
+  # no snapshots, nothing to gain from them
+  dd.zfs.datasets."tank/garage" = {
+    mountpoint = "/srv/garage";
+    recordsize = "1M";
+    "com.sun:auto-snapshot" = "false";
+  };
   networking.networkmanager.ensureProfiles.profiles.direct-link = {
     connection = {
       id = "direct-link";
