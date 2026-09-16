@@ -114,7 +114,11 @@ in
       unitConfig.RequiresMountsFor = [ cfg.dataDir ];
       after = [ "zfs-datasets.service" ];
       wants = [ "zfs-datasets.service" ];
-      serviceConfig.ExecStartPre = "+${pkgs.coreutils}/bin/install -d -o garage -g garage -m 0750 ${cfg.dataDir}";
+      # the node key a reinstall carries in arrives owned by root
+      serviceConfig.ExecStartPre = [
+        "+${pkgs.coreutils}/bin/install -d -o garage -g garage -m 0750 ${cfg.dataDir}"
+        "+${pkgs.coreutils}/bin/chown -R garage:garage /var/lib/garage"
+      ];
     };
 
     systemd.tmpfiles.rules = [
