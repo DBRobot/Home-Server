@@ -79,14 +79,14 @@ in
         metadata_auto_snapshot_interval = "1d";
         # rpc on every interface; the firewall admits the tailnet and nothing
         # else, and the rpc is authenticated by the shared secret regardless
-        rpc_bind_addr = "0.0.0.0:3901";
+        rpc_bind_addr = "[::]:3901";
         rpc_public_addr = cfg.publicAddr;
         bootstrap_peers = cfg.peers;
         s3_api = {
           s3_region = "us-east-1"; # ente requires this string regardless of reality
           # every interface, so a box without garage can back up to this one
           # over the tailnet; the gateway proxies the public name to it
-          api_bind_addr = "0.0.0.0:3900";
+          api_bind_addr = "[::]:3900";
           root_domain = ".s3.${config.dd.domain}";
         };
       };
