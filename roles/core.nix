@@ -11,6 +11,8 @@
     ../modules/backup.nix
   ];
 
+  # prometheus history cannot be backfilled, so it is in the box's backup
+  dd.backup.paths = [ "/var/lib/prometheus2" ];
   dd.domain = "distributed-datacenter.duckdns.org";
   # every box holds a directory replica; the gateway role turns this into
   # the full verifier with the browser login

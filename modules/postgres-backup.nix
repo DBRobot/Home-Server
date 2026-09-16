@@ -94,7 +94,9 @@ in
         after = [ "postgresql.service" ];
         requires = [ "postgresql.service" ];
         onFailure = [ "postgres-backup-alert@postgres-backup-verify.service" ];
-        startAt = "weekly";
+        # not on the hour: the hourly dump is being rewritten then, and the
+        # check found no file (2026-09-14)
+        startAt = "Mon *-*-* 00:30:00";
         serviceConfig = {
           Type = "oneshot";
           User = "postgres";
