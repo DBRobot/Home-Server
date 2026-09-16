@@ -104,12 +104,22 @@ wait "$kexec_pid" 2>/dev/null || true
 if [ -z "$installer" ]; then
   echo "   the installer never showed up; kexec log:" >&2; tail -20 "$work/kexec.log" >&2; exit 1
 fi
+# node1's usb ethernet adapter reset itself inside the installer kernel 12
+# minutes in and never came back: no usb power saving while we install
+ssh "${ssh_opts[@]}" "root@$installer" 'echo -1 > /sys/module/usbcore/parameters/autosuspend; for c in /sys/bus/usb/devices/*/power/control; do echo on > "$c" 2>/dev/null; done' || true
+# the installer's dhcp settles after it first answers; use the address it
+# keeps, not the one it had first
+sleep 30
+for ip in $installer $lan $(ip neigh show dev "$link" | awk -v m="$mac" '$3 == m {print $1}'); do
+  if ssh "${ssh_opts[@]}" "root@$ip" 'test -d /nix/store' 2>/dev/null; then installer=$ip; break; fi
+done
 echo "   installer at $installer"
 
 echo "== format, install, reboot"
 "${anywhere[@]}" --phases disko,install,reboot --target-host "root@$installer" \
   --store-paths "$disko" "$toplevel" --extra-files "$tree" \
   --ssh-option StrictHostKeyChecking=no --ssh-option UserKnownHostsFile=/dev/null \
+  --ssh-option ServerAliveInterval=15 --ssh-option ServerAliveCountMax=4 \
   >"$work/install.log" 2>&1 &
 install_pid=$!
 seen=0
