@@ -44,6 +44,12 @@
   # tailscale0 is the trusted side; whatever cable or wifi a box has stays as it is
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
   networking.networkmanager.enable = true;
+  # never invent a "Wired connection 1": on a first boot NetworkManager can
+  # see the cable before the declared profile exists, make a dhcp profile
+  # for it, and keep preferring that one. node2 came up on a dhcp address
+  # after a reinstall this way; a box has the profiles its hardware file
+  # declares and nothing else
+  networking.networkmanager.settings.main.no-auto-default = "*";
 
   services.openssh = {
     enable = true;
