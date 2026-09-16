@@ -59,7 +59,7 @@ mkdir -p "$tree"
 identity="etc/ssh/ssh_host_ed25519_key etc/ssh/ssh_host_ed25519_key.pub var/lib/tailscale var/lib/tailscale-certs \
   var/lib/garage/meta/node_key var/lib/garage/meta/node_key.pub var/lib/nixos var/lib/dd-verify var/lib/acme"
 # shellcheck disable=SC2029 # the list expands here on purpose
-ssh "${ssh_opts[@]}" "admin@$lan" "for p in $identity; do [ -e /\$p ] && echo \$p; done | sudo tar czf - -C / -T -" \
+ssh "${ssh_opts[@]}" "admin@$lan" "sudo sh -c 'for p in $identity; do [ -e /\$p ] && echo \$p; done | tar czf - -C / -T -'" \
   | (umask 022; tar xzf - -C "$tree" --no-same-owner --no-same-permissions)
 chmod 700 "$tree/var/lib/tailscale"
 [ -d "$tree/var/lib/garage/meta" ] && chmod 700 "$tree/var/lib/garage/meta"
