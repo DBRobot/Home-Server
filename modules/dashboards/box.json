@@ -1248,6 +1248,156 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 35,
+      "type": "row",
+      "title": "Release",
+      "gridPos": {
+        "x": 0,
+        "y": 77,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 36,
+      "type": "stat",
+      "title": "Release counter",
+      "gridPos": {
+        "x": 0,
+        "y": 78,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${box}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dd_agent_counter",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${box}"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 37,
+      "type": "stat",
+      "title": "Last agent run",
+      "gridPos": {
+        "x": 4,
+        "y": 78,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${box}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dd_agent_info",
+          "legendFormat": "{{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${box}"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "never",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "${__field.labels.result}"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "name"
+      }
+    },
+    {
+      "id": 38,
+      "type": "table",
+      "title": "Running system",
+      "gridPos": {
+        "x": 8,
+        "y": 78,
+        "w": 16,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${box}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dd_agent_info",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${box}"
+          },
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
     }
   ]
 }

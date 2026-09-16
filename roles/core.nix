@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ config, lib, ... }:
 {
   # What every box is, before any role: its identity in the directory, a
   # replica of the directory, its own metrics, and a way in for the admin.
@@ -9,7 +9,16 @@
     ../modules/metrics.nix
     ../modules/zfs-datasets.nix
     ../modules/backup.nix
+    ../modules/agent.nix
   ];
+
+  # the box moves itself to the signed release; the key that signs lives on
+  # the laptop that builds, its public half in the repo
+  dd.agent = {
+    enable = true;
+    url = "https://git.${config.dd.domain}/david/Home-Server/raw/branch/releases/current.json";
+    publicKey = lib.fileContents ../fleet/release.pub;
+  };
 
   # prometheus history cannot be backfilled, so it is in the box's backup
   dd.backup.paths = [ "/var/lib/prometheus2" ];

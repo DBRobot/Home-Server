@@ -1,4 +1,5 @@
 mod derive;
+mod release_cmd;
 mod ui;
 mod vault;
 mod who;
@@ -42,6 +43,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// The fleet moves when this machine says so: build every box from a
+    /// commit, push the closures to the cache, sign and publish the
+    /// release the agents fetch.
+    Release {
+        #[command(subcommand)]
+        cmd: release_cmd::ReleaseCmd,
+        /// the repository checkout; defaults to the current directory
+        #[arg(long, default_value = ".", global = true)]
+        repo: String,
+    },
     /// Join, from nothing. Publishes your identity with this device as its
     /// first (that IS the account - nobody approves it), then creates the
     /// end-to-end encrypted photo account, which no server can do for you.
@@ -656,6 +667,8 @@ async fn main() -> Result<()> {
                 );
             }
         },
+
+        Command::Release { cmd, repo } => release_cmd::run(cmd, &repo, &auth::open(&service()))?,
 
         Command::Box { cmd, repo } => match cmd {
             BoxCmd::List { private } => {
