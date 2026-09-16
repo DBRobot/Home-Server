@@ -174,6 +174,8 @@
                 ./hosts/${name}/hardware.nix
                 {
                   networking.hostName = name;
+                  dd.box.site = box.siteId;
+                  dd.box.region = box.regionId;
                   dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);
                 }
               ]

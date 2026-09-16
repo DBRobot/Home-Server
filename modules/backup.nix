@@ -123,6 +123,23 @@ in
         onFailure = lib.optional mail "dd-alert@restic-backups-dd.service";
       };
 
+      # a timer that stops firing is silent; this one is not. Fails when
+      # the last good run is over a day old, which the box that can mail
+      # mails, and every box shows as a failed unit on its dashboard.
+      systemd.services.dd-backup-stale = {
+        description = "Fail if the last good backup is over 26 hours old";
+        startAt = "09:00";
+        onFailure = lib.optional mail "dd-alert@dd-backup-stale.service";
+        serviceConfig.Type = "oneshot";
+        script = ''
+          last=$(${pkgs.gawk}/bin/awk '{print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
+          age=$(( $(date +%s) - ''${last:-0} ))
+          if [ "$age" -gt $((26 * 3600)) ]; then
+            echo "last good backup was $((age / 3600)) hours ago"; exit 1
+          fi
+        '';
+      };
+
       systemd.services."dd-alert@" = lib.mkIf mail {
         description = "Mail out a failure of %i";
         serviceConfig = {

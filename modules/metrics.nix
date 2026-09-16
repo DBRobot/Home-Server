@@ -113,7 +113,7 @@ in
       {
         echo "# HELP dd_box_info What this box is."
         echo "# TYPE dd_box_info gauge"
-        echo "dd_box_info{box=\"$(esc "$host")\",model=\"$(esc "$model")\",arch=\"$arch\",kernel=\"$kernel\",generation=\"$gen\"} 1"
+        echo "dd_box_info{box=\"$(esc "$host")\",model=\"$(esc "$model")\",arch=\"$arch\",kernel=\"$kernel\",generation=\"$gen\",site=\"${config.dd.box.site}\",region=\"${config.dd.box.region}\"} 1"
         echo "# TYPE dd_box_cpu_cores gauge"
         echo "dd_box_cpu_cores{box=\"$(esc "$host")\"} $cores"
         echo "# TYPE dd_box_memory_bytes gauge"
