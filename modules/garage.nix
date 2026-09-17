@@ -165,6 +165,15 @@ in
         if [ -n "$VER" ]; then
           garage layout apply --version "$VER" || echo "layout not applied yet: waiting for the other box"
         fi
+        # applied is not ready: until every box has synced the new layout
+        # the ring on this one drops writes ("read/writes will be lost"),
+        # and a key imported then is simply gone. Wait for the cluster to
+        # settle before the buckets and keys below; bounded, the timer
+        # comes back
+        for i in $(seq 1 90); do
+          garage layout history 2>/dev/null | grep -q "stable state" && break
+          sleep 2
+        done
 
         ${cfg.setup}
       '';

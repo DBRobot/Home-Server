@@ -14,6 +14,7 @@ in
   name = "directory";
   node.specialArgs = { inherit self; };
   defaults.virtualisation.memorySize = 1024;
+  defaults.virtualisation.cores = 2; # services start in parallel instead of queueing on one thread
   defaults.virtualisation.diskSize = 2048;
   nodes = {
     a = {
