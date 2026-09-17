@@ -510,30 +510,35 @@ async fn passkey_made_in_a_browser_is_signed_into_the_entry_and_logs_in() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn boxes_share_the_directory_and_refuse_squats() {
-    // a and b peer with each other, quickly
-    let a_dir = scratch("a").join("keys");
-    let b_dir = scratch("b").join("keys");
-    // we need each other's addresses before starting: bind first
-    let la = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let lb = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let (pa, pb) = (la.local_addr().unwrap(), lb.local_addr().unwrap());
-    drop((la, lb));
-    let (a, b) = tokio::join!(
-        start_at(
-            pa,
-            a_dir,
-            true,
-            vec![format!("http://{pb}/_dd/directory")],
-            1
-        ),
-        start_at(
-            pb,
-            b_dir,
-            false,
-            vec![format!("http://{pa}/_dd/directory")],
-            1
-        )
-    );
+    // a and b peer with each other, quickly. We need each other's addresses
+    // before starting, so bind first, drop, and start on those ports; another
+    // test can take a port in between, so try again when that happens
+    let (a, b) = loop {
+        let a_dir = scratch("a").join("keys");
+        let b_dir = scratch("b").join("keys");
+        let la = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let lb = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (pa, pb) = (la.local_addr().unwrap(), lb.local_addr().unwrap());
+        drop((la, lb));
+        if let (Ok(a), Ok(b)) = tokio::join!(
+            start_at(
+                pa,
+                a_dir,
+                true,
+                vec![format!("http://{pb}/_dd/directory")],
+                1
+            ),
+            start_at(
+                pb,
+                b_dir,
+                false,
+                vec![format!("http://{pa}/_dd/directory")],
+                1
+            )
+        ) {
+            break (a, b);
+        }
+    };
     tokio::time::sleep(Duration::from_millis(1500)).await; // first pulls
 
     let sarah = Device::new();
@@ -658,7 +663,7 @@ async fn start_at(
     full: bool,
     peers: Vec<String>,
     sync_secs: u64,
-) -> Box_ {
+) -> anyhow::Result<Box_> {
     let (addr, _task) = verify::start(verify::Config {
         home: vec![],
         bind: addr,
@@ -668,9 +673,8 @@ async fn start_at(
         domain: full.then(|| "localhost".to_string()),
         oidc: None,
     })
-    .await
-    .unwrap();
-    Box_ { addr, dir }
+    .await?;
+    Ok(Box_ { addr, dir })
 }
 
 async fn wait_for<F, Fut>(mut cond: F)
