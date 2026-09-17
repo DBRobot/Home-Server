@@ -6,6 +6,7 @@
 }:
 let
   base = config.dd.domain;
+  name = config.networking.hostName;
 in
 {
   # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
@@ -19,9 +20,9 @@ in
   # pull requests here this becomes a container runner or a separate box.
   services.gitea-actions-runner = {
     package = pkgs.forgejo-runner;
-    instances.node1 = {
+    instances.${name} = {
       enable = true;
-      name = "node1";
+      inherit name;
       url = "https://git.${base}";
       # a registration token, minted once with `forgejo actions
       # generate-runner-token` and kept in sops; the runner registers on
@@ -57,7 +58,7 @@ in
     home = "/var/lib/gitea-runner";
   };
   users.groups.forgejo-runner = { };
-  systemd.services.gitea-runner-node1.serviceConfig = {
+  systemd.services."gitea-runner-${name}".serviceConfig = {
     DynamicUser = lib.mkForce false;
     User = lib.mkForce "forgejo-runner";
     Group = "forgejo-runner";

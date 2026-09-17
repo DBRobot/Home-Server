@@ -1,10 +1,10 @@
 { ... }:
 {
-  # The forge, its runner, and the mirror that keeps GitHub's copy current.
+  # The forge and the mirror that keeps GitHub's copy current. Its runner
+  # is the runner role: any box can run one, the forge runs on one.
   imports = [
     ./_sops.nix
     ../modules/forgejo.nix
-    ../modules/forgejo-runner.nix
     ../modules/forgejo-mirror.nix
   ];
   dd.forgejo.admin = "david";

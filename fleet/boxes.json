@@ -14,7 +14,8 @@
       "media",
       "llm",
       "forge",
-      "observe"
+      "observe",
+      "runner"
     ],
     "garage": {
       "id": "eca3acbf439670efa8070ef9e1c8baaa9aac7092163aaab9447102f710e81cfe",
@@ -30,7 +31,8 @@
     "regionId": "r-ef29c7c2",
     "roles": [
       "core",
-      "storage"
+      "storage",
+      "runner"
     ],
     "garage": {
       "capacity": "400G",
