@@ -170,19 +170,32 @@ fn icon(key: &str) -> &'static str {
     }
 }
 
-/// The signed-in home page: the services this box offers, as tiles. Server
-/// rendered, so the browser runs nothing.
-pub fn home(user: &str, services: &[Service]) -> String {
+fn me_bar(user: &str) -> String {
     let initial = user
         .chars()
         .next()
         .map(|c| esc(&c.to_string()))
         .unwrap_or_default();
-    let me = format!(
+    format!(
         r#"<div class="me"><span class="avatar" aria-hidden="true">{initial}</span><span>{}</span><a class="out" href="/_dd/logout">Sign out</a></div>"#,
         esc(user)
-    );
-    let mut out = open("Distributed Datacenter", HOME_CSS, &me);
+    )
+}
+
+/// Signed in but not on the member list: the account exists, nothing is
+/// open to it yet.
+pub fn waiting(user: &str) -> String {
+    let mut out = open("Distributed Datacenter", AUTH_CSS, &me_bar(user));
+    out.push_str(r#"<main><div class="card">
+<h1>Your account is made</h1><p class="lead">Nothing here is open to you yet. Whoever runs this network adds people to it; once they have added you, this page fills in with what you can use.</p>
+</div></main></body></html>"#);
+    out
+}
+
+/// The signed-in home page: the services this box offers, as tiles. Server
+/// rendered, so the browser runs nothing.
+pub fn home(user: &str, services: &[Service]) -> String {
+    let mut out = open("Distributed Datacenter", HOME_CSS, &me_bar(user));
     out.push_str("<main><h1>Your services</h1>");
     if services.is_empty() {
         out.push_str(r#"<p class="empty">Nothing runs here yet.</p>"#);
@@ -230,6 +243,15 @@ mod tests {
         }
         assert!(login().contains("/_dd/login/start"));
         assert!(enrol().contains("/_dd/enrol/start"));
+    }
+
+    #[test]
+    fn waiting_page_names_the_person_and_offers_nothing() {
+        let html = waiting("tom");
+        assert!(html.contains("<span>tom</span>"));
+        assert!(html.contains("/_dd/logout"));
+        assert!(!html.contains("class=\"tile\""));
+        assert!(!html.contains("<script"));
     }
 
     #[test]

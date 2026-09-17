@@ -46,6 +46,7 @@ struct App {
     pending: Mutex<HashMap<String, (Instant, identity::Passkey)>>,
     oidc: Option<oidc::Issuer>,
     home: Vec<pages::Service>,
+    members: Option<Vec<String>>,
 }
 
 enum Ceremony {
@@ -73,6 +74,11 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     /// the tiles on the home page: what this box offers a signed-in person
     pub home: Vec<pages::Service>,
+    /// Who may use the services: member ids (identity::member_id of each
+    /// person's root), from the signed release. An entry says who someone
+    /// is; only this says they may come in. None: no gate - the directory
+    /// alone, or a test. A full box always has a list, empty meaning nobody.
+    pub members: Option<Vec<String>>,
 }
 
 pub struct OidcConfig {
@@ -94,6 +100,19 @@ fn valid_user(s: &str) -> bool {
 impl App {
     fn entry(&self, user: &str) -> Result<Option<identity::SignedEntry>> {
         self.directory.entry(user)
+    }
+
+    /// Signed in is not let in: the person's root has to be on the member
+    /// list this box was released with.
+    fn member(&self, user: &str) -> bool {
+        match &self.members {
+            None => true,
+            Some(list) => self
+                .entry(user)
+                .ok()
+                .flatten()
+                .is_some_and(|e| list.contains(&identity::member_id(&e.entry.root))),
+        }
     }
 
     /// The passkeys in the user's signed entry, as webauthn-rs credentials.
@@ -231,6 +250,9 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 /// nginx auth_request lands here for every request to a protected service.
 async fn verify(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     match app.identify(&headers, "access") {
+        // 403, not 401: nginx sends a 401 to the login page, and this person
+        // is logged in. They land on the home page, which says so.
+        Some(user) if !app.member(&user) => StatusCode::FORBIDDEN.into_response(),
         Some(user) => {
             let mut r = StatusCode::OK.into_response();
             let v = HeaderValue::from_str(&user).unwrap();
@@ -409,6 +431,7 @@ async fn login_finish(
 async fn home_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
+        Some(user) if !app.member(&user) => Html(pages::waiting(&user)).into_response(),
         Some(user) => Html(pages::home(&user, &app.home)).into_response(),
         None => Redirect::to("/_dd/login?rd=/").into_response(),
     }
@@ -456,6 +479,9 @@ async fn oidc_authorize(
             .to_string();
         return Redirect::to(&format!("/_dd/login?rd={}", urlencode(&here))).into_response();
     };
+    if !app.member(&user) {
+        return Redirect::to("/_dd/home").into_response();
+    }
     let code = issuer.code(&user, q.nonce);
     let mut to = format!("{}?code={}", q.redirect_uri, urlencode(&code));
     if let Some(st) = q.state {
@@ -605,6 +631,7 @@ pub async fn start(
         pending: Mutex::new(HashMap::new()),
         oidc,
         home: cfg.home,
+        members: cfg.members,
     });
     let router = Router::new()
         .route("/verify", get(verify))

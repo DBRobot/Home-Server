@@ -130,6 +130,18 @@ pub fn fingerprint(public_b64: &str) -> String {
         .collect()
 }
 
+/// What the fleet's member list names a person by: a hash of their root,
+/// so the list carries no names and nothing a key can be recovered from,
+/// and a name someone else claims first buys them nothing. Full width, so
+/// grinding a key that matches an entry on the list is not a thing.
+pub fn member_id(root: &str) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(root.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 pub fn canonical(entry: &Entry) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(entry)?)
 }

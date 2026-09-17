@@ -1,4 +1,5 @@
 mod derive;
+mod member;
 mod release_cmd;
 mod ui;
 mod vault;
@@ -95,6 +96,18 @@ enum Command {
     Identity {
         #[command(subcommand)]
         cmd: IdentityCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
+        directories: Vec<String>,
+    },
+    /// Who may use the services: fleet/members.json, a list of member ids
+    /// (a hash of each person's root, no names). Edited here, committed,
+    /// released; every box checks it and none can add to it.
+    Member {
+        #[command(subcommand)]
+        cmd: MemberCmd,
+        /// the repository checkout; defaults to the current directory
+        #[arg(long, default_value = ".", global = true)]
+        repo: String,
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
@@ -215,6 +228,16 @@ enum PasskeyCmd {
     /// Sign in a credential record from a file - the one a box used to keep
     /// in <name>.passkeys.json before passkeys lived in the entry.
     Add { file: String },
+}
+
+#[derive(Subcommand)]
+enum MemberCmd {
+    /// Let a person in: their name (looked up in the directory) or member id.
+    Add { who: String },
+    /// Shut a person out.
+    Remove { who: String },
+    /// Every member id, with the name behind it where a directory has one.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -585,6 +608,9 @@ async fn main() -> Result<()> {
                         .map(identity::fingerprint)
                         .unwrap_or("none".into())
                 );
+                if let Some(m) = &mine {
+                    println!("member id:   {}", identity::member_id(m));
+                }
                 for (d, r) in who::fetch(&directories, &name).await {
                     match r {
                         Ok(None) => println!("{d}: no entry"),
@@ -670,6 +696,15 @@ async fn main() -> Result<()> {
 
         Command::Release { cmd, repo } => release_cmd::run(cmd, &repo, &auth::open(&service()))?,
 
+        Command::Member {
+            cmd,
+            repo,
+            directories,
+        } => match cmd {
+            MemberCmd::Add { who } => member::add(&repo, &who, &directories).await?,
+            MemberCmd::Remove { who } => member::remove(&repo, &who, &directories).await?,
+            MemberCmd::List => member::list(&repo, &directories).await?,
+        },
         Command::Box { cmd, repo } => match cmd {
             BoxCmd::List { private } => {
                 let path = std::path::Path::new(&repo).join("fleet/boxes.json");

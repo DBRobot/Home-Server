@@ -32,9 +32,19 @@ struct Box_ {
 
 impl Box_ {
     async fn start(full: bool, peers: Vec<String>, sync_secs: u64) -> Self {
+        Self::start_members(full, peers, sync_secs, None).await
+    }
+    /// `members`: Some(list) gates the services the way a real box does
+    async fn start_members(
+        full: bool,
+        peers: Vec<String>,
+        sync_secs: u64,
+        members: Option<Vec<String>>,
+    ) -> Self {
         let dir = scratch("box").join("keys");
         let (addr, _task) = verify::start(verify::Config {
             home: vec![],
+            members,
             bind: "127.0.0.1:0".parse().unwrap(),
             dir: dir.clone(),
             peers,
@@ -333,6 +343,54 @@ async fn enrol_links_and_access_tokens_do_not_swap() {
 }
 
 /// Start `dd enrol`, read the link it prints, kill it. Just the token.
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_gates_the_services_not_the_account() {
+    // a was released with nobody on the list. tom makes his account there:
+    // that works, and gets him nothing
+    let a = Box_::start_members(true, vec![], 300, Some(vec![])).await;
+    let d = dirs([&a]);
+    let dev = Device::new();
+    dev.dd_ok(&args(&["identity", "new", "--name", "tom"], &d));
+    let access = dev.token();
+    assert_eq!(
+        verify_status(&a, &access).await,
+        403,
+        "an account is not a membership"
+    );
+
+    // his member id comes from his own entry; a box released with it on
+    // the list lets the same token through
+    let show = dev.dd_ok(&args(&["identity", "show"], &d));
+    let id = show
+        .lines()
+        .find_map(|l| l.strip_prefix("member id:"))
+        .expect("identity show prints the member id")
+        .trim()
+        .to_string();
+    assert_eq!(id.len(), 64);
+    let b = Box_::start_members(true, vec![], 300, Some(vec![id.clone()])).await;
+    dev.dd_ok(&args(&["identity", "publish"], &dirs([&a, &b])));
+    assert_eq!(verify_status(&b, &access).await, 200);
+    assert_eq!(verify_status(&a, &access).await, 403);
+
+    // the list is edited by name, stored by id, and never holds the name
+    let repo = scratch("repo");
+    std::fs::create_dir_all(repo.join("fleet")).unwrap();
+    let repo = repo.to_str().unwrap().to_string();
+    let file = || std::fs::read_to_string(format!("{repo}/fleet/members.json")).unwrap_or_default();
+    dev.dd_ok(&args(&["member", "add", "tom", "--repo", &repo], &d));
+    assert!(file().contains(&id), "{}", file());
+    assert!(!file().contains("tom"));
+    let out = dev.dd_ok(&args(&["member", "list", "--repo", &repo], &d));
+    assert!(out.contains(&id) && out.contains("tom"), "{out}");
+    dev.dd_ok(&args(&["member", "remove", "tom", "--repo", &repo], &d));
+    assert!(!file().contains(&id), "{}", file());
+    assert!(
+        !dev.dd(&args(&["member", "remove", "tom", "--repo", &repo], &d))
+            .ok
+    );
+}
+
 fn enrol_token(dev: &Device, b: &Box_) -> String {
     use std::io::BufRead as _;
     let mut c = Command::new(env!("CARGO_BIN_EXE_dd"))
@@ -666,6 +724,7 @@ async fn start_at(
 ) -> anyhow::Result<Box_> {
     let (addr, _task) = verify::start(verify::Config {
         home: vec![],
+        members: None,
         bind: addr,
         dir: dir.clone(),
         peers,

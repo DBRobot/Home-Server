@@ -96,6 +96,7 @@ in
           auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;
           proxy_set_header X-WEBAUTH-USER $auth_user;
           error_page 401 = @login;
+          error_page 403 = @waiting;
         '';
       };
     };
