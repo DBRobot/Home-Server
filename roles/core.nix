@@ -11,6 +11,7 @@
     ../modules/backup.nix
     ../modules/agent.nix
     ../modules/thanos.nix
+    ../modules/locate.nix
   ];
 
   # the box moves itself to the signed release; the key that signs lives on
