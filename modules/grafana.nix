@@ -56,13 +56,22 @@ in
               orgId = 1;
             }
           ];
-          datasources = lib.mapAttrsToList (name: url: {
-            inherit name url;
-            type = "prometheus";
-            uid = name;
-            isDefault = name == "node1";
-            jsonData.timeInterval = "15s";
-          }) cfg.boxes;
+          datasources =
+            lib.mapAttrsToList (name: url: {
+              inherit name url;
+              type = "prometheus";
+              uid = name;
+              isDefault = name == "node1";
+              jsonData.timeInterval = "15s";
+            }) cfg.boxes
+            # every box at once, through thanos: the box label tells them apart
+            ++ lib.optional config.services.thanos.query.enable {
+              name = "fleet";
+              uid = "fleet";
+              type = "prometheus";
+              url = "http://127.0.0.1:10903";
+              jsonData.timeInterval = "15s";
+            };
         };
         dashboards.settings.providers = [
           {
