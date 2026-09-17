@@ -143,6 +143,7 @@
           metrics = vm ./tests/metrics.nix;
           backup = vm ./tests/backup.nix;
           release = vm ./tests/release.nix;
+          thanos = vm ./tests/thanos.nix;
           placement = import ./tests/placement.nix args;
           boxes = import ./tests/boxes.nix args;
         };
@@ -218,6 +219,10 @@
               ++ lib.optional (builtins.elem "observe" box.roles) {
                 dd.grafana.boxes = lib.mapAttrs (
                   n: b: if n == name then "http://127.0.0.1:9090" else "http://${b.tailnet}:9090"
+                ) boxes;
+                # every box's sidecar, for the fleet-wide query
+                dd.thanos.sidecars = lib.mapAttrsToList (
+                  n: b: if n == name then "127.0.0.1:10901" else "${b.tailnet}:10901"
                 ) boxes;
               };
             };

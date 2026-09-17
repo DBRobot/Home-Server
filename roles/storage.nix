@@ -35,10 +35,44 @@
   '';
   dd.backup.envFile = config.sops.templates."restic.env".path;
   dd.backup.passwordFile = config.sops.secrets.restic-password.path;
-  dd.garage.setupEnvFiles = [ config.sops.templates."garage-backup-key.env".path ];
+  # this box's key to the metrics bucket, for its thanos sidecar; the
+  # observe box's store and compactor use the same key of their own box
+  sops.secrets.thanos-key-id = { };
+  sops.secrets.thanos-key-secret = { };
+  sops.templates."garage-metrics-key.env".content = ''
+    GARAGE_METRICS_KEY_ID=${config.sops.placeholder.thanos-key-id}
+    GARAGE_METRICS_KEY_SECRET=${config.sops.placeholder.thanos-key-secret}
+  '';
+  sops.templates."thanos-objstore.yaml" = {
+    owner = "prometheus";
+    content = ''
+      type: S3
+      config:
+        bucket: metrics
+        endpoint: 127.0.0.1:3900
+        region: us-east-1
+        access_key: ${config.sops.placeholder.thanos-key-id}
+        secret_key: ${config.sops.placeholder.thanos-key-secret}
+        insecure: true
+        signature_version2: false
+        bucket_lookup_type: path
+    '';
+  };
+  dd.thanos.objstoreFile = config.sops.templates."thanos-objstore.yaml".path;
+
+  dd.garage.setupEnvFiles = [
+    config.sops.templates."garage-backup-key.env".path
+    config.sops.templates."garage-metrics-key.env".path
+  ];
   dd.garage.setup = ''
     garage bucket create backups-${config.networking.hostName} 2>/dev/null || true
     garage key import "$GARAGE_BACKUP_KEY_ID" "$GARAGE_BACKUP_KEY_SECRET" --yes -n backup-${config.networking.hostName} 2>/dev/null || true
     garage bucket allow --read --write --owner backups-${config.networking.hostName} --key "$GARAGE_BACKUP_KEY_ID" 2>/dev/null || true
+
+    # the metrics bucket: every box writes its own blocks; one bucket, since
+    # garage scopes keys by bucket and the compactor rewrites across boxes
+    garage bucket create metrics 2>/dev/null || true
+    garage key import "$GARAGE_METRICS_KEY_ID" "$GARAGE_METRICS_KEY_SECRET" --yes -n metrics-${config.networking.hostName} 2>/dev/null || true
+    garage bucket allow --read --write metrics --key "$GARAGE_METRICS_KEY_ID" 2>/dev/null || true
   '';
 }
