@@ -31,7 +31,7 @@ in
         enable = true;
         url = "http://forge/current.json";
         publicKeyFile = "/root/release.pub"; # made below, not at build time
-        probeSeconds = 30;
+        probeSeconds = 10;
       };
       # the same box with a mark on it: what a release moves it to
       specialisation.marked.configuration.environment.etc."dd-marker".text = "release 2\n";
