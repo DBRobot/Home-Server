@@ -391,6 +391,158 @@ async fn membership_gates_the_services_not_the_account() {
     );
 }
 
+/// The browser side of a join, against a box: name, passkey, signed entry.
+/// Returns the session cookie the box hands back.
+async fn join_in_browser(b: &Box_, authenticator: &mut SoftPasskey, name: &str) -> (u16, String) {
+    let origin = Url::parse("https://localhost").unwrap();
+    let http = reqwest::Client::new();
+    let r = http
+        .post(b.url("/_dd/join/start"))
+        .json(&serde_json::json!({ "username": name }))
+        .send()
+        .await
+        .unwrap();
+    if r.status() != 200 {
+        return (r.status().as_u16(), r.text().await.unwrap_or_default());
+    }
+    let mut j: serde_json::Value = r.json().await.unwrap();
+    let ceremony = j["ceremony"].as_str().unwrap().to_string();
+    j.as_object_mut().unwrap().remove("ceremony");
+    let ccr: CreationChallengeResponse = serde_json::from_value(j).unwrap();
+    let reg = authenticator
+        .do_registration(origin.clone(), ccr)
+        .expect("software authenticator registration");
+    let r = http
+        .post(b.url("/_dd/join/finish"))
+        .header("x-dd-ceremony", &ceremony)
+        .json(&reg)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    let mut j: serde_json::Value = r.json().await.unwrap();
+    let ceremony = j["ceremony"].as_str().unwrap().to_string();
+    j.as_object_mut().unwrap().remove("ceremony");
+    // the box asks for an assertion over the entry's hash
+    let rcr: RequestChallengeResponse = serde_json::from_value(j).unwrap();
+    let cred = authenticator
+        .do_authentication(origin, rcr)
+        .expect("software authenticator assertion");
+    let r = http
+        .post(b.url("/_dd/join/sign"))
+        .header("x-dd-ceremony", &ceremony)
+        .json(&cred)
+        .send()
+        .await
+        .unwrap();
+    let status = r.status().as_u16();
+    let cookie = r
+        .headers()
+        .get("set-cookie")
+        .map(|c| c.to_str().unwrap().split(';').next().unwrap().to_string())
+        .unwrap_or_default();
+    (status, cookie)
+}
+
+async fn get_with_cookie(b: &Box_, path: &str, cookie: &str) -> (u16, String) {
+    let r = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+        .get(b.url(path))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+    (r.status().as_u16(), r.text().await.unwrap_or_default())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_account_made_in_a_browser_is_a_passkey_root_and_waits_for_membership() {
+    let a = Box_::start_members(true, vec![], 300, Some(vec![])).await;
+    let mut eve = SoftPasskey::new(true);
+    let (status, cookie) = join_in_browser(&a, &mut eve, "eve").await;
+    assert_eq!(status, 200);
+    assert!(!cookie.is_empty());
+
+    // the entry: a passkey for a root, no device, no recovery key, and it
+    // verifies on its own
+    let e = entry(&a, "eve").await.unwrap();
+    let root = e["entry"]["root"].as_str().unwrap().to_string();
+    assert!(root.starts_with("webauthn:"), "{root}");
+    assert!(e["entry"]["devices"].as_array().unwrap().is_empty());
+    assert_eq!(e["entry"]["passkeys"].as_array().unwrap().len(), 1);
+    let signed: identity::SignedEntry = serde_json::from_value(e.clone()).unwrap();
+    identity::accept(None, &signed).unwrap();
+    // and a box refuses the same bytes with the signature of another entry
+    let mut forged = signed.clone();
+    forged.entry.name = "eva".into();
+    assert!(identity::accept(None, &forged).is_err());
+
+    // signed in, not a member: the home page says so, nothing opens
+    let (st, body) = get_with_cookie(&a, "/_dd/home", &cookie).await;
+    assert_eq!(st, 200);
+    assert!(body.contains("Your account is made"), "{body}");
+    assert_eq!(get_with_cookie(&a, "/verify", &cookie).await.0, 403);
+
+    // the name is taken now, by a different passkey too
+    let mut mallory = SoftPasskey::new(true);
+    assert_eq!(join_in_browser(&a, &mut mallory, "eve").await.0, 409);
+
+    // the member id is of the passkey root; a box released with it lets
+    // eve in, once she logs in there with the same passkey
+    let id = identity::member_id(&root);
+    let b = Box_::start_members(true, vec![a.directory()], 1, Some(vec![id.clone()])).await;
+    wait_for(|| async { entry(&b, "eve").await.is_some() }).await;
+    let origin = Url::parse("https://localhost").unwrap();
+    let http = reqwest::Client::new();
+    let r = http
+        .post(b.url("/_dd/login/start"))
+        .json(&serde_json::json!({ "username": "eve" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let mut j: serde_json::Value = r.json().await.unwrap();
+    let ceremony = j["ceremony"].as_str().unwrap().to_string();
+    j.as_object_mut().unwrap().remove("ceremony");
+    let rcr: RequestChallengeResponse = serde_json::from_value(j).unwrap();
+    let cred = eve.do_authentication(origin, rcr).unwrap();
+    let r = http
+        .post(b.url("/_dd/login/finish"))
+        .header("x-dd-ceremony", &ceremony)
+        .json(&cred)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    let cookie_b = r
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    assert_eq!(get_with_cookie(&b, "/verify", &cookie_b).await.0, 200);
+    let (_, body) = get_with_cookie(&b, "/_dd/home", &cookie_b).await;
+    assert!(body.contains("Your services"), "{body}");
+
+    // dd member add, by name, finds the same id
+    let repo = scratch("repo");
+    std::fs::create_dir_all(repo.join("fleet")).unwrap();
+    let repo = repo.to_str().unwrap().to_string();
+    let dev = Device::new();
+    dev.dd_ok(&args(
+        &["member", "add", "eve", "--repo", &repo],
+        &dirs([&a]),
+    ));
+    let file = std::fs::read_to_string(format!("{repo}/fleet/members.json")).unwrap();
+    assert!(file.contains(&id), "{file}");
+}
+
 fn enrol_token(dev: &Device, b: &Box_) -> String {
     use std::io::BufRead as _;
     let mut c = Command::new(env!("CARGO_BIN_EXE_dd"))
