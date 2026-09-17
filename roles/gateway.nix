@@ -17,6 +17,18 @@
     DUCKDNS_TOKEN=${config.sops.placeholder.duckdns-token}
   '';
 
+  # the bare domain: no certificate covers it (duckdns allows one TXT record,
+  # the wildcard has it), so plain http answers with where the front door is
+  services.nginx.virtualHosts.${config.dd.domain} = {
+    listen = [
+      {
+        addr = "0.0.0.0";
+        port = 80;
+      }
+    ];
+    locations."/".return = "301 https://home.${config.dd.domain}$request_uri";
+  };
+
   # garage's public face: ente's browser uploads and any other s3 client
   # reach the cluster through the gateway's name
   services.nginx.virtualHosts."s3.${config.dd.domain}" = {

@@ -39,6 +39,31 @@ in
     default = [ ];
     description = "Directory urls of the other boxes, e.g. https://files.example/_dd/directory.";
   };
+  # the front door: one tile per service this box offers, declared by the
+  # roles that run them, shown at home.<domain> to whoever is signed in
+  options.dd.home.services = lib.mkOption {
+    type = lib.types.listOf (
+      lib.types.submodule {
+        options = {
+          name = lib.mkOption { type = lib.types.str; };
+          url = lib.mkOption { type = lib.types.str; };
+          description = lib.mkOption { type = lib.types.str; };
+          icon = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "photos, videos, files, chat, code or metrics; anything else draws a plain mark";
+          };
+          color = lib.mkOption { type = lib.types.str; };
+          rank = lib.mkOption {
+            type = lib.types.int;
+            default = 50;
+            description = "tiles are shown in rank order";
+          };
+        };
+      }
+    );
+    default = [ ];
+  };
 
   config = {
     users.users.${user} = {
@@ -79,6 +104,11 @@ in
         VERIFY_OIDC_ISSUER = "https://jellyfin.${base}/_dd/oidc";
         VERIFY_OIDC_CLIENT_ID = "jellyfin";
         VERIFY_OIDC_CLIENT_SECRET_FILE = config.sops.secrets.jellyfin-oauth-secret.path;
+        VERIFY_HOME = builtins.toJSON (
+          map (t: { inherit (t) name url description icon color; }) (
+            lib.sort (a: b: a.rank < b.rank) config.dd.home.services
+          )
+        );
         VERIFY_OIDC_REDIRECT = "https://jellyfin.${base}/sso/OID/r/dd";
       };
       serviceConfig = {
@@ -116,7 +146,8 @@ in
     # 401 from auth_request lands a browser on the login page and back where
     # it was.
     services.nginx.virtualHosts = lib.mkIf full (
-      builtins.listToAttrs (
+      lib.mkMerge [
+        (builtins.listToAttrs (
         map
           (h: {
             name = "${h}.${base}";
@@ -159,8 +190,23 @@ in
             "grafana"
             "jellyfin"
             "git"
+            "home"
           ]
-      )
+        ))
+        # the front door itself: home.<domain> is the verifier's page and
+        # nothing else. The bare domain cannot carry it (the certificate is
+        # the wildcard alone), so the gateway sends it here.
+        {
+          "home.${base}" = {
+            useACMEHost = base;
+            forceSSL = true;
+            locations."= /" = {
+              proxyPass = "http://127.0.0.1:${toString port}/_dd/home";
+              extraConfig = "proxy_set_header X-Original-URI $request_uri;";
+            };
+          };
+        }
+      ]
     );
   };
 }

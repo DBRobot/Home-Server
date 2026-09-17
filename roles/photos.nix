@@ -13,6 +13,17 @@
     ente-smtp-password.owner = "ente";
   };
 
+  dd.home.services = [
+    {
+      name = "Photos";
+      url = "https://photos.${config.dd.domain}/";
+      description = "Your photos and videos, backed up from your phone.";
+      icon = "photos";
+      color = "#d9822b";
+      rank = 10;
+    }
+  ];
+
   # ente's bucket and key. The key is IMPORTED from sops rather than minted
   # here, so ente is configured with the same credentials at deploy time.
   sops.templates."garage-ente-key.env".content = ''

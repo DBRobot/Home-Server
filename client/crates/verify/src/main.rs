@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
             }),
             _ => None,
         },
+        home: serde_json::from_str(&env_or("VERIFY_HOME", "[]")).context("VERIFY_HOME")?,
     };
     let (_, task) = verify::start(cfg).await?;
     task.await?

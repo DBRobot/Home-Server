@@ -45,6 +45,7 @@ struct App {
     /// terminal that printed the link can pick it up. Never stored.
     pending: Mutex<HashMap<String, (Instant, identity::Passkey)>>,
     oidc: Option<oidc::Issuer>,
+    home: Vec<pages::Service>,
 }
 
 enum Ceremony {
@@ -70,6 +71,8 @@ pub struct Config {
     /// browser login scoped to that domain.
     pub domain: Option<String>,
     pub oidc: Option<OidcConfig>,
+    /// the tiles on the home page: what this box offers a signed-in person
+    pub home: Vec<pages::Service>,
 }
 
 pub struct OidcConfig {
@@ -394,6 +397,16 @@ async fn login_finish(
     r
 }
 
+/// The signed-in front door. A browser without a session goes to the
+/// login page and comes back here.
+async fn home_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) => Html(pages::home(&user, &app.home)).into_response(),
+        None => Redirect::to("/_dd/login?rd=/").into_response(),
+    }
+}
+
 async fn logout(State(app): State<Arc<App>>) -> Response {
     let mut r = Redirect::to("/").into_response();
     r.headers_mut().insert(
@@ -584,6 +597,7 @@ pub async fn start(
         ceremonies: Mutex::new(HashMap::new()),
         pending: Mutex::new(HashMap::new()),
         oidc,
+        home: cfg.home,
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -593,6 +607,7 @@ pub async fn start(
         .route("/_dd/login/start", post(login_start))
         .route("/_dd/login/finish", post(login_finish))
         .route("/_dd/logout", get(logout))
+        .route("/_dd/home", get(home_page))
         .route("/_dd/enrol", get(|| async { Html(pages::ENROL) }))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
