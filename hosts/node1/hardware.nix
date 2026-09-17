@@ -2,12 +2,13 @@
 {
   # What is true of this machine and no other. Everything it runs is a role
   # in fleet/boxes.json.
-  imports = [ ./hardware-configuration.nix ];
-
-  boot.zfs.extraPools = [
-    "tank"
-    "vault"
+  imports = [
+    ./hardware-configuration.nix
+    ./disko.nix
   ];
+
+  # tank is the root pool and imports itself; vault is the usb disk
+  boot.zfs.extraPools = [ "vault" ];
 
   # Which pool holds what. vault is the 4T usb disk; tank the nvme root.
   dd.zfs.datasets = {
@@ -89,6 +90,8 @@
   '';
 
   networking.hostId = "0195f284";
+  # the usb ethernet adapter must never autosuspend - it is the only way in
+  boot.kernelParams = [ "usbcore.autosuspend=-1" ];
   networking.networkmanager.ensureProfiles.profiles.direct-link = {
     connection = {
       id = "direct-link";
