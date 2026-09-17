@@ -60,9 +60,26 @@
   };
   dd.thanos.objstoreFile = config.sops.templates."thanos-objstore.yaml".path;
 
+  # this box's read key to the nix cache bucket: the agent fetches its
+  # release closures from there. The one key that writes lives on the
+  # laptop that publishes (secrets/fleet.yaml), imported into garage once
+  # by hand as "cache-writer".
+  sops.secrets.cache-key-id = { };
+  sops.secrets.cache-key-secret = { };
+  sops.templates."garage-cache-key.env".content = ''
+    GARAGE_CACHE_KEY_ID=${config.sops.placeholder.cache-key-id}
+    GARAGE_CACHE_KEY_SECRET=${config.sops.placeholder.cache-key-secret}
+  '';
+  sops.templates."aws-cache.env".content = ''
+    AWS_ACCESS_KEY_ID=${config.sops.placeholder.cache-key-id}
+    AWS_SECRET_ACCESS_KEY=${config.sops.placeholder.cache-key-secret}
+  '';
+  dd.agent.cacheEnvFile = config.sops.templates."aws-cache.env".path;
+
   dd.garage.setupEnvFiles = [
     config.sops.templates."garage-backup-key.env".path
     config.sops.templates."garage-metrics-key.env".path
+    config.sops.templates."garage-cache-key.env".path
   ];
   dd.garage.setup = ''
     garage bucket create backups-${config.networking.hostName} 2>/dev/null || true
@@ -74,5 +91,10 @@
     garage bucket create metrics 2>/dev/null || true
     garage key import "$GARAGE_METRICS_KEY_ID" "$GARAGE_METRICS_KEY_SECRET" --yes -n metrics-${config.networking.hostName} 2>/dev/null || true
     garage bucket allow --read --write metrics --key "$GARAGE_METRICS_KEY_ID" 2>/dev/null || true
+
+    # the nix cache: this box reads; only the laptop's cache-writer writes
+    garage bucket create nix-cache 2>/dev/null || true
+    garage key import "$GARAGE_CACHE_KEY_ID" "$GARAGE_CACHE_KEY_SECRET" --yes -n cache-${config.networking.hostName} 2>/dev/null || true
+    garage bucket allow --read nix-cache --key "$GARAGE_CACHE_KEY_ID" 2>/dev/null || true
   '';
 }
