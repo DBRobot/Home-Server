@@ -9,12 +9,10 @@ that machine (disks, network, lid).
     core      every box: identity, directory replica, metrics, tailnet, ssh, admin
     gateway   nginx, certificates, the browser login: a box with a public name
     storage   a node of the garage cluster; the box's own backup key
-    cache     harmonia, the nix binary cache
     photos    ente
     media     jellyfin, the media tier, uploads, per-user directories
     llm       llama-cpp and its gateway
-    forge     forgejo and the github mirror
-    runner    a CI runner for the forge; any box, jobs land where free
+    forge     forgejo, its runner, the github mirror
     observe   grafana, alerting, mail, database dumps
 
 Every box backs itself up (modules/backup.nix): restic, encrypted on the

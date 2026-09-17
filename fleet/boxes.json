@@ -9,7 +9,6 @@
       "core",
       "gateway",
       "storage",
-      "cache",
       "photos",
       "media",
       "llm",

@@ -171,16 +171,35 @@ fn publish(
     }
 
     eprintln!("== copy the closures to the cache");
-    let (key_id, key_secret) = cache_writer(&root)?;
-    let mut args = vec!["copy", "--to", cache];
+    let (key_id, key_secret, signing_key) = cache_writer(&root)?;
+    // the signing key in a file only for the length of the copy
+    let key_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+    let key_file = PathBuf::from(key_dir).join(format!("dd-cache-key-{}", std::process::id()));
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&key_file)?;
+        f.write_all(signing_key.as_bytes())?;
+    }
+    let to = format!("{cache}&secret-key={}", key_file.display());
+    let mut args = vec!["copy", "--to", to.as_str()];
     args.extend(signed.payload.boxes.values().map(|b| b.path.as_str()));
     let status = Command::new("nix")
         .args(&args)
         .env("AWS_ACCESS_KEY_ID", key_id)
         .env("AWS_SECRET_ACCESS_KEY", key_secret)
-        .status()
-        .context("running nix copy")?;
-    ensure!(status.success(), "copying to the cache");
+        .status();
+    let _ = std::fs::remove_file(&key_file);
+    ensure!(
+        status.context("running nix copy")?.success(),
+        "copying to the cache"
+    );
 
     eprintln!("== publish release {counter}");
     let wt = std::env::temp_dir().join(format!("dd-release-{}", std::process::id()));
@@ -291,7 +310,7 @@ fn status(repo: &str, url: &str) -> Result<()> {
 
 /// The key that writes the cache bucket: in the private half of the fleet
 /// file, readable by this machine's sops key and nobody else's.
-fn cache_writer(root: &Path) -> Result<(String, String)> {
+fn cache_writer(root: &Path) -> Result<(String, String, String)> {
     let out = Command::new(std::env::current_exe()?)
         .args(["secret", "run", "--", "-d", "--output-type", "json"])
         .arg(root.join("secrets/fleet.yaml"))
@@ -304,7 +323,10 @@ fn cache_writer(root: &Path) -> Result<(String, String)> {
     let secret = v["cache"]["keySecret"]
         .as_str()
         .context("fleet.yaml: cache.keySecret")?;
-    Ok((id.to_owned(), secret.to_owned()))
+    let signing = v["cache"]["signingKey"]
+        .as_str()
+        .context("fleet.yaml: cache.signingKey")?;
+    Ok((id.to_owned(), secret.to_owned(), signing.to_owned()))
 }
 
 fn print(signed: &release::Signed) {
