@@ -17,7 +17,9 @@ use clap::Subcommand;
 /// keyring account holding the release key, base64
 const ACCOUNT: &str = "release-key";
 pub const DEFAULT_URL: &str = "https://git.distributed-datacenter.duckdns.org/david/Home-Server/raw/branch/releases/current.json";
-const DEFAULT_CACHE_HOST: &str = "admin@10.10.10.2";
+/// the nix-cache bucket, through node1's garage over the tailnet
+const DEFAULT_CACHE: &str =
+    "s3://nix-cache?endpoint=100.95.31.105:3900&scheme=http&region=us-east-1";
 
 #[derive(Subcommand)]
 pub enum ReleaseCmd {
@@ -30,9 +32,9 @@ pub enum ReleaseCmd {
         /// a local branch that matches the forge's
         #[arg(long, default_value = "main")]
         r#ref: String,
-        /// where the closures go; harmonia serves this box's store
-        #[arg(long, default_value = DEFAULT_CACHE_HOST)]
-        cache_host: String,
+        /// where the closures go: the bucket every box fetches from
+        #[arg(long, default_value = DEFAULT_CACHE)]
+        cache: String,
         /// where boxes read the release from
         #[arg(long, default_value = DEFAULT_URL)]
         url: String,
@@ -94,10 +96,10 @@ pub fn run(cmd: ReleaseCmd, repo: &str, keys: &auth::Store) -> Result<()> {
         ReleaseCmd::Status { url } => status(repo, &url)?,
         ReleaseCmd::Publish {
             r#ref,
-            cache_host,
+            cache,
             url,
             dry_run,
-        } => publish(repo, &r#ref, &cache_host, &url, dry_run, keys)?,
+        } => publish(repo, &r#ref, &cache, &url, dry_run, keys)?,
     }
     Ok(())
 }
@@ -105,7 +107,7 @@ pub fn run(cmd: ReleaseCmd, repo: &str, keys: &auth::Store) -> Result<()> {
 fn publish(
     repo: &str,
     r#ref: &str,
-    cache_host: &str,
+    cache: &str,
     url: &str,
     dry_run: bool,
     keys: &auth::Store,
@@ -168,16 +170,17 @@ fn publish(
         return Ok(());
     }
 
-    eprintln!("== copy the closures to {cache_host}");
-    copy_closures(
-        cache_host,
-        &signed
-            .payload
-            .boxes
-            .values()
-            .map(|b| b.path.as_str())
-            .collect::<Vec<_>>(),
-    )?;
+    eprintln!("== copy the closures to the cache");
+    let (key_id, key_secret) = cache_writer(&root)?;
+    let mut args = vec!["copy", "--to", cache];
+    args.extend(signed.payload.boxes.values().map(|b| b.path.as_str()));
+    let status = Command::new("nix")
+        .args(&args)
+        .env("AWS_ACCESS_KEY_ID", key_id)
+        .env("AWS_SECRET_ACCESS_KEY", key_secret)
+        .status()
+        .context("running nix copy")?;
+    ensure!(status.success(), "copying to the cache");
 
     eprintln!("== publish release {counter}");
     let wt = std::env::temp_dir().join(format!("dd-release-{}", std::process::id()));
@@ -286,55 +289,18 @@ fn status(repo: &str, url: &str) -> Result<()> {
     Ok(())
 }
 
-/// What the box lacks, exported here and imported there as root. `nix copy`
-/// over ssh would need the paths signed by a key the box's nix trusts;
-/// the release file carries the nar hashes, which is what the agents
-/// check, so this is bin/deploy's way.
-fn copy_closures(host: &str, paths: &[&str]) -> Result<()> {
-    use std::io::Write as _;
-    use std::process::Stdio;
-    let mut args = vec!["-qR"];
-    args.extend(paths);
-    let all = sh("nix-store", &args)?;
-    let mut probe = Command::new("ssh")
-        .arg(host)
-        .arg("xargs -n1 sh -c 'test -e \"$0\" || echo \"$0\"'")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .context("ssh to the cache box")?;
-    probe.stdin.take().unwrap().write_all(all.as_bytes())?;
-    let out = probe.wait_with_output()?;
-    ensure!(out.status.success(), "asking {host} what it lacks");
-    let missing: Vec<&str> = std::str::from_utf8(&out.stdout)?
-        .lines()
-        .filter(|l| !l.is_empty())
-        .collect();
-    if missing.is_empty() {
-        eprintln!("   nothing to copy");
-        return Ok(());
-    }
-    eprintln!("   {} paths", missing.len());
-    let mut export = Command::new("nix-store")
-        .arg("--export")
-        .args(&missing)
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let mut zstd = Command::new("zstd")
-        .args(["-T0", "-q"])
-        .stdin(export.stdout.take().unwrap())
-        .stdout(Stdio::piped())
-        .spawn()
-        .context("zstd")?;
-    let status = Command::new("ssh")
-        .arg(host)
-        .arg("zstd -d | sudo nix-store --import >/dev/null")
-        .stdin(zstd.stdout.take().unwrap())
-        .status()?;
-    ensure!(export.wait()?.success(), "nix-store --export");
-    ensure!(zstd.wait()?.success(), "zstd");
-    ensure!(status.success(), "importing on {host}");
-    Ok(())
+/// The key that writes the cache bucket: in the private half of the fleet
+/// file, readable by this machine's sops key and nobody else's.
+fn cache_writer(root: &Path) -> Result<(String, String)> {
+    let out = Command::new(std::env::current_exe()?)
+        .args(["secret", "run", "--", "-d", "--output-type", "json"])
+        .arg(root.join("secrets/fleet.yaml"))
+        .output()?;
+    ensure!(out.status.success(), "decrypting secrets/fleet.yaml");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    let id = v["cache"]["keyId"].as_str().context("fleet.yaml: cache.keyId")?;
+    let secret = v["cache"]["keySecret"].as_str().context("fleet.yaml: cache.keySecret")?;
+    Ok((id.to_owned(), secret.to_owned()))
 }
 
 fn print(signed: &release::Signed) {

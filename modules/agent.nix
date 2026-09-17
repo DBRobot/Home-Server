@@ -37,6 +37,11 @@ in
       default = null;
       description = "Binary cache the closures come from; null means they are already in the store.";
     };
+    cacheEnvFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for an s3 cache.";
+    };
     interval = lib.mkOption {
       type = lib.types.str;
       default = "5m";
@@ -68,13 +73,15 @@ in
         DD_AGENT_KEY_FILE = cfg.publicKeyFile;
         DD_AGENT_PROBE_SECS = toString cfg.probeSeconds;
         DD_AGENT_VERIFY_PORT = "4181";
-        NIX_REMOTE = "daemon";
       }
       // lib.optionalAttrs (cfg.cache != null) { DD_AGENT_CACHE = cfg.cache; };
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${agent}/bin/dd-agent";
         StateDirectory = "dd-agent";
+        # nix runs as root here and talks to the store itself, so the
+        # credentials for the s3 cache are the ones in this environment
+        EnvironmentFile = lib.optional (cfg.cacheEnvFile != null) cfg.cacheEnvFile;
       };
     };
     systemd.timers.dd-agent = {

@@ -181,13 +181,19 @@
                 );
               };
             };
-          # closures come from the cache box's store over the tailnet
+          # closures come from the nix-cache bucket in the garage cluster:
+          # through the box's own garage, or a storage box's over the tailnet
           cacheOf =
+            name: box:
             let
-              c = lib.filterAttrs (_: b: builtins.elem "cache" b.roles) boxes;
+              host =
+                if builtins.elem "storage" box.roles then
+                  "127.0.0.1"
+                else
+                  (builtins.head (builtins.attrValues storage)).tailnet;
             in
-            lib.optionalAttrs (c != { }) {
-              dd.agent.cache = "http://${(builtins.head (builtins.attrValues c)).tailnet}:5000";
+            {
+              dd.agent.cache = "s3://nix-cache?endpoint=${host}:3900&scheme=http&region=us-east-1";
             };
           # a box without garage backs up to a storage box over the tailnet
           backupEndpoint =
@@ -212,7 +218,7 @@
               ++ lib.optional (builtins.elem "storage" box.roles) (garageOf name box)
               ++ [
                 (backupEndpoint name box)
-                cacheOf
+                (cacheOf name box)
               ]
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
               ++ lib.optional (builtins.pathExists ./hosts/${name}/disko.nix) disko.nixosModules.disko
