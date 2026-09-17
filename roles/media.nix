@@ -12,6 +12,25 @@
   ];
   users.users.admin.extraGroups = [ "media" ]; # copy files into /srv/media without sudo
 
+  dd.home.services = [
+    {
+      name = "Videos";
+      url = "https://jellyfin.${config.dd.domain}/";
+      description = "Movies and series, on any screen.";
+      icon = "videos";
+      color = "#b4457a";
+      rank = 20;
+    }
+    {
+      name = "Files";
+      url = "https://files.${config.dd.domain}/";
+      description = "Your folder, from the browser or a file manager.";
+      icon = "files";
+      color = "#2f6fd6";
+      rank = 30;
+    }
+  ];
+
   dd.backup.paths = [
     "/srv/users" # people's uploads
     "/srv/images" # archives of old computers, already ciphertext

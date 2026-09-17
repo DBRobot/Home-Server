@@ -34,6 +34,7 @@ impl Box_ {
     async fn start(full: bool, peers: Vec<String>, sync_secs: u64) -> Self {
         let dir = scratch("box").join("keys");
         let (addr, _task) = verify::start(verify::Config {
+            home: vec![],
             bind: "127.0.0.1:0".parse().unwrap(),
             dir: dir.clone(),
             peers,
@@ -659,6 +660,7 @@ async fn start_at(
     sync_secs: u64,
 ) -> Box_ {
     let (addr, _task) = verify::start(verify::Config {
+        home: vec![],
         bind: addr,
         dir: dir.clone(),
         peers,

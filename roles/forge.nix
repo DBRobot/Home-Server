@@ -1,4 +1,4 @@
-{ ... }:
+{ config, ... }:
 {
   # The forge and the mirror that keeps GitHub's copy current. Its runner
   # is the runner role: any box can run one, the forge runs on one.
@@ -6,6 +6,16 @@
     ./_sops.nix
     ../modules/forgejo.nix
     ../modules/forgejo-mirror.nix
+  ];
+  dd.home.services = [
+    {
+      name = "Code";
+      url = "https://git.${config.dd.domain}/";
+      description = "Repositories and issues.";
+      icon = "code";
+      color = "#4a5a8a";
+      rank = 50;
+    }
   ];
   dd.forgejo.admin = "david";
   dd.backup.paths = [ "/vault/forgejo" ]; # repositories, lfs, custom config; its db is in the postgres dumps

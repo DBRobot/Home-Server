@@ -42,6 +42,7 @@ fn run(home: &Path, keyring: &Path, dir: &Path, program: &str, args: &[&str]) ->
 #[tokio::test(flavor = "multi_thread")]
 async fn commits_are_signed_by_the_device_and_verified_through_the_directory() {
     let (addr, _task) = verify::start(verify::Config {
+        home: vec![],
         bind: "127.0.0.1:0".parse().unwrap(),
         dir: scratch("box").join("keys"),
         peers: vec![],
