@@ -29,6 +29,9 @@ in
       # first start and keeps its own credential in its state dir after
       tokenFile = config.sops.templates."forgejo-runner.env".path;
       labels = [ "nix:host" ];
+      # two jobs at once: a vm test is a few vms of 1-2G each, and the
+      # smallest box has 14G
+      settings.runner.capacity = 2;
       hostPackages = with pkgs; [
         bash
         coreutils

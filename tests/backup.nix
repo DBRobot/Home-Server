@@ -52,6 +52,7 @@ in
   name = "backup";
   node.specialArgs = { inherit self; };
   defaults.virtualisation.memorySize = 1536;
+  defaults.virtualisation.cores = 2; # services start in parallel instead of queueing on one thread
   defaults.virtualisation.diskSize = 4096;
   nodes = {
     a = storageBox "a";

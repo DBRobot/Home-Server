@@ -1,6 +1,7 @@
 # Everything nix: is the flake well-formed, and does every box still build.
-# Called from entry_point.yml; not triggered on its own. Builds happen in
-# node1's own store, so a green build_host (node1) is a deployable closure.
+# Called from entry_point.yml; not triggered on its own. Builds land in the
+# runner box's own store and in the nix-cache bucket, so a green build_host
+# is a deployable closure any box can fetch.
 name: nix_checks
 
 on:
@@ -22,12 +23,27 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
       # evaluate everything, build nothing: the vm tests are built by their
-      # own job, only when what a box runs changed
+      # own jobs, only when what a box runs changed
       - name: flake check
         run: nix flake check --no-build --show-trace
+      # the checks that are plain evaluation, no vm: seconds
+      - name: placement and box list
+        run: nix build --no-link .#checks.x86_64-linux.placement .#checks.x86_64-linux.boxes
+
+  # The programs every box and every vm test carry. Built once, first, and
+  # uploaded to the bucket; the jobs below then download them instead of
+  # each compiling the same rust workspace again on whichever box it lands.
+  build_client:
+    if: ${{ inputs.run }}
+    runs-on: nix
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - name: build dd, verify, agent
+        run: nix build --no-link .#dd .#verify .#agent
 
   build_host:
     if: ${{ inputs.run }}
+    needs: build_client
     runs-on: nix
     strategy:
       fail-fast: false
@@ -38,10 +54,16 @@ jobs:
       - name: build ${{ matrix.host }}
         run: nix build --print-out-paths .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel
 
+  # one job per test, so they spread over every runner box and run at once
   vm_tests:
     if: ${{ inputs.run && inputs.vm }}
+    needs: build_client
     runs-on: nix
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [directory, metrics, backup, release, thanos]
     steps:
       - uses: https://github.com/actions/checkout@v4
-      - name: boxes as vms
-        run: nix build --no-link .#checks.x86_64-linux.placement .#checks.x86_64-linux.boxes .#checks.x86_64-linux.metrics .#checks.x86_64-linux.directory
+      - name: ${{ matrix.test }}
+        run: nix build --no-link .#checks.x86_64-linux.${{ matrix.test }}

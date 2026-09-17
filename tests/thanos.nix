@@ -55,6 +55,7 @@ in
   name = "thanos";
   node.specialArgs = { inherit self; };
   defaults.virtualisation.memorySize = 2048;
+  defaults.virtualisation.cores = 2; # services start in parallel instead of queueing on one thread
   defaults.virtualisation.diskSize = 4096;
   nodes = {
     a = {
