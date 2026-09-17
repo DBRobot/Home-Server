@@ -148,6 +148,13 @@ impl App {
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let mut authorizer = biscuit_auth::builder::AuthorizerBuilder::new()
+            // the library allows the datalog run 1ms by default, wall clock;
+            // on a loaded box that refused good tokens. The policy here is a
+            // few facts, so a generous cap still ends a runaway token fast
+            .set_limits(biscuit_auth::AuthorizerLimits {
+                max_time: Duration::from_millis(200),
+                ..Default::default()
+            })
             .fact(format!("time({now})").as_str())
             .map_err(|e| anyhow!("{e}"))?
             .fact(format!("operation({operation:?})").as_str())
