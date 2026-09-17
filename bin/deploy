@@ -7,8 +7,8 @@
 # 1. build the ref here, from git, never from the working tree
 # 2. copy what the box lacks over the wire (no internet needed on the box)
 # 3. arm a rollback that fires in 15 minutes unless disarmed
-# 4. switch on the box - node1 by evaluating the same ref from the forge,
-#    node2 by setting the profile to the copied closure
+# 4. switch on the box: set the system profile to the copied closure and
+#    run its switch, detached from the ssh session
 # 5. refuse to call it done unless the box now runs exactly what was built
 #
 # Every mis-deploy so far was one of these steps done by hand and skipped.
@@ -22,7 +22,6 @@ case "$host" in
   *) echo "unknown host $host" >&2; exit 1 ;;
 esac
 repo=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
-forge=https://git.distributed-datacenter.duckdns.org/david/Home-Server.git
 
 if ! git -C "$repo" rev-parse --verify -q "refs/heads/$ref" >/dev/null; then
   echo "no local branch $ref" >&2; exit 1
@@ -49,14 +48,11 @@ echo "== arm rollback (15 min)"
 ssh "$addr" 'sudo systemctl stop deploy-rollback-guard.timer deploy-rollback-guard.service 2>/dev/null; sudo systemd-run --quiet --unit=deploy-rollback-guard --on-active=15m --setenv=PATH=/run/current-system/sw/bin:/run/wrappers/bin nixos-rebuild --rollback switch'
 
 echo "== switch"
-case "$host" in
-  node1)
-    ssh "$addr" "sudo systemd-run --quiet --unit=deploy-$$ --wait --pipe --setenv=PATH=/run/current-system/sw/bin:/run/wrappers/bin nixos-rebuild switch --flake 'git+$forge?ref=$ref#node1' --refresh 2>&1 | grep -iE 'error|fail' | head -5 || true"
-    ;;
-  node2)
-    ssh "$addr" "sudo nix-env -p /nix/var/nix/profiles/system --set $out && sudo $out/bin/switch-to-configuration switch 2>&1 | grep -iE 'error|fail' | head -5 || true"
-    ;;
-esac
+# the closure is here already; set the profile and switch, detached from
+# this ssh session (the switch may drop it, and a switch tied to a dead
+# pipe died half-way and left node1 with its services stopped). Its
+# journal says what went wrong, if anything.
+ssh "$addr" "sudo nix-env -p /nix/var/nix/profiles/system --set $out && sudo systemd-run --quiet --unit=deploy-$$ --wait $out/bin/switch-to-configuration switch; sudo journalctl -u deploy-$$ --no-pager -o cat | grep -iE 'error|fail' | head -5; sudo systemctl reset-failed deploy-$$.service 2>/dev/null" || true
 
 now=$(ssh "$addr" readlink /run/current-system)
 if [ "$now" != "$out" ]; then
