@@ -694,6 +694,47 @@ async fn main() -> Result<()> {
                         },
                     );
                     println!("  roles: {}", roles.join(" "));
+                    // what the box itself says, from its own metrics over the tailnet
+                    if let Some(tailnet) = b["tailnet"].as_str() {
+                        let out = std::process::Command::new("curl")
+                            .args([
+                                "-sf",
+                                "-m",
+                                "5",
+                                "--get",
+                                "--data-urlencode",
+                                "query=dd_box_location",
+                            ])
+                            .arg(format!("http://{tailnet}:9090/api/v1/query"))
+                            .output();
+                        let seen = out
+                            .ok()
+                            .and_then(|o| {
+                                serde_json::from_slice::<serde_json::Value>(&o.stdout).ok()
+                            })
+                            .and_then(|v| v["data"]["result"].as_array()?.first().cloned());
+                        match seen {
+                            Some(r) => {
+                                let m = &r["metric"];
+                                let (site, region) = (
+                                    m["site"].as_str().unwrap_or("?"),
+                                    m["region"].as_str().unwrap_or("?"),
+                                );
+                                let agree = site == b["siteId"].as_str().unwrap_or("")
+                                    && region == b["regionId"].as_str().unwrap_or("");
+                                println!(
+                                    "  says: {site} {region} ({}){}",
+                                    m["source"].as_str().unwrap_or("?"),
+                                    if agree {
+                                        ""
+                                    } else {
+                                        "  <- differs from the list"
+                                    }
+                                );
+                            }
+                            None => println!("  says: unreachable"),
+                        }
+                    }
                     if let Some(sec) = &secret {
                         let sb = &sec["boxes"][name];
                         let site = sb["site"].as_str().unwrap_or("-");
