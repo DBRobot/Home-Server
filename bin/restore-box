@@ -49,6 +49,7 @@ done
 echo "== postgres from the dumps"
 if [ -d /vault/backups/postgres ]; then
   systemctl start postgresql
+  systemctl stop ente.service forgejo.service 2>/dev/null || true
   for db in ente forgejo; do
     dump=/vault/backups/postgres/$db.sql.zstd
     [ -s "$dump" ] || { echo "   no dump for $db" >&2; continue; }
@@ -56,9 +57,14 @@ if [ -d /vault/backups/postgres ]; then
     if ! sudo -u postgres psql -tAc "select 1 from pg_database where datname='$db'" | grep -q 1; then
       sudo -u postgres psql -q -c "create database $db owner $db"
     fi
-    rows=$(sudo -u postgres psql -tAd "$db" -c "select count(*) from information_schema.tables where table_schema='public'")
-    if [ "$rows" -gt 0 ]; then echo "   $db already has $rows tables, leaving it"; continue; fi
-    echo "   $db"
+    # the service has usually started once by now and run its migrations:
+    # tables exist, empty. Data is the test, in the table that matters
+    case $db in ente) marker=key_attributes ;; forgejo) marker=repository ;; esac
+    rows=$(sudo -u postgres psql -tAd "$db" -c "select count(*) from $marker" 2>/dev/null || echo 0)
+    if [ "$rows" -gt 0 ]; then echo "   $db has $rows rows in $marker, leaving it"; continue; fi
+    echo "   $db from the dump of $(date -r "$dump" +%H:%M)"
+    sudo -u postgres psql -q -c "drop database $db"
+    sudo -u postgres psql -q -c "create database $db owner $db"
     zstd -dc "$dump" | sudo -u "$db" psql -q -v ON_ERROR_STOP=1 -d "$db" >/dev/null
   done
 fi
