@@ -13,7 +13,8 @@ that machine (disks, network, lid).
     photos    ente
     media     jellyfin, the media tier, uploads, per-user directories
     llm       llama-cpp and its gateway
-    forge     forgejo, its runner, the github mirror
+    forge     forgejo and the github mirror
+    runner    a CI runner for the forge; any box, jobs land where free
     observe   grafana, alerting, mail, database dumps
 
 Every box backs itself up (modules/backup.nix): restic, encrypted on the
