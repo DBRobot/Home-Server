@@ -51,10 +51,13 @@ ssh "$addr" 'sudo systemctl stop deploy-rollback-guard.timer deploy-rollback-gua
 echo "== switch"
 case "$host" in
   node1)
-    ssh "$addr" "sudo systemd-run --quiet --unit=deploy-$$ --wait --pipe --setenv=PATH=/run/current-system/sw/bin:/run/wrappers/bin nixos-rebuild switch --flake 'git+$forge?ref=$ref#node1' --refresh 2>&1 | grep -iE 'error|fail' | head -5 || true"
+    # not --pipe: the switch may drop this ssh session (it restarts what
+    # changed), and a switch whose stdout is a dead pipe dies half-way and
+    # leaves the box with its services stopped. Detached, then its journal.
+    ssh "$addr" "sudo systemd-run --quiet --unit=deploy-$$ --wait --setenv=PATH=/run/current-system/sw/bin:/run/wrappers/bin nixos-rebuild switch --flake 'git+$forge?ref=$ref#node1' --refresh; sudo journalctl -u deploy-$$ --no-pager -o cat | grep -iE 'error|fail' | head -5" || true
     ;;
   node2)
-    ssh "$addr" "sudo nix-env -p /nix/var/nix/profiles/system --set $out && sudo $out/bin/switch-to-configuration switch 2>&1 | grep -iE 'error|fail' | head -5 || true"
+    ssh "$addr" "sudo nix-env -p /nix/var/nix/profiles/system --set $out && sudo systemd-run --quiet --unit=deploy-$$ --wait $out/bin/switch-to-configuration switch; sudo journalctl -u deploy-$$ --no-pager -o cat | grep -iE 'error|fail' | head -5" || true
     ;;
 esac
 
