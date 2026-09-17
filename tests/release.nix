@@ -81,8 +81,14 @@ in
           forge.succeed("mkdir -p /srv/release && install -m 644 /root/current.json /srv/release/current.json")
 
       def agent(expect_ok=True):
-          cmd = "systemctl start dd-agent.service"
-          return box.succeed(cmd) if expect_ok else box.fail(cmd)
+          # a switch can make systemd re-exec, which cuts systemctl's wait
+          # short while the agent is still running: wait for the unit itself
+          box.succeed("systemctl start --no-block dd-agent.service")
+          box.wait_until_succeeds("[ $(systemctl is-active dd-agent.service) != active ] && [ $(systemctl is-active dd-agent.service) != activating ]", timeout=300)
+          if expect_ok:
+              box.succeed("! systemctl is-failed dd-agent.service")
+          else:
+              box.succeed("systemctl is-failed dd-agent.service")
 
       # release 1 names what the box already runs: nothing to do, counter kept
       publish(1, "${base}")
