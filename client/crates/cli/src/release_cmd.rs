@@ -169,10 +169,15 @@ fn publish(
     }
 
     eprintln!("== copy the closures to {cache_host}");
-    let to = format!("ssh://{cache_host}");
-    let mut args = vec!["copy", "--to", to.as_str()];
-    args.extend(signed.payload.boxes.values().map(|b| b.path.as_str()));
-    sh("nix", &args).context("copying to the cache")?;
+    copy_closures(
+        cache_host,
+        &signed
+            .payload
+            .boxes
+            .values()
+            .map(|b| b.path.as_str())
+            .collect::<Vec<_>>(),
+    )?;
 
     eprintln!("== publish release {counter}");
     let wt = std::env::temp_dir().join(format!("dd-release-{}", std::process::id()));
@@ -278,6 +283,57 @@ fn status(repo: &str, url: &str) -> Result<()> {
         println!("{name}  counter {counter}  last run {result}  {verdict}");
         println!("  runs {running}");
     }
+    Ok(())
+}
+
+/// What the box lacks, exported here and imported there as root. `nix copy`
+/// over ssh would need the paths signed by a key the box's nix trusts;
+/// the release file carries the nar hashes, which is what the agents
+/// check, so this is bin/deploy's way.
+fn copy_closures(host: &str, paths: &[&str]) -> Result<()> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut args = vec!["-qR"];
+    args.extend(paths);
+    let all = sh("nix-store", &args)?;
+    let mut probe = Command::new("ssh")
+        .arg(host)
+        .arg("xargs -n1 sh -c 'test -e \"$0\" || echo \"$0\"'")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("ssh to the cache box")?;
+    probe.stdin.take().unwrap().write_all(all.as_bytes())?;
+    let out = probe.wait_with_output()?;
+    ensure!(out.status.success(), "asking {host} what it lacks");
+    let missing: Vec<&str> = std::str::from_utf8(&out.stdout)?
+        .lines()
+        .filter(|l| !l.is_empty())
+        .collect();
+    if missing.is_empty() {
+        eprintln!("   nothing to copy");
+        return Ok(());
+    }
+    eprintln!("   {} paths", missing.len());
+    let mut export = Command::new("nix-store")
+        .arg("--export")
+        .args(&missing)
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let mut zstd = Command::new("zstd")
+        .args(["-T0", "-q"])
+        .stdin(export.stdout.take().unwrap())
+        .stdout(Stdio::piped())
+        .spawn()
+        .context("zstd")?;
+    let status = Command::new("ssh")
+        .arg(host)
+        .arg("zstd -d | sudo nix-store --import >/dev/null")
+        .stdin(zstd.stdout.take().unwrap())
+        .status()?;
+    ensure!(export.wait()?.success(), "nix-store --export");
+    ensure!(zstd.wait()?.success(), "zstd");
+    ensure!(status.success(), "importing on {host}");
     Ok(())
 }
 
