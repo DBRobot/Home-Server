@@ -298,8 +298,12 @@ fn cache_writer(root: &Path) -> Result<(String, String)> {
         .output()?;
     ensure!(out.status.success(), "decrypting secrets/fleet.yaml");
     let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    let id = v["cache"]["keyId"].as_str().context("fleet.yaml: cache.keyId")?;
-    let secret = v["cache"]["keySecret"].as_str().context("fleet.yaml: cache.keySecret")?;
+    let id = v["cache"]["keyId"]
+        .as_str()
+        .context("fleet.yaml: cache.keyId")?;
+    let secret = v["cache"]["keySecret"]
+        .as_str()
+        .context("fleet.yaml: cache.keySecret")?;
     Ok((id.to_owned(), secret.to_owned()))
 }
 
