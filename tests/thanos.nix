@@ -62,9 +62,11 @@ in
       imports = [
         (box "a")
         {
+          # by address, as the fleet does (tailnet ips): the test net has
+          # no dns, and grpc's resolver never settles on a bare hostname
           dd.thanos.sidecars = [
-            "a:10901"
-            "b:10901"
+            "192.168.1.1:10901"
+            "192.168.1.2:10901"
           ];
         }
       ];
@@ -98,10 +100,10 @@ in
     a.wait_for_unit("thanos-compact.service")
     a.wait_for_unit("thanos-query.service")
     a.wait_for_open_port(10903)
-    a.wait_until_succeeds("curl -sf 'http://127.0.0.1:10903/api/v1/query?query=dd_box_cpu_cores' -o /tmp/q && grep -q 'box=\"a\"' /tmp/q && grep -q 'box=\"b\"' /tmp/q")
+    a.wait_until_succeeds("curl -sf 'http://127.0.0.1:10903/api/v1/query?query=dd_box_cpu_cores' -o /tmp/q && grep -q '\"box\":\"a\"' /tmp/q && grep -q '\"box\":\"b\"' /tmp/q")
 
     # b goes away: a still answers, with what it has
     b.shutdown()
-    a.wait_until_succeeds("curl -sf 'http://127.0.0.1:10903/api/v1/query?query=dd_box_cpu_cores' -o /tmp/q && grep -q 'box=\"a\"' /tmp/q")
+    a.wait_until_succeeds("curl -sf 'http://127.0.0.1:10903/api/v1/query?query=dd_box_cpu_cores' -o /tmp/q && grep -q '\"box\":\"a\"' /tmp/q")
   '';
 }
