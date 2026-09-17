@@ -122,6 +122,9 @@ in
     };
 
     systemd.tmpfiles.rules = [
+      # the data dir must exist before the unit's mount namespace is set up;
+      # ExecStartPre above fixes its owner once a dataset is mounted there
+      "d ${cfg.dataDir} 0750 garage garage -"
       "d /var/lib/garage 0750 garage garage -"
       "d ${meta} 0700 garage garage -"
     ];
