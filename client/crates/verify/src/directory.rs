@@ -259,37 +259,50 @@ async fn put_entry(
     if signed.entry.name != name {
         return (StatusCode::BAD_REQUEST, "name in path and entry differ").into_response();
     }
-    let existing = match d.entry(&name) {
-        Ok(e) => e,
-        Err(e) => {
+    let version = signed.entry.version;
+    match d.admit(signed).await {
+        Ok(()) => Json(serde_json::json!({ "accepted": true, "version": version })).into_response(),
+        Err((status, why)) => (status, why).into_response(),
+    }
+}
+
+impl Directory {
+    /// The one way in: the accept rule, then the peers for a new name,
+    /// then the store. Used by the PUT from `dd` and by the browser join.
+    pub(crate) async fn admit(
+        &self,
+        signed: identity::SignedEntry,
+    ) -> std::result::Result<(), (StatusCode, String)> {
+        let name = signed.entry.name.clone();
+        let existing = self.entry(&name).map_err(|e| {
             eprintln!("directory: {e:#}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })?;
+        if let Err(e) = identity::accept(existing.as_ref(), &signed) {
+            eprintln!("directory: refused update for {name}: {e}");
+            return Err((StatusCode::FORBIDDEN, format!("refused: {e}")));
         }
-    };
-    if let Err(e) = identity::accept(existing.as_ref(), &signed) {
-        eprintln!("directory: refused update for {name}: {e}");
-        return (StatusCode::FORBIDDEN, format!("refused: {e}")).into_response();
-    }
-    if existing.is_none()
-        && let Err((status, why)) = d.first_sight_allowed(&signed).await
-    {
-        eprintln!("directory: refused new name {name}: {why}");
-        return (status, why).into_response();
-    }
-    if let Err(e) = d.store(&signed) {
-        eprintln!("directory: {e:#}");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    eprintln!(
-        "directory: {name} version {} ({} device(s), {} passkey(s){})",
-        signed.entry.version,
-        signed.entry.devices.len(),
-        signed.entry.passkeys.len(),
-        if signed.recovery_signature.is_some() {
-            ", recovered"
-        } else {
-            ""
+        if existing.is_none()
+            && let Err((status, why)) = self.first_sight_allowed(&signed).await
+        {
+            eprintln!("directory: refused new name {name}: {why}");
+            return Err((status, why));
         }
-    );
-    Json(serde_json::json!({ "accepted": true, "version": signed.entry.version })).into_response()
+        self.store(&signed).map_err(|e| {
+            eprintln!("directory: {e:#}");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })?;
+        eprintln!(
+            "directory: {name} version {} ({} device(s), {} passkey(s){})",
+            signed.entry.version,
+            signed.entry.devices.len(),
+            signed.entry.passkeys.len(),
+            if signed.recovery_signature.is_some() {
+                ", recovered"
+            } else {
+                ""
+            }
+        );
+        Ok(())
+    }
 }

@@ -10,6 +10,13 @@
 //! on the person's devices. The recovery key lives on paper: it can sign
 //! exactly one thing, an entry that installs a new root - so a lost or stolen
 //! device is survivable without any server or person standing in for you.
+//!
+//! Or one key: an account made in a browser has a passkey for a root
+//! (`webauthn:<credential id>`), and the entry is signed by a webauthn
+//! assertion whose challenge is the entry's hash. No device key, no paper;
+//! the passkey platform's sync is the recovery. Every box checks it the
+//! same way and none can make one: the authenticator signs, the box only
+//! asked.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -35,9 +42,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
-    /// base64 ed25519 public key that signs updates
+    /// base64 ed25519 public key that signs updates; or `webauthn:<id>`,
+    /// a passkey in `passkeys` that signs them with an assertion
     pub root: String,
-    /// base64 ed25519 public key that may install a new root
+    /// base64 ed25519 public key that may install a new root; empty for a
+    /// passkey root, which cannot be replaced
     pub recovery: String,
     pub devices: Vec<Device>,
     /// Browser passkeys, as the box that enrolled them serialised the
@@ -130,6 +139,18 @@ pub fn fingerprint(public_b64: &str) -> String {
         .collect()
 }
 
+/// What the fleet's member list names a person by: a hash of their root,
+/// so the list carries no names and nothing a key can be recovered from,
+/// and a name someone else claims first buys them nothing. Full width, so
+/// grinding a key that matches an entry on the list is not a thing.
+pub fn member_id(root: &str) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(root.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 pub fn canonical(entry: &Entry) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(entry)?)
 }
@@ -166,8 +187,70 @@ fn check(sig_b64: &str, entry: &Entry, key: &VerifyingKey) -> Result<()> {
         .map_err(|_| Error::Signature)
 }
 
+pub const WEBAUTHN_ROOT: &str = "webauthn:";
+
+/// The signature a passkey root makes: the three parts of a webauthn
+/// assertion, base64url as the browser hands them over. Stored base64 of
+/// this json in `SignedEntry::signature`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Assertion {
+    #[serde(rename = "authenticatorData")]
+    pub authenticator_data: String,
+    #[serde(rename = "clientDataJSON")]
+    pub client_data_json: String,
+    pub signature: String,
+}
+
+/// What the browser must sign for `entry`: sha256 of its canonical form,
+/// as the webauthn challenge.
+pub fn challenge(entry: &Entry) -> Result<Vec<u8>> {
+    use sha2::Digest as _;
+    Ok(sha2::Sha256::digest(canonical(entry)?).to_vec())
+}
+
+fn check_assertion(sig_b64: &str, entry: &Entry) -> Result<()> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
+    use sha2::Digest as _;
+    let id = &entry.root[WEBAUTHN_ROOT.len()..];
+    let passkey =
+        entry.passkeys.iter().find(|p| p.id == id).ok_or_else(|| {
+            Error::Key("the root names a passkey the entry does not carry".into())
+        })?;
+    // the credential as webauthn-rs serialises it: Passkey { cred: Credential { cred: COSEKey } }
+    let key: webauthn_rs_core::proto::COSEKey =
+        serde_json::from_value(passkey.cred["cred"]["cred"].clone())
+            .map_err(|e| Error::Key(format!("passkey public key: {e}")))?;
+    let a: Assertion = serde_json::from_slice(&B64.decode(sig_b64).map_err(|_| Error::Signature)?)
+        .map_err(|_| Error::Signature)?;
+    let auth = B64_URL
+        .decode(&a.authenticator_data)
+        .map_err(|_| Error::Signature)?;
+    let client = B64_URL
+        .decode(&a.client_data_json)
+        .map_err(|_| Error::Signature)?;
+    let sig = B64_URL.decode(&a.signature).map_err(|_| Error::Signature)?;
+    // what the authenticator signed: authData || sha256(clientDataJSON)
+    let mut data = auth.clone();
+    data.extend_from_slice(&sha2::Sha256::digest(&client));
+    if !key.verify_signature(&sig, &data).unwrap_or(false) {
+        return Err(Error::Signature);
+    }
+    // and what it was asked to sign: this entry, and nothing else
+    let c: serde_json::Value = serde_json::from_slice(&client).map_err(|_| Error::Signature)?;
+    if c["type"].as_str() != Some("webauthn.get") {
+        return Err(Error::Signature);
+    }
+    if c["challenge"].as_str() != Some(B64_URL.encode(challenge(entry)?).as_str()) {
+        return Err(Error::Signature);
+    }
+    Ok(())
+}
+
 /// Is the entry signed by the root it names? True of every valid entry.
 pub fn verify(signed: &SignedEntry) -> Result<()> {
+    if signed.entry.root.starts_with(WEBAUTHN_ROOT) {
+        return check_assertion(&signed.signature, &signed.entry);
+    }
     check(
         &signed.signature,
         &signed.entry,
@@ -190,7 +273,8 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
     if !valid_name(&new.entry.name) {
         return Err(Error::Rejected("bad name".into()));
     }
-    if new.entry.devices.is_empty() {
+    // a device key or a passkey root: something has to be able to sign
+    if new.entry.devices.is_empty() && !new.entry.root.starts_with(WEBAUTHN_ROOT) {
         return Err(Error::Rejected("an entry needs at least one device".into()));
     }
     for d in &new.entry.devices {
@@ -217,6 +301,9 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
             "only the recovery key may change the root".into(),
         ));
     };
+    if old.entry.recovery.is_empty() {
+        return Err(Error::Rejected("a passkey root has no recovery key".into()));
+    }
     check(rs, &new.entry, &decode_public(&old.entry.recovery)?)
 }
 

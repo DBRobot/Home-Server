@@ -47,6 +47,7 @@ async fn commits_are_signed_by_the_device_and_verified_through_the_directory() {
         dir: scratch("box").join("keys"),
         peers: vec![],
         sync_secs: 300,
+        members: None,
         domain: None,
         oidc: None,
     })

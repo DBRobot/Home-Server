@@ -46,6 +46,9 @@ struct App {
     pending: Mutex<HashMap<String, (Instant, identity::Passkey)>>,
     oidc: Option<oidc::Issuer>,
     home: Vec<pages::Service>,
+    members: Option<Vec<String>>,
+    /// the passkeys' relying party: what a join asks the browser to sign for
+    domain: String,
 }
 
 enum Ceremony {
@@ -53,6 +56,14 @@ enum Ceremony {
         user: String,
         state: PasskeyRegistration,
     },
+    /// a browser making an account: the passkey first
+    Join {
+        user: String,
+        state: PasskeyRegistration,
+    },
+    /// then the entry that names it as root, waiting for that passkey's
+    /// assertion over its hash
+    JoinSign { entry: identity::Entry },
     Login {
         user: String,
         state: PasskeyAuthentication,
@@ -73,6 +84,11 @@ pub struct Config {
     pub oidc: Option<OidcConfig>,
     /// the tiles on the home page: what this box offers a signed-in person
     pub home: Vec<pages::Service>,
+    /// Who may use the services: member ids (identity::member_id of each
+    /// person's root), from the signed release. An entry says who someone
+    /// is; only this says they may come in. None: no gate - the directory
+    /// alone, or a test. A full box always has a list, empty meaning nobody.
+    pub members: Option<Vec<String>>,
 }
 
 pub struct OidcConfig {
@@ -94,6 +110,19 @@ fn valid_user(s: &str) -> bool {
 impl App {
     fn entry(&self, user: &str) -> Result<Option<identity::SignedEntry>> {
         self.directory.entry(user)
+    }
+
+    /// Signed in is not let in: the person's root has to be on the member
+    /// list this box was released with.
+    fn member(&self, user: &str) -> bool {
+        match &self.members {
+            None => true,
+            Some(list) => self
+                .entry(user)
+                .ok()
+                .flatten()
+                .is_some_and(|e| list.contains(&identity::member_id(&e.entry.root))),
+        }
     }
 
     /// The passkeys in the user's signed entry, as webauthn-rs credentials.
@@ -231,6 +260,9 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 /// nginx auth_request lands here for every request to a protected service.
 async fn verify(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     match app.identify(&headers, "access") {
+        // 403, not 401: nginx sends a 401 to the login page, and this person
+        // is logged in. They land on the home page, which says so.
+        Some(user) if !app.member(&user) => StatusCode::FORBIDDEN.into_response(),
         Some(user) => {
             let mut r = StatusCode::OK.into_response();
             let v = HeaderValue::from_str(&user).unwrap();
@@ -254,15 +286,7 @@ async fn enrol_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let existing = app.passkeys(&user);
-    // a stable per-user id for the authenticator: derived from the name, so
-    // the same person enrolling twice is the same user to the passkey
-    let uid = {
-        use sha2::Digest as _;
-        let h = sha2::Sha256::digest(format!("dd-user:{user}").as_bytes());
-        let mut b = [0u8; 16];
-        b.copy_from_slice(&h[..16]);
-        Uuid::from_bytes(b)
-    };
+    let uid = user_uuid(&user);
     let exclude: Vec<CredentialID> = existing.iter().map(|p| p.cred_id().clone()).collect();
     match app
         .webauthn
@@ -342,6 +366,157 @@ async fn enrol_result(State(app): State<Arc<App>>, headers: HeaderMap) -> Respon
     }
 }
 
+/// A stable per-user id for the authenticator: derived from the name, so
+/// the same person enrolling twice is the same user to the passkey.
+fn user_uuid(user: &str) -> Uuid {
+    use sha2::Digest as _;
+    let h = sha2::Sha256::digest(format!("dd-user:{user}").as_bytes());
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&h[..16]);
+    Uuid::from_bytes(b)
+}
+
+/// An account from nothing, in a browser. The passkey the browser makes is
+/// the root; the entry naming it is signed by that passkey's assertion over
+/// the entry's hash. This box assembles the bytes and asks; it holds no key
+/// that could sign them, and every box checks the result the same way.
+async fn join_start(State(app): State<Arc<App>>, Json(q): Json<LoginStart>) -> Response {
+    let user = q.username.trim().to_lowercase();
+    if !valid_user(&user) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "a name is lowercase letters, digits, - _ or . (64 at most)",
+        )
+            .into_response();
+    }
+    match app.entry(&user) {
+        Ok(None) => {}
+        Ok(Some(_)) => return (StatusCode::CONFLICT, "that name is taken").into_response(),
+        Err(e) => {
+            eprintln!("join start: {e:#}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    match app
+        .webauthn
+        .start_passkey_registration(user_uuid(&user), &user, &user, None)
+    {
+        Ok((ccr, state)) => {
+            let id = app.ceremony_put(Ceremony::Join { user, state });
+            with_challenge(ccr, id)
+        }
+        Err(e) => {
+            eprintln!("join start: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn join_finish(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(reg): Json<RegisterPublicKeyCredential>,
+) -> Response {
+    let Some(Ceremony::Join { user, state }) = headers
+        .get("x-dd-ceremony")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|id| app.ceremony_take(id))
+    else {
+        return (StatusCode::BAD_REQUEST, "no ceremony").into_response();
+    };
+    let passkey = match app.webauthn.finish_passkey_registration(&reg, &state) {
+        Ok(p) => p,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, format!("passkey rejected: {e}")).into_response();
+        }
+    };
+    let id = B64_URL.encode(passkey.cred_id().as_slice());
+    let cred = match serde_json::to_value(&passkey) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("join: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let now = identity::now();
+    let entry = identity::Entry {
+        name: user,
+        root: format!("{}{id}", identity::WEBAUTHN_ROOT),
+        recovery: String::new(),
+        devices: vec![],
+        passkeys: vec![identity::Passkey {
+            id: id.clone(),
+            cred,
+            added: now,
+        }],
+        version: 1,
+        updated: now,
+    };
+    let challenge = match identity::challenge(&entry) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("join: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let ceremony = app.ceremony_put(Ceremony::JoinSign { entry });
+    // the get() options, in the shape the browser and webauthn-rs both read
+    Json(serde_json::json!({
+        "ceremony": ceremony,
+        "publicKey": {
+            "challenge": B64_URL.encode(challenge),
+            "timeout": 60000,
+            "rpId": app.domain,
+            "allowCredentials": [{ "type": "public-key", "id": id }],
+            "userVerification": "preferred",
+        }
+    }))
+    .into_response()
+}
+
+async fn join_sign(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(cred): Json<PublicKeyCredential>,
+) -> Response {
+    let Some(Ceremony::JoinSign { entry }) = headers
+        .get("x-dd-ceremony")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|id| app.ceremony_take(id))
+    else {
+        return (StatusCode::BAD_REQUEST, "no ceremony").into_response();
+    };
+    let assertion = identity::Assertion {
+        authenticator_data: B64_URL.encode(&cred.response.authenticator_data),
+        client_data_json: B64_URL.encode(&cred.response.client_data_json),
+        signature: B64_URL.encode(&cred.response.signature),
+    };
+    let signature = match serde_json::to_vec(&assertion) {
+        Ok(v) => B64.encode(v),
+        Err(e) => {
+            eprintln!("join: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let user = entry.name.clone();
+    let signed = identity::SignedEntry {
+        entry,
+        signature,
+        recovery_signature: None,
+    };
+    // the accept rule checks the assertion against the passkey the entry
+    // carries; a wrong or replayed signature is refused there
+    if let Err((status, why)) = app.directory.admit(signed).await {
+        return (status, why).into_response();
+    }
+    let mut r = Json(serde_json::json!({ "user": user })).into_response();
+    r.headers_mut().insert(
+        "set-cookie",
+        HeaderValue::from_str(&app.sessions.issue(&user)).unwrap(),
+    );
+    r
+}
+
 fn pending_key(token: &str) -> String {
     use sha2::Digest as _;
     format!("{:x}", sha2::Sha256::digest(token.as_bytes()))
@@ -409,6 +584,7 @@ async fn login_finish(
 async fn home_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
+        Some(user) if !app.member(&user) => Html(pages::waiting(&user)).into_response(),
         Some(user) => Html(pages::home(&user, &app.home)).into_response(),
         None => Redirect::to("/_dd/login?rd=/").into_response(),
     }
@@ -456,6 +632,9 @@ async fn oidc_authorize(
             .to_string();
         return Redirect::to(&format!("/_dd/login?rd={}", urlencode(&here))).into_response();
     };
+    if !app.member(&user) {
+        return Redirect::to("/_dd/home").into_response();
+    }
     let code = issuer.code(&user, q.nonce);
     let mut to = format!("{}?code={}", q.redirect_uri, urlencode(&code));
     if let Some(st) = q.state {
@@ -605,6 +784,8 @@ pub async fn start(
         pending: Mutex::new(HashMap::new()),
         oidc,
         home: cfg.home,
+        members: cfg.members,
+        domain: domain.clone(),
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -616,6 +797,10 @@ pub async fn start(
         .route("/_dd/logout", get(logout))
         .route("/_dd/home", get(home_page))
         .route("/_dd/enrol", get(|| async { Html(pages::enrol()) }))
+        .route("/_dd/join", get(|| async { Html(pages::join()) }))
+        .route("/_dd/join/start", post(join_start))
+        .route("/_dd/join/finish", post(join_finish))
+        .route("/_dd/join/sign", post(join_sign))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
         .route("/_dd/enrol/result", get(enrol_result))

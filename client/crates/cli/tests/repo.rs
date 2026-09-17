@@ -113,6 +113,7 @@ async fn encrypted_remote_end_to_end() {
         dir,
         peers: vec![],
         sync_secs: 300,
+        members: None,
         domain: None,
         oidc: None,
     })

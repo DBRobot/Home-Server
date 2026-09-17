@@ -49,6 +49,7 @@ in
 
     locations."/".extraConfig = dav root "html" + ''
       error_page 401 = @login;
+      error_page 403 = @waiting;
     '';
     # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
     # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,

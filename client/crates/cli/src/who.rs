@@ -18,7 +18,7 @@ pub fn load_root(keys: &impl KeyStore) -> Result<Option<ed25519_dalek::SigningKe
     }
 }
 
-fn http() -> Result<reqwest::Client> {
+pub fn http() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(20))

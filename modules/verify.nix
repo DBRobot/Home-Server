@@ -65,6 +65,12 @@ in
     default = [ ];
   };
 
+  options.dd.members = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    description = "Member ids (dd member list): whose root may use the services. From fleet/members.json, so it comes with the signed release; a box cannot add to it.";
+    default = [ ];
+  };
+
   config = {
     users.users.${user} = {
       isSystemUser = true;
@@ -98,6 +104,7 @@ in
         # the browser login: passkeys scoped to the whole domain, so one login
         # covers every service on this box and the session cookie rides along
         VERIFY_DOMAIN = base;
+        VERIFY_MEMBERS = builtins.toJSON config.dd.members;
         # the per-box issuer for jellyfin, the one service that speaks nothing
         # but oidc. its key is generated on first start and trusted by exactly
         # this client on exactly this box.
@@ -164,6 +171,10 @@ in
               };
               "@login".extraConfig = ''
                 return 302 /_dd/login?rd=$request_uri;
+              '';
+              # signed in, not a member: the home page says so
+              "@waiting".extraConfig = ''
+                return 302 https://home.${base}/;
               '';
               # the subrequest every protected location makes
               "= /_dd/verify" = {

@@ -13,3 +13,8 @@ serde_json = "1"
 base64 = "0.22"
 zeroize = "1"
 thiserror = "2"
+sha2 = "0.10"
+# a root that is a browser passkey: the entry is signed by a webauthn
+# assertion whose challenge is the entry's hash. The cose key types and
+# their signature check; no ceremony code
+webauthn-rs-core = "0.6.1-dev"

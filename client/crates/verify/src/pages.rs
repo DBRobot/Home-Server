@@ -37,7 +37,7 @@ input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(18,
 button{display:block;width:100%;margin-top:18px;padding:12px;font:inherit;font-weight:600;font-size:15px;color:var(--brand-ink);background:var(--brand);border:0;border-radius:10px;cursor:pointer}
 button:hover{filter:brightness(1.08)}button:focus-visible{outline:3px solid #7fb3c4;outline-offset:3px}
 #msg{min-height:1.5em;margin-top:14px;font-size:14px;color:var(--ink-2)}
-.note{margin:22px 0 0;padding-top:18px;border-top:1px solid var(--line);color:var(--ink-2);font-size:13px}
+.note{margin:22px 0 0;padding-top:18px;border-top:1px solid var(--line);color:var(--ink-2);font-size:13px}.note a{text-decoration:underline}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;background:var(--bg-2);padding:2px 6px;border-radius:5px}
 "##;
 
@@ -65,7 +65,7 @@ pub fn login() -> String {
 <label for="u">Username</label>
 <input id="u" autocomplete="username webauthn" autocapitalize="none" spellcheck="false">
 <button id="go">Use passkey</button><div id="msg"></div>
-<p class="note">First time in a browser? On a device that holds your key, run <code>dd enrol</code> and open the link it prints.</p>
+<p class="note">New here? <a href="/_dd/join">Create an account</a>.<br>Have a device with <code>dd</code> on it? Run <code>dd enrol</code> there and open the link it prints.</p>
 "#);
     out.push_str(LOGIN_JS);
     out.push_str("</div></main></body></html>");
@@ -84,6 +84,46 @@ pub fn enrol() -> String {
     out.push_str("</div></main></body></html>");
     out
 }
+
+/// An account, from nothing, in the browser: a name and a passkey.
+pub fn join() -> String {
+    let mut out = open("Create your account", AUTH_CSS, "");
+    out.push_str(r#"<main><div class="card">
+<h1>Create your account</h1><p class="lead">Pick a name and make a passkey. The passkey is the account: it stays on your device and follows you to your other devices the way passkeys do. No password, and nothing here can sign as you.</p>
+<label for="u">Name</label>
+<input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="lowercase letters, digits, - _ .">
+<button id="go">Create passkey</button><div id="msg"></div>
+<p class="note">Already have one? <a href="/_dd/login">Sign in</a>.</p>
+"#);
+    out.push_str(JOIN_JS);
+    out.push_str("</div></main></body></html>");
+    out
+}
+
+const JOIN_JS: &str = r#"<script>
+const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const u8b64=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function go(){const m=document.getElementById('msg');m.textContent='…';try{
+const u=document.getElementById('u').value.trim().toLowerCase();
+const r=await fetch('/_dd/join/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:u})});if(!r.ok)throw new Error(await r.text());
+const {publicKey,ceremony}=await r.json();
+publicKey.challenge=b64u(publicKey.challenge);publicKey.user.id=b64u(publicKey.user.id);
+if(publicKey.excludeCredentials)publicKey.excludeCredentials=publicKey.excludeCredentials.map(c=>({...c,id:b64u(c.id)}));
+const cred=await navigator.credentials.create({publicKey});
+const body={id:cred.id,rawId:u8b64(cred.rawId),type:cred.type,extensions:cred.getClientExtensionResults(),response:{
+attestationObject:u8b64(cred.response.attestationObject),clientDataJSON:u8b64(cred.response.clientDataJSON)}};
+const f=await fetch('/_dd/join/finish',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':ceremony},body:JSON.stringify(body)});
+if(!f.ok)throw new Error(await f.text());const s=await f.json();
+m.textContent='Once more, to sign your entry with it…';
+const pk=s.publicKey;pk.challenge=b64u(pk.challenge);pk.allowCredentials=pk.allowCredentials.map(c=>({...c,id:b64u(c.id)}));
+const a=await navigator.credentials.get({publicKey:pk});
+const body2={id:a.id,rawId:u8b64(a.rawId),type:a.type,extensions:a.getClientExtensionResults(),response:{
+authenticatorData:u8b64(a.response.authenticatorData),clientDataJSON:u8b64(a.response.clientDataJSON),
+signature:u8b64(a.response.signature),userHandle:a.response.userHandle?u8b64(a.response.userHandle):null}};
+const g=await fetch('/_dd/join/sign',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':s.ceremony},body:JSON.stringify(body2)});
+if(!g.ok)throw new Error(await g.text());try{localStorage.setItem('dd_user',u)}catch(e){}location.href='/_dd/home';}catch(e){m.textContent='Could not create the account: '+e.message}}
+document.getElementById('go').onclick=go;
+</script>"#;
 
 const LOGIN_JS: &str = r#"<script>
 const rd=new URLSearchParams(location.search).get('rd')||'/';
@@ -170,19 +210,32 @@ fn icon(key: &str) -> &'static str {
     }
 }
 
-/// The signed-in home page: the services this box offers, as tiles. Server
-/// rendered, so the browser runs nothing.
-pub fn home(user: &str, services: &[Service]) -> String {
+fn me_bar(user: &str) -> String {
     let initial = user
         .chars()
         .next()
         .map(|c| esc(&c.to_string()))
         .unwrap_or_default();
-    let me = format!(
+    format!(
         r#"<div class="me"><span class="avatar" aria-hidden="true">{initial}</span><span>{}</span><a class="out" href="/_dd/logout">Sign out</a></div>"#,
         esc(user)
-    );
-    let mut out = open("Distributed Datacenter", HOME_CSS, &me);
+    )
+}
+
+/// Signed in but not on the member list: the account exists, nothing is
+/// open to it yet.
+pub fn waiting(user: &str) -> String {
+    let mut out = open("Distributed Datacenter", AUTH_CSS, &me_bar(user));
+    out.push_str(r#"<main><div class="card">
+<h1>Your account is made</h1><p class="lead">Nothing here is open to you yet. Whoever runs this network adds people to it; once they have added you, this page fills in with what you can use.</p>
+</div></main></body></html>"#);
+    out
+}
+
+/// The signed-in home page: the services this box offers, as tiles. Server
+/// rendered, so the browser runs nothing.
+pub fn home(user: &str, services: &[Service]) -> String {
+    let mut out = open("Distributed Datacenter", HOME_CSS, &me_bar(user));
     out.push_str("<main><h1>Your services</h1>");
     if services.is_empty() {
         out.push_str(r#"<p class="empty">Nothing runs here yet.</p>"#);
@@ -220,16 +273,28 @@ mod tests {
 
     #[test]
     fn auth_pages_are_one_shell_one_script() {
-        for page in [login(), enrol()] {
+        for page in [login(), enrol(), join()] {
             assert!(page.starts_with("<!doctype html>"));
             assert!(page.ends_with("</html>"));
             assert_eq!(page.matches("<script>").count(), 1);
             assert_eq!(page.matches("</header>").count(), 1);
             assert!(page.contains("--brand:#124e63"));
-            assert!(page.contains("dd enrol"));
         }
+        assert!(login().contains("dd enrol"));
+        assert!(enrol().contains("dd enrol"));
         assert!(login().contains("/_dd/login/start"));
+        assert!(login().contains("href=\"/_dd/join\""));
         assert!(enrol().contains("/_dd/enrol/start"));
+        assert!(join().contains("/_dd/join/sign"));
+    }
+
+    #[test]
+    fn waiting_page_names_the_person_and_offers_nothing() {
+        let html = waiting("tom");
+        assert!(html.contains("<span>tom</span>"));
+        assert!(html.contains("/_dd/logout"));
+        assert!(!html.contains("class=\"tile\""));
+        assert!(!html.contains("<script"));
     }
 
     #[test]
@@ -237,6 +302,8 @@ mod tests {
         if let Ok(dir) = std::env::var("DD_DUMP_PAGES") {
             std::fs::write(format!("{dir}/login.html"), login()).unwrap();
             std::fs::write(format!("{dir}/enrol.html"), enrol()).unwrap();
+            std::fs::write(format!("{dir}/join.html"), join()).unwrap();
+            std::fs::write(format!("{dir}/waiting.html"), waiting("tom")).unwrap();
         }
     }
 

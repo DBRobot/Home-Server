@@ -20,6 +20,7 @@ in
         # a browser with no credential gets the box's passkey page (@login is
         # defined for every browser-facing vhost in modules/verify.nix)
         error_page 401 = @login;
+        error_page 403 = @waiting;
         proxy_buffering off; # streamed completions
         proxy_read_timeout 600s; # cpu generation is slow
         client_max_body_size 0;
