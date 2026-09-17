@@ -87,11 +87,12 @@ in
     b.wait_until_succeeds("[ $(find /srv/garage -type f | wc -l) -ge 3 ]")
 
     # a is gone. b still answers, and a's repository - a's password, a's key -
-    # restores a's files on b
+    # restores a's files on b. Without the lock: a lock is a write, and the
+    # cluster takes no writes with one box down
     a.shutdown()
     b.succeed(
         "set -a; . ${(storageBox "a").dd.backup.envFile}; "
-        "restic -r s3:http://127.0.0.1:3900/backups-a --password-file ${(storageBox "a").dd.backup.passwordFile} restore latest --target /tmp/restore"
+        "restic -r s3:http://127.0.0.1:3900/backups-a --password-file ${(storageBox "a").dd.backup.passwordFile} --no-lock restore latest --target /tmp/restore"
     )
     b.succeed("grep -q 'worth having tomorrow' /tmp/restore/srv/state/file")
     b.succeed("[ $(stat -c %s /tmp/restore/srv/state/blob) = 2000000 ]")
