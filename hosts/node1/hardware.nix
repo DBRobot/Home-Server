@@ -1,7 +1,9 @@
 { ... }:
 {
   # What is true of this machine and no other. Everything it runs is a role
-  # in fleet/boxes.json.
+  # in fleet/boxes.json. hardware-configuration.nix is the output of
+  # `nixos-generate-config --no-filesystems --show-hardware-config` on the
+  # box, unedited: disko owns the mounts, the generator owns the rest.
   imports = [
     ./hardware-configuration.nix
     ./disko.nix
