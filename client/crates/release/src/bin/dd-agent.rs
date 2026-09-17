@@ -1,0 +1,296 @@
+//! The agent: a box moves itself to the release, and to nothing else.
+//!
+//! Runs from a timer. Fetches the release file, checks it is signed by the
+//! release key this box was installed with, refuses a counter lower than
+//! the last one it applied, looks up its own entry, fetches that closure,
+//! checks the nar hash, switches, and proves the box is still a box: no
+//! failed units, sshd listening, the verifier answering. If that fails
+//! within the window the previous system comes back. Nothing here accepts
+//! a push; the only input is a signed file and the only authority is the
+//! key that signed it.
+//!
+//! bin/deploy, inverted: the same steps, started by the box.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail};
+use clap::Parser;
+
+#[derive(Parser)]
+struct Args {
+    /// where the signed release file is
+    #[arg(long, env = "DD_AGENT_URL")]
+    url: String,
+    /// file holding the release key's public half, base64
+    #[arg(long, env = "DD_AGENT_KEY_FILE")]
+    key_file: PathBuf,
+    /// this box's name in the release; defaults to the hostname
+    #[arg(long, env = "DD_AGENT_BOX")]
+    r#box: Option<String>,
+    /// a binary cache to fetch the closure from; none means it must
+    /// already be in the store (the vm test shares one)
+    #[arg(long, env = "DD_AGENT_CACHE")]
+    cache: Option<String>,
+    /// the last applied counter and the previous system live here
+    #[arg(long, env = "DD_AGENT_STATE", default_value = "/var/lib/dd-agent")]
+    state: PathBuf,
+    /// where the node exporter reads textfile metrics
+    #[arg(long, env = "DD_AGENT_FACTS", default_value = "/var/lib/dd-facts")]
+    facts: PathBuf,
+    /// how long after the switch the probe may keep failing before rollback
+    #[arg(long, env = "DD_AGENT_PROBE_SECS", default_value = "600")]
+    probe_secs: u64,
+    /// the verifier's port, probed after a switch
+    #[arg(long, env = "DD_AGENT_VERIFY_PORT", default_value = "4181")]
+    verify_port: u16,
+}
+
+fn main() {
+    let args = Args::parse();
+    let outcome = run(&args);
+    match &outcome {
+        Ok(msg) => println!("{msg}"),
+        Err(e) => eprintln!("error: {e:#}"),
+    }
+    if outcome.is_err() {
+        std::process::exit(1);
+    }
+}
+
+fn run(args: &Args) -> Result<String> {
+    fs::create_dir_all(&args.state)?;
+    let name = match &args.r#box {
+        Some(b) => b.clone(),
+        None => hostname()?,
+    };
+    let trusted = release::decode_public(
+        fs::read_to_string(&args.key_file)
+            .with_context(|| format!("release key {}", args.key_file.display()))?
+            .trim(),
+    )
+    .map_err(|e| anyhow::anyhow!("release key: {e}"))?;
+
+    // no file yet is not an error: a fleet before its first release
+    let mut response = match ureq::get(&args.url).call() {
+        Ok(r) => r,
+        Err(ureq::Error::StatusCode(404)) => {
+            record(args, &name, read_counter(&args.state), "none");
+            return Ok(format!("no release at {} yet", args.url));
+        }
+        Err(e) => return Err(e).with_context(|| format!("fetching {}", args.url)),
+    };
+    let body = response.body_mut().read_to_string()?;
+    let signed: release::Signed =
+        serde_json::from_str(&body).context("release file is not json")?;
+    if let Err(e) = release::verify(&signed, &trusted) {
+        record(args, &name, 0, "refused");
+        bail!("release refused: {e}");
+    }
+    let counter = signed.payload.counter;
+
+    let last = read_counter(&args.state);
+    if counter < last {
+        record(args, &name, last, "refused");
+        bail!("release {counter} is older than the {last} this box already applied");
+    }
+
+    let Some(mine) = signed.payload.boxes.get(&name) else {
+        record(args, &name, last, "absent");
+        return Ok(format!("release {counter} has nothing for {name}"));
+    };
+    let current = fs::read_link("/run/current-system")
+        .context("/run/current-system")?
+        .to_string_lossy()
+        .into_owned();
+    if current == mine.path {
+        write_counter(&args.state, counter)?;
+        record(args, &name, counter, "ok");
+        return Ok(format!("release {counter}: already running {}", mine.path));
+    }
+
+    // fetch, then check the contents are what was signed: an input-addressed
+    // store path says nothing about what is in it, the nar hash does
+    if let Some(cache) = &args.cache {
+        sh(
+            "nix",
+            &["copy", "--from", cache, "--no-check-sigs", &mine.path],
+        )
+        .context("fetching the closure")?;
+    }
+    let info = sh(
+        "nix",
+        &[
+            "--extra-experimental-features",
+            "nix-command",
+            "path-info",
+            "--json",
+            &mine.path,
+        ],
+    )
+    .context("nar hash")?;
+    let got =
+        release::nar_hash_from_path_info(&info, &mine.path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    if got != mine.nar_hash {
+        record(args, &name, last, "refused");
+        bail!(
+            "{} has nar hash {got}, the release says {}",
+            mine.path,
+            mine.nar_hash
+        );
+    }
+
+    // switch, with a way back: the previous system is kept by name, and a
+    // transient unit brings it back if this process dies mid-way
+    fs::write(args.state.join("previous"), &current)?;
+    let guard_secs = (args.probe_secs + 300).to_string();
+    let _ = disarm();
+    sh(
+        "systemd-run",
+        &[
+            "--quiet",
+            "--unit=dd-agent-guard",
+            &format!("--on-active={guard_secs}"),
+            &format!("{current}/bin/switch-to-configuration"),
+            "switch",
+        ],
+    )
+    .context("arming the rollback guard")?;
+    sh(
+        "nix-env",
+        &["-p", "/nix/var/nix/profiles/system", "--set", &mine.path],
+    )?;
+    let switched = sh(
+        &format!("{}/bin/switch-to-configuration", mine.path),
+        &["switch"],
+    );
+
+    let healthy = switched.is_ok() && probe_until(args, Duration::from_secs(args.probe_secs));
+    if !healthy {
+        let _ = sh(
+            "nix-env",
+            &["-p", "/nix/var/nix/profiles/system", "--set", &current],
+        );
+        let _ = sh(
+            &format!("{current}/bin/switch-to-configuration"),
+            &["switch"],
+        );
+        let _ = disarm();
+        record(args, &name, last, "rollback");
+        bail!(
+            "release {counter}: {} did not come up healthy; back on {current}",
+            mine.path
+        );
+    }
+    let _ = disarm();
+    write_counter(&args.state, counter)?;
+    record(args, &name, counter, "ok");
+    Ok(format!("release {counter}: now running {}", mine.path))
+}
+
+/// The guard is a transient timer and its service; both go, or the timer
+/// fires later and switches the box back under a healthy release, and the
+/// next arming fails because the name is taken.
+fn disarm() -> Result<String> {
+    sh(
+        "systemctl",
+        &["stop", "dd-agent-guard.timer", "dd-agent-guard.service"],
+    )
+}
+
+/// The box is a box: nothing failed, ssh answers, the verifier answers.
+fn probe(args: &Args) -> Result<()> {
+    let failed = sh("systemctl", &["--failed", "--no-legend", "--plain"])?;
+    if !failed.trim().is_empty() {
+        bail!("failed units: {}", failed.trim());
+    }
+    let ssh = sh("systemctl", &["is-active", "sshd.service"])?;
+    if ssh.trim() != "active" {
+        bail!("sshd is {}", ssh.trim());
+    }
+    std::net::TcpStream::connect_timeout(
+        &([127, 0, 0, 1], args.verify_port).into(),
+        Duration::from_secs(3),
+    )
+    .with_context(|| format!("verifier on {}", args.verify_port))?;
+    Ok(())
+}
+
+fn probe_until(args: &Args, window: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        match probe(args) {
+            Ok(()) => return true,
+            Err(e) => {
+                eprintln!("probe: {e:#}");
+                if start.elapsed() > window {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_secs(10));
+            }
+        }
+    }
+}
+
+fn read_counter(state: &Path) -> u64 {
+    fs::read_to_string(state.join("counter"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn write_counter(state: &Path, n: u64) -> Result<()> {
+    let tmp = state.join("counter.tmp");
+    fs::write(&tmp, format!("{n}\n"))?;
+    fs::rename(tmp, state.join("counter"))?;
+    Ok(())
+}
+
+/// Samples for the box dashboard and `dd release status`: the counter this
+/// box runs, what it runs, and how the last run ended. Best effort; a
+/// metric must never fail a release.
+fn record(args: &Args, name: &str, counter: u64, result: &str) {
+    let _ = fs::create_dir_all(&args.facts);
+    let now = release::now();
+    let running = fs::read_link("/run/current-system")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let body = format!(
+        "# HELP dd_agent_counter The release counter this box last applied.\n\
+         # TYPE dd_agent_counter gauge\n\
+         dd_agent_counter{{box=\"{name}\"}} {counter}\n\
+         # HELP dd_agent_info What this box runs and how the agent's last run ended.\n\
+         # TYPE dd_agent_info gauge\n\
+         dd_agent_info{{box=\"{name}\",path=\"{running}\",result=\"{result}\"}} 1\n\
+         # HELP dd_agent_last_run_seconds When the agent last ran.\n\
+         # TYPE dd_agent_last_run_seconds gauge\n\
+         dd_agent_last_run_seconds{{box=\"{name}\"}} {now}\n"
+    );
+    let tmp = args.facts.join("dd_agent.prom.tmp");
+    if fs::write(&tmp, body).is_ok() {
+        let _ = fs::rename(tmp, args.facts.join("dd_agent.prom"));
+    }
+}
+
+fn hostname() -> Result<String> {
+    Ok(fs::read_to_string("/proc/sys/kernel/hostname")?
+        .trim()
+        .to_owned())
+}
+
+fn sh(bin: &str, args: &[&str]) -> Result<String> {
+    let out = Command::new(bin)
+        .args(args)
+        .output()
+        .with_context(|| format!("running {bin}"))?;
+    if !out.status.success() {
+        bail!(
+            "{bin} {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}

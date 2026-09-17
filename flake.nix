@@ -84,6 +84,25 @@
             # time, so nothing extra is needed here.
           };
 
+          # The release agent, on every box. Server side like verify: the
+          # release crate holds the file format the cli signs and this
+          # binary checks, and nothing that needs a keyring.
+          agent = pkgs.rustPlatform.buildRustPackage {
+            pname = "dd-agent";
+            version = "0.1.0";
+            src = ./client;
+            inherit cargoLock;
+            cargoBuildFlags = [
+              "-p"
+              "release"
+            ];
+            cargoTestFlags = [
+              "-p"
+              "release"
+            ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
+          };
+
           # The verifier behind nginx's auth_request. Built separately from dd
           # rather than as another binary in the same derivation: this one
           # runs on a server and has no business pulling in the keyring/dbus
@@ -123,6 +142,7 @@
           directory = vm ./tests/directory.nix;
           metrics = vm ./tests/metrics.nix;
           backup = vm ./tests/backup.nix;
+          release = vm ./tests/release.nix;
           placement = import ./tests/placement.nix args;
           boxes = import ./tests/boxes.nix args;
         };
@@ -160,6 +180,14 @@
                 );
               };
             };
+          # closures come from the cache box's store over the tailnet
+          cacheOf =
+            let
+              c = lib.filterAttrs (_: b: builtins.elem "cache" b.roles) boxes;
+            in
+            lib.optionalAttrs (c != { }) {
+              dd.agent.cache = "http://${(builtins.head (builtins.attrValues c)).tailnet}:5000";
+            };
           # a box without garage backs up to a storage box over the tailnet
           backupEndpoint =
             name: box:
@@ -181,7 +209,10 @@
               ]
               ++ map (r: ./roles/${r}.nix) box.roles
               ++ lib.optional (builtins.elem "storage" box.roles) (garageOf name box)
-              ++ [ (backupEndpoint name box) ]
+              ++ [
+                (backupEndpoint name box)
+                cacheOf
+              ]
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
               ++ lib.optional (builtins.pathExists ./hosts/${name}/disko.nix) disko.nixosModules.disko
               ++ lib.optional (builtins.elem "observe" box.roles) {
