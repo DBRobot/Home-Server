@@ -188,7 +188,11 @@ async fn a_guest_walks_every_tile() {
         // what the page's own first requests get
         for path in ["/props", "/v1/models", "/index.html"] {
             let (_, st, b) = walk(&http, &cookie, &format!("https://llm.{base}{path}")).await;
-            std::fs::write(format!("{dir}/chat{}.txt", path.replace('/', "_")), format!("{st}\n{b}")).unwrap();
+            std::fs::write(
+                format!("{dir}/chat{}.txt", path.replace('/', "_")),
+                format!("{st}\n{b}"),
+            )
+            .unwrap();
         }
     }
     report(
