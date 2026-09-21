@@ -12,6 +12,11 @@
   };
   # where the box is, at the two grains placement cares about; from
   # fleet/boxes.json, published as labels so a dashboard can group by them
+  options.dd.box.tailnet = lib.mkOption {
+    type = lib.types.str;
+    default = "";
+    description = "This box's tailnet address, from fleet/boxes.json: what a person types to reach something on it.";
+  };
   options.dd.box.site = lib.mkOption {
     type = lib.types.str;
     default = "";

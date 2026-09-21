@@ -181,7 +181,8 @@ in
             "entry_point / vm_tests (backup) (pull_request)",
             "entry_point / vm_tests (release) (pull_request)",
             "entry_point / vm_tests (thanos) (pull_request)",
-            "entry_point / vm_tests (members-runner) (pull_request)"
+            "entry_point / vm_tests (members-runner) (pull_request)",
+            "entry_point / vm_tests (games) (pull_request)"
           ],
           block_on_outdated_branch: false,
           required_approvals: 0

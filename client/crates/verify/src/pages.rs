@@ -240,6 +240,9 @@ fn icon(key: &str) -> &'static str {
             r#"<circle cx="6" cy="5" r="2"/><circle cx="6" cy="15" r="2"/><circle cx="14" cy="8" r="2"/><path d="M6 7v6M14 10c0 3-8 2-8 5"/>"#
         }
         "metrics" => r#"<path d="M3 15.5h14"/><path d="M4.5 12l3.5-4 3 2.5 4.5-6"/>"#,
+        "games" => {
+            r#"<rect x="2.5" y="6.5" width="15" height="8.5" rx="4"/><path d="M6.5 9v3.5M4.75 10.75h3.5"/><circle cx="12.5" cy="10" r=".9" fill="currentColor" stroke="none"/><circle cx="14.6" cy="12" r=".9" fill="currentColor" stroke="none"/>"#
+        }
         _ => r#"<rect x="3" y="3" width="14" height="14" rx="3"/>"#,
     }
 }

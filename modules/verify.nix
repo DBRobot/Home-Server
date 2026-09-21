@@ -266,6 +266,7 @@ in
             "git"
             "home"
             "photos"
+            "games"
           ]
         ))
         # the front door itself: home.<domain> is the verifier's page and

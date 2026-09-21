@@ -840,7 +840,7 @@ async fn web_file(
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     match std::fs::read(dir.join(&file)) {
-        Ok(b) => ([("content-type", ty), ("cache-control", "max-age=3600")], b).into_response(),
+        Ok(b) => ([("content-type", ty), ("cache-control", "no-cache")], b).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
