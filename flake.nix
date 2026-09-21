@@ -7,6 +7,9 @@
     sops-nix.inputs.nixpkgs.follows = "nixpkgs";
     disko.url = "github:nix-community/disko/latest";
     disko.inputs.nixpkgs.follows = "nixpkgs";
+    # rust builds in two layers: every dependency once, cached in the
+    # bucket until Cargo.lock changes; our crates on top, a minute
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -15,6 +18,7 @@
       nixpkgs,
       sops-nix,
       disko,
+      crane,
       ...
     }:
     let
@@ -43,84 +47,42 @@
 
       # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
       # fetched by hash from Cargo.lock, so the binary is as reproducible as
-      # the nixos closure. ente-accounts is a git dep and carries no checksum
-      # in the lockfile, so its hash has to be stated.
+      # the nixos closure. crane builds the dependencies as their own
+      # derivation, so a change to our code costs our code's compile, not
+      # the three hundred crates under it. The tests ran already in ci's
+      # rust job on this same source; no second run in here.
       packages.${system} =
         let
-          cargoLock = {
-            lockFile = ./client/Cargo.lock;
-            outputHashes = {
-              "ente-accounts-0.0.0" = "sha256-3oQcxIAQ6H2IUXU20T/+ZTsOD1oyrFsM29Pynq8nttw=";
-            };
+          craneLib = crane.mkLib pkgs;
+          src = craneLib.cleanCargoSource ./client;
+          common = {
+            inherit src;
+            strictDeps = true;
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            doCheck = false;
           };
+          cargoArtifacts = craneLib.buildDepsOnly (common // { pname = "dd-deps"; version = "0.1.0"; });
+          crate = pname: cargoExtraArgs:
+            craneLib.buildPackage (
+              common
+              // {
+                inherit pname cargoArtifacts cargoExtraArgs;
+                version = "0.1.0";
+              }
+            );
         in
         {
-          dd = pkgs.rustPlatform.buildRustPackage {
-            pname = "dd";
-            version = "0.1.0";
-            src = ./client;
-            inherit cargoLock;
-            cargoBuildFlags = [
-              "-p"
-              "dd"
-              "-p"
-              "git-remote-dd" # `git remote add origin dd::...`; dd repo calls it too
-            ];
-            # the tests of these two, not the workspace's: the helper's test
-            # drives the dd binary, which only this derivation builds
-            # the tests ran already, in ci's rust job, on this same source;
-            # nix running them again inside the build doubled every client
-            # change's cost for nothing
-            doCheck = false;
-            nativeBuildInputs = [ pkgs.pkg-config ];
-            # the encrypted-remote and signed-commit tests drive real git and ssh-keygen
-            nativeCheckInputs = [
-              pkgs.git
-              pkgs.openssh
-            ];
-            # keyring talks to the secret service over dbus at runtime, not build
-            # time, so nothing extra is needed here.
-          };
-
+          # the cli, and `git remote add origin dd::...`, which dd repo calls too
+          dd = crate "dd" "-p dd -p git-remote-dd";
           # The release agent, on every box. Server side like verify: the
           # release crate holds the file format the cli signs and this
           # binary checks, and nothing that needs a keyring.
-          agent = pkgs.rustPlatform.buildRustPackage {
-            pname = "dd-agent";
-            version = "0.1.0";
-            src = ./client;
-            inherit cargoLock;
-            cargoBuildFlags = [
-              "-p"
-              "release"
-            ];
-            # the tests ran already, in ci's rust job, on this same source;
-            # nix running them again inside the build doubled every client
-            # change's cost for nothing
-            doCheck = false;
-            nativeBuildInputs = [ pkgs.pkg-config ];
-          };
-
+          agent = crate "dd-agent" "-p release";
           # The verifier behind nginx's auth_request. Built separately from dd
           # rather than as another binary in the same derivation: this one
           # runs on a server and has no business pulling in the keyring/dbus
           # stack that the cli needs.
-          verify = pkgs.rustPlatform.buildRustPackage {
-            pname = "verify";
-            version = "0.1.0";
-            src = ./client;
-            inherit cargoLock;
-            cargoBuildFlags = [
-              "-p"
-              "verify"
-            ];
-            # the tests ran already, in ci's rust job, on this same source;
-            # nix running them again inside the build doubled every client
-            # change's cost for nothing
-            doCheck = false;
-            nativeBuildInputs = [ pkgs.pkg-config ];
-          };
-
+          verify = crate "verify" "-p verify";
         };
 
       # Boxes booted as vms and driven through the failure cases, so the
