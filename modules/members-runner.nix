@@ -73,7 +73,17 @@ in
     systemd.services."gitea-runner-${name}" = lib.mkIf (cfg.tokenFile != null) {
       after = [ "docker.service" ];
       requires = [ "docker.service" ];
-      serviceConfig.SupplementaryGroups = [ "docker" ];
+      # The same plain user as the host runner, not the module's dynamic
+      # one: both instances live under /var/lib/gitea-runner, and a dynamic
+      # user turns that into a symlink into /var/lib/private that the host
+      # runner cannot work through ("mkdir: file exists" on every job). The
+      # docker group is this unit's alone; host jobs do not get it.
+      serviceConfig = {
+        DynamicUser = lib.mkForce false;
+        User = lib.mkForce "forgejo-runner";
+        Group = "forgejo-runner";
+        SupplementaryGroups = [ "docker" ];
+      };
     };
 
 
