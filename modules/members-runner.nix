@@ -9,7 +9,12 @@ let
   base = config.dd.domain;
   name = "members-${config.networking.hostName}";
   # the job containers' own network; what leaves it is decided below
-  net = "members";
+  # The jobs run on docker's default bridge, pinned to this subnet: what
+  # leaves it is decided below. Not a user-defined network: on those docker
+  # resolves names through an embedded server reached by nat rules inside
+  # the container's namespace, which gVisor's network stack does not
+  # carry, so nothing resolved. On the default bridge a container gets the
+  # box's own nameservers and asks them directly.
   subnet = "172.30.0.0/24";
 in
 {
@@ -35,6 +40,7 @@ in
       daemon.settings = {
         runtimes.runsc.path = "${pkgs.gvisor}/bin/runsc";
         default-runtime = "runsc";
+        bip = "172.30.0.1/24";
         # nothing here needs the legacy bridge to reach the host
         icc = false;
       };
@@ -53,7 +59,7 @@ in
           timeout = "1h";
         };
         container = {
-          network = net;
+          network = "bridge";
           privileged = false;
           # nothing of the host mounted; no socket handed in
           valid_volumes = [ ];
@@ -65,32 +71,11 @@ in
       };
     };
     systemd.services."gitea-runner-${name}" = lib.mkIf (cfg.tokenFile != null) {
-      after = [
-        "docker.service"
-        "members-network.service"
-      ];
-      requires = [
-        "docker.service"
-        "members-network.service"
-      ];
+      after = [ "docker.service" ];
+      requires = [ "docker.service" ];
       serviceConfig.SupplementaryGroups = [ "docker" ];
     };
 
-    # the jobs' network exists before the runner starts
-    systemd.services.members-network = {
-      description = "The docker network members' jobs run in";
-      after = [ "docker.service" ];
-      requires = [ "docker.service" ];
-      wantedBy = [ "multi-user.target" ];
-      path = [ pkgs.docker ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      script = ''
-        docker network inspect ${net} >/dev/null 2>&1 || docker network create --subnet ${subnet} ${net}
-      '';
-    };
 
     # What a job may reach: the internet. Docker's DOCKER-USER chain runs
     # before its own forwarding rules; established replies come back, the
