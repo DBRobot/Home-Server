@@ -210,10 +210,12 @@ async fn a_guest_walks_every_tile() {
             break;
         }
     }
+    // the plugin answers a failed callback with an error status; a 200 is
+    // its landing page, which stores the jellyfin session in the browser
     match videos {
         Some((hops, st, body)) => report(
             "Videos",
-            st == 200 && !body.to_lowercase().contains("error"),
+            st == 200 && body.contains("localStorage"),
             format!("{st} ({} bytes)  {}", body.len(), hops.join(" -> ")),
         ),
         None => report("Videos", false, "no sso start url answered".into()),
