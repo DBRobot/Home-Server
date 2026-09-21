@@ -92,19 +92,22 @@ pub fn join() -> String {
 <h1>Create your account</h1><p class="lead">Pick a name and make a passkey. The passkey is the account: it stays on your device and follows you to your other devices the way passkeys do. No password, and nothing here can sign as you.</p>
 <label for="u">Name</label>
 <input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="lowercase letters, digits, - _ .">
+<label for="c" style="margin-top:14px">Invite code <span style="font-weight:400;color:var(--ink-2)">(if someone gave you one)</span></label>
+<input id="c" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxxx-xxxxx">
 <button id="go">Create passkey</button><div id="msg"></div>
 <p class="note">Already have one? <a href="/_dd/login">Sign in</a>.</p>
 "#);
+    out.push_str(INVITE_JS);
     out.push_str(JOIN_JS);
     out.push_str("</div></main></body></html>");
     out
 }
 
 const JOIN_JS: &str = r#"<script>
-const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
-const u8b64=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function go(){const m=document.getElementById('msg');m.textContent='…';try{
 const u=document.getElementById('u').value.trim().toLowerCase();
+const code=document.getElementById('c').value.trim();
+if(code)await checkInvite(code);
 const r=await fetch('/_dd/join/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:u})});if(!r.ok)throw new Error(await r.text());
 const {publicKey,ceremony}=await r.json();
 publicKey.challenge=b64u(publicKey.challenge);publicKey.user.id=b64u(publicKey.user.id);
@@ -112,7 +115,9 @@ if(publicKey.excludeCredentials)publicKey.excludeCredentials=publicKey.excludeCr
 const cred=await navigator.credentials.create({publicKey});
 const body={id:cred.id,rawId:u8b64(cred.rawId),type:cred.type,extensions:cred.getClientExtensionResults(),response:{
 attestationObject:u8b64(cred.response.attestationObject),clientDataJSON:u8b64(cred.response.clientDataJSON)}};
-const f=await fetch('/_dd/join/finish',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':ceremony},body:JSON.stringify(body)});
+const hdr={'content-type':'application/json','x-dd-ceremony':ceremony};
+if(code)hdr['x-dd-grant']=btoa(JSON.stringify(await claim(code,'webauthn:'+u8b64(cred.rawId))));
+const f=await fetch('/_dd/join/finish',{method:'POST',headers:hdr,body:JSON.stringify(body)});
 if(!f.ok)throw new Error(await f.text());const s=await f.json();
 m.textContent='Once more, to sign your entry with it…';
 const pk=s.publicKey;pk.challenge=b64u(pk.challenge);pk.allowCredentials=pk.allowCredentials.map(c=>({...c,id:b64u(c.id)}));
@@ -123,6 +128,25 @@ signature:u8b64(a.response.signature),userHandle:a.response.userHandle?u8b64(a.r
 const g=await fetch('/_dd/join/sign',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':s.ceremony},body:JSON.stringify(body2)});
 if(!g.ok)throw new Error(await g.text());try{localStorage.setItem('dd_user',u)}catch(e){}location.href='/_dd/home';}catch(e){m.textContent='Could not create the account: '+e.message}}
 document.getElementById('go').onclick=go;
+</script>"#;
+
+/// The code as the browser holds it: a seed for an ed25519 key. Only the
+/// public key and a signature ever leave.
+const INVITE_JS: &str = r#"<script>
+const enc=new TextEncoder();
+const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const u8b64=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function codeKey(code){const n=code.replace(/[^A-Za-z0-9]/g,'').toLowerCase();
+const seed=new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode('dd-invite:'+n)));
+const pkcs8=new Uint8Array([0x30,0x2e,0x02,0x01,0x00,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x04,0x22,0x04,0x20,...seed]);
+const k=await crypto.subtle.importKey('pkcs8',pkcs8,{name:'Ed25519'},true,['sign']);
+const jwk=await crypto.subtle.exportKey('jwk',k);
+return {k,pub:btoa(String.fromCharCode(...b64u(jwk.x)))};}
+async function checkInvite(code){const {pub}=await codeKey(code);const r=await fetch('/_dd/invite/'+u8b64(enc.encode(pub)));
+if(!r.ok)throw new Error('That code is not valid, or it has expired.');}
+async function claim(code,root){const {k,pub}=await codeKey(code);const redeemed=Math.floor(Date.now()/1000);
+const sig=new Uint8Array(await crypto.subtle.sign('Ed25519',k,enc.encode(JSON.stringify({invite:pub,root,redeemed}))));
+return {invite_public_key:pub,redeemed,proof:btoa(String.fromCharCode(...sig))};}
 </script>"#;
 
 const LOGIN_JS: &str = r#"<script>
@@ -223,14 +247,43 @@ fn me_bar(user: &str) -> String {
 }
 
 /// Signed in but not on the member list: the account exists, nothing is
-/// open to it yet.
+/// open to it yet. A code from the owner opens it here.
 pub fn waiting(user: &str) -> String {
     let mut out = open("Distributed Datacenter", AUTH_CSS, &me_bar(user));
-    out.push_str(r#"<main><div class="card">
+    out.push_str(&format!(
+        r#"<main><div class="card" data-user="{}">
 <h1>Your account is made</h1><p class="lead">Nothing here is open to you yet. Whoever runs this network adds people to it; once they have added you, this page fills in with what you can use.</p>
-</div></main></body></html>"#);
+<label for="c">Have a code from them?</label>
+<input id="c" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxxx-xxxxx">
+<button id="go">Use code</button><div id="msg"></div>
+</div></main>"#,
+        esc(user)
+    ));
+    out.push_str(INVITE_JS);
+    out.push_str(REDEEM_JS);
+    out.push_str("</body></html>");
     out
 }
+
+const REDEEM_JS: &str = r#"<script>
+async function go(){const m=document.getElementById('msg');m.textContent='…';try{
+const code=document.getElementById('c').value.trim();if(!code)throw new Error('type the code');
+await checkInvite(code);
+const user=document.querySelector('.card').dataset.user;
+const e=await fetch('/_dd/directory/'+encodeURIComponent(user));if(!e.ok)throw new Error('no entry');
+const root=(await e.json()).entry.root;
+const r=await fetch('/_dd/redeem/start',{method:'POST',headers:{'x-dd-grant':btoa(JSON.stringify(await claim(code,root)))}});
+if(!r.ok)throw new Error(await r.text());const s=await r.json();
+const pk=s.publicKey;pk.challenge=b64u(pk.challenge);pk.allowCredentials=pk.allowCredentials.map(c=>({...c,id:b64u(c.id)}));
+m.textContent='Confirm with your passkey…';
+const a=await navigator.credentials.get({publicKey:pk});
+const body={id:a.id,rawId:u8b64(a.rawId),type:a.type,extensions:a.getClientExtensionResults(),response:{
+authenticatorData:u8b64(a.response.authenticatorData),clientDataJSON:u8b64(a.response.clientDataJSON),
+signature:u8b64(a.response.signature),userHandle:a.response.userHandle?u8b64(a.response.userHandle):null}};
+const g=await fetch('/_dd/redeem/sign',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':s.ceremony},body:JSON.stringify(body)});
+if(!g.ok)throw new Error(await g.text());location.href='/_dd/home';}catch(e){m.textContent='That did not work: '+e.message}}
+document.getElementById('go').onclick=go;
+</script>"#;
 
 /// The signed-in home page: the services this box offers, as tiles. Server
 /// rendered, so the browser runs nothing.
@@ -276,7 +329,14 @@ mod tests {
         for page in [login(), enrol(), join()] {
             assert!(page.starts_with("<!doctype html>"));
             assert!(page.ends_with("</html>"));
-            assert_eq!(page.matches("<script>").count(), 1);
+            assert_eq!(
+                page.matches("<script>").count(),
+                if page.contains("/_dd/join/sign") {
+                    2
+                } else {
+                    1
+                }
+            );
             assert_eq!(page.matches("</header>").count(), 1);
             assert!(page.contains("--brand:#124e63"));
         }
@@ -292,9 +352,10 @@ mod tests {
     fn waiting_page_names_the_person_and_offers_nothing() {
         let html = waiting("tom");
         assert!(html.contains("<span>tom</span>"));
+        assert!(html.contains("data-user=\"tom\""));
         assert!(html.contains("/_dd/logout"));
         assert!(!html.contains("class=\"tile\""));
-        assert!(!html.contains("<script"));
+        assert!(html.contains("/_dd/redeem/start"));
     }
 
     #[test]

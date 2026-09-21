@@ -365,7 +365,7 @@ fn ureq_get(url: &str) -> std::result::Result<String, NotFound> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn load(keys: &auth::Store) -> Result<ed25519_dalek::SigningKey> {
+pub(crate) fn load(keys: &auth::Store) -> Result<ed25519_dalek::SigningKey> {
     let s = keys
         .get(ACCOUNT)?
         .context("no release key here - `dd release init`")?;

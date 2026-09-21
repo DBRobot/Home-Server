@@ -18,6 +18,7 @@
   # the laptop that builds, its public half in the repo
   # who may use the services: comes with the release, checked by every box
   dd.members = builtins.fromJSON (builtins.readFile ../fleet/members.json);
+  dd.verify.releasePublicKey = lib.fileContents ../fleet/release.pub;
   dd.agent = {
     enable = true;
     url = "https://git.${config.dd.domain}/david/Home-Server/raw/branch/releases/current.json";

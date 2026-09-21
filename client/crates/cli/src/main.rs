@@ -111,6 +111,15 @@ enum Command {
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
+    /// A code that lets one person in: signed by the release key here,
+    /// held by every box until it expires, typed once on the join page.
+    Invite {
+        /// how long the code is good for: 5m, 30m, 1h
+        #[arg(long, default_value = "5m")]
+        ttl: String,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES)]
+        directories: Vec<String>,
+    },
     /// The fleet: every box, its roles and where it stands. Reads
     /// fleet/boxes.json; with --private, the owner and place behind the ids
     /// (secrets/fleet.yaml, readable by the release signer's dd key).
@@ -696,6 +705,10 @@ async fn main() -> Result<()> {
 
         Command::Release { cmd, repo } => release_cmd::run(cmd, &repo, &auth::open(&service()))?,
 
+        Command::Invite { ttl, directories } => {
+            let key = release_cmd::load(&auth::open(&service()))?;
+            member::invite(&ttl, &directories, &key).await?
+        }
         Command::Member {
             cmd,
             repo,

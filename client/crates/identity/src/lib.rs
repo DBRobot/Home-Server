@@ -55,6 +55,10 @@ pub struct Entry {
     /// empty, so entries signed before the field existed still verify.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub passkeys: Vec<Passkey>,
+    /// An invite redeemed: membership granted by a code the fleet's owner
+    /// signed, proven by this root. Absent for everyone else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<Grant>,
     /// strictly increasing; a box never accepts an older or equal one
     pub version: u64,
     pub updated: u64,
@@ -188,6 +192,130 @@ fn check(sig_b64: &str, entry: &Entry, key: &VerifyingKey) -> Result<()> {
 }
 
 pub const WEBAUTHN_ROOT: &str = "webauthn:";
+
+/// An invitation: a code the owner hands to a person, good for minutes.
+/// The code is a seed; only the public key it derives is written down,
+/// signed by the release key, so a box can check a redemption and the code
+/// itself is never seen by anyone but the two people.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Invite {
+    /// base64 ed25519 public key derived from the code
+    pub public_key: String,
+    pub issued: u64,
+    pub expires: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SignedInvite {
+    pub invite: Invite,
+    /// the release key, base64: the only key that grants membership
+    pub signer: String,
+    pub signature: String,
+}
+
+/// A redeemed invite, carried in the entry of the person it let in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Grant {
+    pub invite: SignedInvite,
+    pub redeemed: u64,
+    /// base64 ed25519 signature by the code's key over `proof_bytes`: this
+    /// root, this invite, this moment. Lifting it into another entry proves
+    /// nothing, because the root is in it.
+    pub proof: String,
+}
+
+const CODE_ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+
+/// Ten characters, two groups, no ambiguous letters: 50 bits.
+pub fn new_code() -> String {
+    use std::io::Read;
+    let mut b = [0u8; 10];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut b))
+        .expect("/dev/urandom");
+    let s: String = b
+        .iter()
+        .map(|x| CODE_ALPHABET[(*x as usize) % CODE_ALPHABET.len()] as char)
+        .collect();
+    format!("{}-{}", &s[..5], &s[5..])
+}
+
+/// What a person typed, as the code: lowercase, letters and digits only.
+pub fn normalize_code(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// The key a code is: sha256("dd-invite:" + code) as an ed25519 seed. The
+/// browser derives the same one.
+pub fn code_key(code: &str) -> SigningKey {
+    use sha2::Digest as _;
+    let h = sha2::Sha256::digest(format!("dd-invite:{}", normalize_code(code)).as_bytes());
+    SigningKey::from_bytes(&h.into())
+}
+
+pub fn sign_invite(invite: Invite, release: &SigningKey) -> Result<SignedInvite> {
+    let sig: Signature = release.sign(&serde_json::to_vec(&invite)?);
+    Ok(SignedInvite {
+        invite,
+        signer: encode_public(&release.verifying_key()),
+        signature: B64.encode(sig.to_bytes()),
+    })
+}
+
+/// Signed by the release key named, and by no other.
+pub fn verify_invite(s: &SignedInvite, release: &VerifyingKey) -> Result<()> {
+    if s.signer != encode_public(release) {
+        return Err(Error::Rejected(
+            "invite is not signed by the release key".into(),
+        ));
+    }
+    let sig = B64.decode(&s.signature).map_err(|_| Error::Signature)?;
+    let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
+    release
+        .verify(&serde_json::to_vec(&s.invite)?, &sig)
+        .map_err(|_| Error::Signature)
+}
+
+/// The bytes the code's key signs. Compact json in this order; the browser
+/// builds the same string.
+pub fn proof_bytes(invite_public_key: &str, root: &str, redeemed: u64) -> Vec<u8> {
+    format!(
+        "{{\"invite\":{},\"root\":{},\"redeemed\":{redeemed}}}",
+        serde_json::to_string(invite_public_key).unwrap_or_default(),
+        serde_json::to_string(root).unwrap_or_default()
+    )
+    .into_bytes()
+}
+
+pub fn prove(code: &SigningKey, invite_public_key: &str, root: &str, redeemed: u64) -> String {
+    let sig: Signature = code.sign(&proof_bytes(invite_public_key, root, redeemed));
+    B64.encode(sig.to_bytes())
+}
+
+/// The grant in `entry` was made by the code the owner signed, for this
+/// root, within the invite's window. Whether the window had passed by the
+/// time a box saw it is the box's check, with its own clock.
+pub fn verify_grant(entry: &Entry, release: &VerifyingKey) -> Result<()> {
+    let g = entry
+        .grant
+        .as_ref()
+        .ok_or_else(|| Error::Rejected("no grant".into()))?;
+    verify_invite(&g.invite, release)?;
+    let inv = &g.invite.invite;
+    if g.redeemed < inv.issued || g.redeemed > inv.expires {
+        return Err(Error::Rejected(
+            "redeemed outside the invite's window".into(),
+        ));
+    }
+    let key = decode_public(&inv.public_key)?;
+    let sig = B64.decode(&g.proof).map_err(|_| Error::Signature)?;
+    let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
+    key.verify(&proof_bytes(&inv.public_key, &entry.root, g.redeemed), &sig)
+        .map_err(|_| Error::Signature)
+}
 
 /// The signature a passkey root makes: the three parts of a webauthn
 /// assertion, base64url as the browser hands them over. Stored base64 of
@@ -326,6 +454,55 @@ pub fn now() -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn an_invite_is_a_code_the_owner_signed_and_a_root_redeemed() {
+        let release = generate();
+        let code = new_code();
+        assert_eq!(code.len(), 11);
+        let ck = code_key(&code);
+        assert_eq!(
+            encode_public(&ck.verifying_key()),
+            encode_public(&code_key(&code.to_uppercase().replace('-', " ")).verifying_key()),
+            "typing is forgiving"
+        );
+        let inv = sign_invite(
+            Invite {
+                public_key: encode_public(&ck.verifying_key()),
+                issued: 100,
+                expires: 400,
+            },
+            &release,
+        )
+        .unwrap();
+        verify_invite(&inv, &release.verifying_key()).unwrap();
+        assert!(verify_invite(&inv, &generate().verifying_key()).is_err());
+        let root = "webauthn:abc";
+        let mut e = Entry {
+            name: "tom".into(),
+            root: root.into(),
+            recovery: String::new(),
+            devices: vec![],
+            passkeys: vec![],
+            grant: Some(Grant {
+                invite: inv.clone(),
+                redeemed: 200,
+                proof: prove(&ck, &inv.invite.public_key, root, 200),
+            }),
+            version: 1,
+            updated: 200,
+        };
+        verify_grant(&e, &release.verifying_key()).unwrap();
+        // the wrong code, another root, or a time outside the window
+        e.grant.as_mut().unwrap().proof =
+            prove(&code_key("nope"), &inv.invite.public_key, root, 200);
+        assert!(verify_grant(&e, &release.verifying_key()).is_err());
+        e.grant.as_mut().unwrap().proof = prove(&ck, &inv.invite.public_key, "webauthn:other", 200);
+        assert!(verify_grant(&e, &release.verifying_key()).is_err());
+        e.grant.as_mut().unwrap().proof = prove(&ck, &inv.invite.public_key, root, 500);
+        e.grant.as_mut().unwrap().redeemed = 500;
+        assert!(verify_grant(&e, &release.verifying_key()).is_err());
+    }
+
     fn dev(k: &SigningKey) -> Device {
         let p = encode_public(&k.verifying_key());
         Device {
@@ -342,6 +519,7 @@ mod tests {
         let d1 = generate();
         let e1 = Entry {
             passkeys: vec![],
+            grant: None,
             name: "sarah".into(),
             root: encode_public(&root.verifying_key()),
             recovery: encode_public(&recovery.verifying_key()),

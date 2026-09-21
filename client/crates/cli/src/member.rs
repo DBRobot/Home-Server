@@ -1,29 +1,49 @@
 //! The member list: who may use the services. `fleet/members.json` in the
-//! repo, a sorted list of member ids (a hash of each person's root), so it
+//! repo: ids let in and ids shut out, a sha256 of each person's root, so it
 //! carries no names. It reaches the boxes in the signed release; a box
-//! checks it and cannot add to it.
+//! checks it and cannot add to it. An invite (`dd invite`) is the other way
+//! in: a grant in the person's own entry, made with a code the release key
+//! signed; the revoked list is what shuts one of those out again.
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Members {
+    #[serde(default)]
+    pub members: Vec<String>,
+    #[serde(default)]
+    pub revoked: Vec<String>,
+}
 
 fn path(repo: &str) -> PathBuf {
     Path::new(repo).join("fleet/members.json")
 }
 
-pub fn read(repo: &str) -> Result<Vec<String>> {
+pub fn read(repo: &str) -> Result<Members> {
     let p = path(repo);
     if !p.exists() {
-        return Ok(vec![]);
+        return Ok(Members::default());
     }
-    serde_json::from_slice(&std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?)
-        .with_context(|| format!("parsing {}", p.display()))
+    let raw = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
+    // the first shape was a bare list
+    if let Ok(list) = serde_json::from_slice::<Vec<String>>(&raw) {
+        return Ok(Members {
+            members: list,
+            revoked: vec![],
+        });
+    }
+    serde_json::from_slice(&raw).with_context(|| format!("parsing {}", p.display()))
 }
 
-fn write(repo: &str, mut ids: Vec<String>) -> Result<()> {
-    ids.sort();
-    ids.dedup();
+fn write(repo: &str, mut m: Members) -> Result<()> {
+    m.members.sort();
+    m.members.dedup();
+    m.revoked.sort();
+    m.revoked.dedup();
     let p = path(repo);
-    std::fs::write(&p, format!("{}\n", serde_json::to_string_pretty(&ids)?))
+    std::fs::write(&p, format!("{}\n", serde_json::to_string_pretty(&m)?))
         .with_context(|| format!("writing {}", p.display()))
 }
 
@@ -45,35 +65,42 @@ pub async fn resolve(who: &str, dirs: &[String]) -> Result<String> {
 
 pub async fn add(repo: &str, who: &str, dirs: &[String]) -> Result<()> {
     let id = resolve(who, dirs).await?;
-    let mut ids = read(repo)?;
-    if ids.contains(&id) {
+    let mut m = read(repo)?;
+    m.revoked.retain(|x| *x != id);
+    if m.members.contains(&id) {
         println!("already a member: {id}");
-        return Ok(());
+    } else {
+        m.members.push(id.clone());
+        println!("added {id}");
     }
-    ids.push(id.clone());
-    write(repo, ids)?;
-    println!("added {id}\ncommit fleet/members.json and release; every box then lets them in");
+    write(repo, m)?;
+    println!("commit fleet/members.json and release; every box then lets them in");
     Ok(())
 }
 
+/// Off the list and onto the revoked one, so an invite they redeemed
+/// counts for nothing either.
 pub async fn remove(repo: &str, who: &str, dirs: &[String]) -> Result<()> {
     let id = resolve(who, dirs).await?;
-    let mut ids = read(repo)?;
-    let before = ids.len();
-    ids.retain(|x| *x != id);
-    if ids.len() == before {
-        bail!("not a member: {id}");
+    let mut m = read(repo)?;
+    let was = m.members.len();
+    m.members.retain(|x| *x != id);
+    if m.revoked.contains(&id) && m.members.len() == was {
+        bail!("already revoked: {id}");
     }
-    write(repo, ids)?;
-    println!("removed {id}\ncommit fleet/members.json and release; every box then shuts them out");
+    m.revoked.push(id.clone());
+    write(repo, m)?;
+    println!("revoked {id}\ncommit fleet/members.json and release; every box then shuts them out");
     Ok(())
 }
 
-/// Every id, with the name behind it where a directory lists an entry with
-/// that root. Names are looked up, never stored.
+/// Every id on the list, and every entry in the first directory that
+/// carries a redeemed invite, with the name where one is found. Names are
+/// looked up, never stored.
 pub async fn list(repo: &str, dirs: &[String]) -> Result<()> {
-    let ids = read(repo)?;
+    let m = read(repo)?;
     let mut names = std::collections::HashMap::new();
+    let mut invited = Vec::new();
     if let Some(d) = dirs.first()
         && let Ok(h) = crate::who::http()
         && let Ok(r) = h.get(d.trim_end_matches('/')).send().await
@@ -83,15 +110,104 @@ pub async fn list(repo: &str, dirs: &[String]) -> Result<()> {
             if let Some(n) = l["name"].as_str()
                 && let Some(e) = crate::who::newest(&crate::who::fetch(&dirs[..1], n).await)
             {
-                names.insert(identity::member_id(&e.entry.root), n.to_string());
+                let id = identity::member_id(&e.entry.root);
+                names.insert(id.clone(), n.to_string());
+                if let Some(g) = &e.entry.grant {
+                    invited.push((id, n.to_string(), g.redeemed));
+                }
             }
         }
     }
-    for id in ids {
-        println!(
-            "{id}  {}",
-            names.get(&id).map(String::as_str).unwrap_or("-")
-        );
+    let name = |id: &str| names.get(id).cloned().unwrap_or_else(|| "-".into());
+    for id in &m.members {
+        println!("{id}  {}", name(id));
+    }
+    for (id, n, t) in &invited {
+        if m.members.contains(id) || m.revoked.contains(id) {
+            continue;
+        }
+        println!("{id}  {n}  invited {}", date(*t));
+    }
+    for id in &m.revoked {
+        println!("{id}  {}  revoked", name(id));
     }
     Ok(())
+}
+
+fn date(t: u64) -> String {
+    // days since the epoch to y-m-d, no calendar crate for one line
+    let days = (t / 86400) as i64;
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// `dd invite`: a code for one person, good for `ttl`. The code derives a
+/// key; the invite names that key's public half, signed by the release key,
+/// and goes to every directory. The code goes to the person, by you.
+pub async fn invite(ttl: &str, dirs: &[String], release: &ed25519_dalek::SigningKey) -> Result<()> {
+    let secs = parse_ttl(ttl)?;
+    let code = identity::new_code();
+    let key = identity::code_key(&code);
+    let now = identity::now();
+    let signed = identity::sign_invite(
+        identity::Invite {
+            public_key: identity::encode_public(&key.verifying_key()),
+            issued: now,
+            expires: now + secs,
+        },
+        release,
+    )?;
+    let http = crate::who::http()?;
+    let mut ok = 0;
+    for d in dirs {
+        let base = d.trim_end_matches('/');
+        let base = base.strip_suffix("/_dd/directory").unwrap_or(base);
+        use base64::Engine as _;
+        let url = format!(
+            "{base}/_dd/invite/{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(signed.invite.public_key.as_bytes())
+        );
+        match http.put(&url).json(&signed).send().await {
+            Ok(r) if r.status().is_success() => {
+                ok += 1;
+                println!("  {d}: holds it");
+            }
+            Ok(r) => println!(
+                "  {d}: refused ({} {})",
+                r.status(),
+                r.text().await.unwrap_or_default().trim()
+            ),
+            Err(e) => println!("  {d}: unreachable ({e})"),
+        }
+    }
+    if ok == 0 {
+        bail!("no directory took the invite");
+    }
+    println!(
+        "\ncode: {code}\ngood for {ttl}, one person. They type it on the join page, or on their waiting page if they already have an account."
+    );
+    Ok(())
+}
+
+fn parse_ttl(s: &str) -> Result<u64> {
+    let (n, unit) = s.split_at(s.trim_end_matches(|c: char| c.is_ascii_alphabetic()).len());
+    let n: u64 = n
+        .parse()
+        .with_context(|| format!("ttl {s}: not a number"))?;
+    Ok(match unit {
+        "s" => n,
+        "m" | "" => n * 60,
+        "h" => n * 3600,
+        _ => bail!("ttl {s}: use s, m or h"),
+    })
 }

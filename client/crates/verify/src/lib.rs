@@ -46,7 +46,7 @@ struct App {
     pending: Mutex<HashMap<String, (Instant, identity::Passkey)>>,
     oidc: Option<oidc::Issuer>,
     home: Vec<pages::Service>,
-    members: Option<Vec<String>>,
+    members: Option<Members>,
     /// the passkeys' relying party: what a join asks the browser to sign for
     domain: String,
 }
@@ -88,7 +88,44 @@ pub struct Config {
     /// person's root), from the signed release. An entry says who someone
     /// is; only this says they may come in. None: no gate - the directory
     /// alone, or a test. A full box always has a list, empty meaning nobody.
-    pub members: Option<Vec<String>>,
+    pub members: Option<Members>,
+    /// The release key, base64: what signs an invite. A person whose entry
+    /// carries a grant this key made is a member too, unless revoked.
+    pub release_pub: Option<String>,
+}
+
+/// fleet/members.json: ids let in, ids shut out. The file is either a bare
+/// list (the first shape) or {"members": [...], "revoked": [...]}.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Members {
+    pub members: Vec<String>,
+    pub revoked: Vec<String>,
+}
+
+impl Members {
+    pub fn list(members: Vec<String>) -> Self {
+        Self {
+            members,
+            revoked: vec![],
+        }
+    }
+    pub fn parse(json: &str) -> Result<Self> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum File {
+            List(Vec<String>),
+            Full {
+                #[serde(default)]
+                members: Vec<String>,
+                #[serde(default)]
+                revoked: Vec<String>,
+            },
+        }
+        Ok(match serde_json::from_str::<File>(json)? {
+            File::List(members) => Self::list(members),
+            File::Full { members, revoked } => Self { members, revoked },
+        })
+    }
 }
 
 pub struct OidcConfig {
@@ -115,14 +152,25 @@ impl App {
     /// Signed in is not let in: the person's root has to be on the member
     /// list this box was released with.
     fn member(&self, user: &str) -> bool {
-        match &self.members {
-            None => true,
-            Some(list) => self
-                .entry(user)
-                .ok()
-                .flatten()
-                .is_some_and(|e| list.contains(&identity::member_id(&e.entry.root))),
+        let Some(m) = &self.members else {
+            return true;
+        };
+        let Some(e) = self.entry(user).ok().flatten() else {
+            return false;
+        };
+        let id = identity::member_id(&e.entry.root);
+        if m.revoked.contains(&id) {
+            return false;
         }
+        if m.members.contains(&id) {
+            return true;
+        }
+        // an invite the owner signed, redeemed by this root
+        e.entry.grant.is_some()
+            && self
+                .directory
+                .release()
+                .is_some_and(|r| identity::verify_grant(&e.entry, r).is_ok())
     }
 
     /// The passkeys in the user's signed entry, as webauthn-rs credentials.
@@ -380,12 +428,25 @@ fn user_uuid(user: &str) -> Uuid {
 /// the root; the entry naming it is signed by that passkey's assertion over
 /// the entry's hash. This box assembles the bytes and asks; it holds no key
 /// that could sign them, and every box checks the result the same way.
-async fn join_start(State(app): State<Arc<App>>, Json(q): Json<LoginStart>) -> Response {
+async fn join_start(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(q): Json<LoginStart>,
+) -> Response {
     let user = q.username.trim().to_lowercase();
     if !valid_user(&user) {
         return (
             StatusCode::BAD_REQUEST,
             "a name is lowercase letters, digits, - _ or . (64 at most)",
+        )
+            .into_response();
+    }
+    // guest names are for the fleet's own probes and are dropped after
+    // minutes; a person typing one would lose the account. A probe says so.
+    if directory::is_guest(&user) && headers.get("x-dd-probe").is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "names starting with guest are reserved; pick another",
         )
             .into_response();
     }
@@ -439,9 +500,16 @@ async fn join_finish(
         }
     };
     let now = identity::now();
+    let root = format!("{}{id}", identity::WEBAUTHN_ROOT);
+    // an invite code typed on the join page: the browser proved it for this
+    // root; the invite itself is looked up here, and checked at admission
+    let grant = match grant_claim(&app, &headers) {
+        Ok(g) => g,
+        Err(r) => return r.into_response(),
+    };
     let entry = identity::Entry {
         name: user,
-        root: format!("{}{id}", identity::WEBAUTHN_ROOT),
+        root,
         recovery: String::new(),
         devices: vec![],
         passkeys: vec![identity::Passkey {
@@ -449,6 +517,7 @@ async fn join_finish(
             cred,
             added: now,
         }],
+        grant,
         version: 1,
         updated: now,
     };
@@ -468,6 +537,91 @@ async fn join_finish(
             "timeout": 60000,
             "rpId": app.domain,
             "allowCredentials": [{ "type": "public-key", "id": id }],
+            "userVerification": "preferred",
+        }
+    }))
+    .into_response()
+}
+
+/// What the browser sends for a code: the invite's public key it derived,
+/// and its proof for this root. Base64 json in the x-dd-grant header.
+#[derive(Deserialize)]
+struct GrantClaim {
+    invite_public_key: String,
+    redeemed: u64,
+    proof: String,
+}
+
+fn grant_claim(
+    app: &App,
+    headers: &HeaderMap,
+) -> std::result::Result<Option<identity::Grant>, (StatusCode, &'static str)> {
+    let Some(h) = headers.get("x-dd-grant").and_then(|v| v.to_str().ok()) else {
+        return Ok(None);
+    };
+    let claim: GrantClaim = B64
+        .decode(h)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .ok_or((StatusCode::BAD_REQUEST, "bad invite claim"))?;
+    let invite = app.directory.invite(&claim.invite_public_key).ok_or((
+        StatusCode::NOT_FOUND,
+        "that code is not valid here, or it has expired",
+    ))?;
+    Ok(Some(identity::Grant {
+        invite,
+        redeemed: claim.redeemed,
+        proof: claim.proof,
+    }))
+}
+
+/// A person with an account and a code: their entry gets the grant, signed
+/// by their passkey like any update. Only for a passkey root; a root held
+/// by `dd` redeems there.
+async fn redeem_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    let Some(user) = app.sessions.user(cookie) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let Some(signed) = app.entry(&user).ok().flatten() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !signed.entry.root.starts_with(identity::WEBAUTHN_ROOT) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "this account's key is on a device: run `dd invite redeem` there",
+        )
+            .into_response();
+    }
+    let grant = match grant_claim(&app, &headers) {
+        Ok(Some(g)) => g,
+        Ok(None) => return (StatusCode::BAD_REQUEST, "no code").into_response(),
+        Err(r) => return r.into_response(),
+    };
+    let mut entry = signed.entry;
+    entry.grant = Some(grant);
+    entry.version += 1;
+    entry.updated = identity::now();
+    let challenge = match identity::challenge(&entry) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("redeem: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let allow: Vec<serde_json::Value> = entry
+        .passkeys
+        .iter()
+        .map(|p| serde_json::json!({ "type": "public-key", "id": p.id }))
+        .collect();
+    let ceremony = app.ceremony_put(Ceremony::JoinSign { entry });
+    Json(serde_json::json!({
+        "ceremony": ceremony,
+        "publicKey": {
+            "challenge": B64_URL.encode(challenge),
+            "timeout": 60000,
+            "rpId": app.domain,
+            "allowCredentials": allow,
             "userVerification": "preferred",
         }
     }))
@@ -736,9 +890,14 @@ pub async fn start(
     cfg: Config,
 ) -> Result<(std::net::SocketAddr, tokio::task::JoinHandle<Result<()>>)> {
     std::fs::create_dir_all(&cfg.dir)?;
+    let release = match &cfg.release_pub {
+        Some(k) => Some(identity::decode_public(k).map_err(|e| anyhow!("release key: {e}"))?),
+        None => None,
+    };
     let directory = Arc::new(directory::Directory::open(
         cfg.dir.clone(),
         cfg.peers.clone(),
+        release,
     )?);
     tokio::spawn(directory.clone().sync_forever(cfg.sync_secs));
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
@@ -801,6 +960,8 @@ pub async fn start(
         .route("/_dd/join/start", post(join_start))
         .route("/_dd/join/finish", post(join_finish))
         .route("/_dd/join/sign", post(join_sign))
+        .route("/_dd/redeem/start", post(redeem_start))
+        .route("/_dd/redeem/sign", post(join_sign))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
         .route("/_dd/enrol/result", get(enrol_result))
