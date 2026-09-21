@@ -77,7 +77,15 @@ impl Directory {
     pub fn entry(&self, name: &str) -> Result<Option<identity::SignedEntry>> {
         let p = self.dir.join(format!("{name}.json"));
         match std::fs::read(&p) {
-            Ok(b) => Ok(Some(serde_json::from_slice(&b)?)),
+            Ok(b) => {
+                let e: identity::SignedEntry = serde_json::from_slice(&b)?;
+                if guest_expired(&e.entry) {
+                    // a probe's account, past its time: gone, name free again
+                    let _ = std::fs::remove_file(&p);
+                    return Ok(None);
+                }
+                Ok(Some(e))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -195,7 +203,7 @@ impl Directory {
                 .error_for_status()?
                 .json()
                 .await?;
-            if theirs.entry.name != l.name {
+            if theirs.entry.name != l.name || guest_expired(&theirs.entry) {
                 continue;
             }
             if let Some(g) = &theirs.entry.grant {
@@ -330,6 +338,20 @@ async fn put_entry(
         Ok(()) => Json(serde_json::json!({ "accepted": true, "version": version })).into_response(),
         Err((status, why)) => (status, why).into_response(),
     }
+}
+
+/// Names that begin with `guest` are for probes: a walk of the fleet as a
+/// stranger, after a release. Nobody keeps one; a box drops the entry this
+/// long after its last update, grant and all, and never pulls an old one.
+pub const GUEST_PREFIX: &str = "guest";
+pub const GUEST_TTL: u64 = 15 * 60;
+
+pub fn is_guest(name: &str) -> bool {
+    name.starts_with(GUEST_PREFIX)
+}
+
+fn guest_expired(e: &identity::Entry) -> bool {
+    is_guest(&e.name) && e.updated + GUEST_TTL < identity::now()
 }
 
 fn invite_file_name(public_key: &str) -> String {

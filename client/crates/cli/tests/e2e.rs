@@ -787,6 +787,12 @@ async fn an_invite_code_lets_one_person_in_once() {
         "eve is revoked"
     );
 
+    // guest names are for probes, and a probe's account is dropped in time
+    let mut probe = SoftPasskey::new(true);
+    let (st, why) = join_in_browser(&a, &mut probe, "guest7").await;
+    assert_eq!(st, 400, "{why}");
+    assert!(why.contains("reserved"), "{why}");
+
     // an expired code is nothing
     let out = owner.dd_ok(&args(&["invite", "--ttl", "1s"], &d));
     let code3 = out

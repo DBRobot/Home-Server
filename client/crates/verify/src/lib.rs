@@ -428,12 +428,25 @@ fn user_uuid(user: &str) -> Uuid {
 /// the root; the entry naming it is signed by that passkey's assertion over
 /// the entry's hash. This box assembles the bytes and asks; it holds no key
 /// that could sign them, and every box checks the result the same way.
-async fn join_start(State(app): State<Arc<App>>, Json(q): Json<LoginStart>) -> Response {
+async fn join_start(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Json(q): Json<LoginStart>,
+) -> Response {
     let user = q.username.trim().to_lowercase();
     if !valid_user(&user) {
         return (
             StatusCode::BAD_REQUEST,
             "a name is lowercase letters, digits, - _ or . (64 at most)",
+        )
+            .into_response();
+    }
+    // guest names are for the fleet's own probes and are dropped after
+    // minutes; a person typing one would lose the account. A probe says so.
+    if directory::is_guest(&user) && headers.get("x-dd-probe").is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "names starting with guest are reserved; pick another",
         )
             .into_response();
     }
