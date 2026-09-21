@@ -100,7 +100,9 @@ in
     # with a down the cluster refuses new writes: two copies or nothing.
     # Asked directly, not through restic, which retries for a quarter hour
     # before it agrees
-    b.fail(
+    # b learns a is gone a moment after it is; until then a write may still
+    # land on a as it dies. Wait for the refusal rather than expect it at once
+    b.wait_until_fails(
         "set -a; . ${(storageBox "b").dd.backup.envFile}; "
         "AWS_MAX_ATTEMPTS=1 aws --endpoint-url http://127.0.0.1:3900 s3 cp /etc/hostname s3://backups-b/probe"
     )
