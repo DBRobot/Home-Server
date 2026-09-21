@@ -169,6 +169,13 @@ in
           garage layout apply --version "$VER" 2>/dev/null && break
           sleep 5
         done
+        # The other box may have applied the layout a moment ago; it reaches
+        # this one by gossip. Give that half a minute before deciding there
+        # is no layout, or the buckets and keys below wait for the timer
+        for i in $(seq 1 6); do
+          garage layout show 2>/dev/null | grep -q "Current cluster layout version: [1-9]" && break
+          sleep 5
+        done
         # no layout yet: nothing below can be stored, the timer comes back
         if ! garage layout show 2>/dev/null | grep -q "Current cluster layout version: [1-9]"; then
           echo "layout not applied yet: waiting for the other box"
