@@ -31,6 +31,8 @@ in
   services.nginx = {
     enable = true;
     recommendedProxySettings = true;
+    # the chat page alone is a 5M script; a phone on the tailnet felt it
+    recommendedGzipSettings = true;
     # A name nothing here serves (a retired one, or a guess) used to land on
     # whichever vhost nginx listed first. Now it gets no tls handshake at all.
     virtualHosts."_" = {

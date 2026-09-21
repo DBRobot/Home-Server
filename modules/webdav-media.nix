@@ -92,4 +92,28 @@ in
   systemd.tmpfiles.rules = [
     "d /srv/upload-tmp 0700 nginx nginx -"
   ];
+
+  # A folder for every name in the directory, the moment the entry lands:
+  # without it a new person's first PROPFIND is a 404. nginx owns it, as it
+  # owns what it writes there. An existing folder is left as it is.
+  systemd.services.dd-user-dirs = {
+    description = "A folder under ${root} for every name in the directory";
+    serviceConfig.Type = "oneshot";
+    script = ''
+      for f in /var/lib/dd-verify/keys/*.json; do
+        [ -e "$f" ] || continue
+        n=$(basename "$f" .json)
+        case "$n" in *[!a-zA-Z0-9._-]*|.*) continue ;; esac
+        [ -d "${root}/$n" ] || install -d -o nginx -g nginx -m 0750 "${root}/$n"
+      done
+    '';
+    wantedBy = [ "multi-user.target" ];
+  };
+  systemd.paths.dd-user-dirs = {
+    wantedBy = [ "multi-user.target" ];
+    pathConfig = {
+      PathChanged = "/var/lib/dd-verify/keys";
+      Unit = "dd-user-dirs.service";
+    };
+  };
 }

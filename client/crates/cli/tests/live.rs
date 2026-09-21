@@ -183,6 +183,18 @@ async fn a_guest_walks_every_tile() {
 
     // Chat: the gateway lets the guest in
     let (hops, st, body) = walk(&http, &cookie, &format!("https://llm.{base}/")).await;
+    if let Ok(dir) = std::env::var("DD_LIVE_DUMP") {
+        std::fs::write(format!("{dir}/chat.html"), &body).unwrap();
+        // what the page's own first requests get
+        for path in ["/props", "/v1/models", "/index.html"] {
+            let (_, st, b) = walk(&http, &cookie, &format!("https://llm.{base}{path}")).await;
+            std::fs::write(
+                format!("{dir}/chat{}.txt", path.replace('/', "_")),
+                format!("{st}\n{b}"),
+            )
+            .unwrap();
+        }
+    }
     report(
         "Chat",
         st == 200 && !body.contains("/_dd/login"),
@@ -210,10 +222,12 @@ async fn a_guest_walks_every_tile() {
             break;
         }
     }
+    // the plugin answers a failed callback with an error status; a 200 is
+    // its landing page, which stores the jellyfin session in the browser
     match videos {
         Some((hops, st, body)) => report(
             "Videos",
-            st == 200 && !body.to_lowercase().contains("error"),
+            st == 200 && body.contains("localStorage"),
             format!("{st} ({} bytes)  {}", body.len(), hops.join(" -> ")),
         ),
         None => report("Videos", false, "no sso start url answered".into()),

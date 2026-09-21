@@ -371,8 +371,11 @@ impl Directory {
             return Err("this box holds no release key to check invites with".into());
         };
         identity::verify_invite(inv, release).map_err(|e| format!("refused: {e}"))?;
-        if inv.invite.expires <= identity::now() {
-            return Err("that invite has already expired".into());
+        // a window that never opened is refused; one about to close is held,
+        // and `invite` drops it the moment it has: a short ttl must not lose
+        // the race between minting and this put
+        if inv.invite.expires <= inv.invite.issued {
+            return Err("that invite has no window".into());
         }
         let p = self
             .invites

@@ -15,7 +15,9 @@
   dd.home.services = [
     {
       name = "Videos";
-      url = "https://jellyfin.${config.dd.domain}/";
+      # straight into the sso plugin: jellyfin's own login page is for
+      # nobody here, and a first-time person landing on it is lost
+      url = "https://jellyfin.${config.dd.domain}/sso/OID/p/dd";
       description = "Movies and series, on any screen.";
       icon = "videos";
       color = "#b4457a";
