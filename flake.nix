@@ -10,6 +10,9 @@
     # rust builds in two layers: every dependency once, cached in the
     # bucket until Cargo.lock changes; our crates on top, a minute
     crane.url = "github:ipetkov/crane";
+    # a toolchain with the wasm32 target, for the browser side
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -19,6 +22,7 @@
       sops-nix,
       disko,
       crane,
+      rust-overlay,
       ...
     }:
     let
@@ -55,6 +59,34 @@
         let
           craneLib = crane.mkLib pkgs;
           src = craneLib.cleanCargoSource ./client;
+          # the same toolchain, plus the wasm32 target; nixpkgs' rustc
+          # ships no std for it
+          wasmToolchain = (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.minimal.override {
+            targets = [ "wasm32-unknown-unknown" ];
+          };
+          craneWasm = craneLib.overrideToolchain wasmToolchain;
+          wasmCommon = {
+            inherit src;
+            strictDeps = true;
+            doCheck = false;
+            CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
+            cargoExtraArgs = "-p dd-web";
+          };
+          wasmArtifacts = craneWasm.buildDepsOnly (
+            wasmCommon
+            // {
+              pname = "dd-web-deps";
+              version = "0.1.0";
+            }
+          );
+          wasmBuild = craneWasm.buildPackage (
+            wasmCommon
+            // {
+              pname = "dd-web";
+              version = "0.1.0";
+              cargoArtifacts = wasmArtifacts;
+            }
+          );
           common = {
             inherit src;
             strictDeps = true;
@@ -83,6 +115,12 @@
           # runs on a server and has no business pulling in the keyring/dbus
           # stack that the cli needs.
           verify = crate "verify" "-p verify";
+          # Our Rust in the browser: the ente account for a person whose key
+          # is a passkey (crates/web). The verifier serves this directory.
+          web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
+            mkdir -p $out
+            wasm-bindgen --target web --no-typescript --out-dir $out ${wasmBuild}/lib/dd_web.wasm
+          '';
         };
 
       # Boxes booted as vms and driven through the failure cases, so the

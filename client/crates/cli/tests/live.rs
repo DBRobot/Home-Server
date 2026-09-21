@@ -233,12 +233,24 @@ async fn a_guest_walks_every_tile() {
         None => report("Videos", false, "no sso start url answered".into()),
     }
 
-    // Photos is ente's own account, made in its app: not a thing a cookie opens
-    let (_, st, _) = walk(&http, &cookie, &format!("https://photos.{base}/")).await;
+    // Photos: our page, which asks the passkey for the account's secret; a
+    // software passkey has no PRF, so the walk stops at the page itself
+    let (hops, st, body) = walk(&http, &cookie, &format!("https://photos.{base}/_dd/photos")).await;
     report(
         "Photos",
+        st == 200 && body.contains("/_dd/web/dd_web.js"),
+        format!("{st}, the passkey page  {}", hops.join(" -> ")),
+    );
+    let (_, st, _) = walk(
+        &http,
+        &cookie,
+        &format!("https://photos.{base}/_dd/web/dd_web.js"),
+    )
+    .await;
+    report(
+        "Photos wasm",
         st == 200,
-        format!("{st}, ente's own signup from here"),
+        format!("{st} for the browser-side rust"),
     );
 
     assert!(failed.is_empty(), "tiles that failed the guest: {failed:?}");

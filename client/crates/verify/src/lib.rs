@@ -49,6 +49,8 @@ struct App {
     members: Option<Members>,
     /// the passkeys' relying party: what a join asks the browser to sign for
     domain: String,
+    web_dir: Option<PathBuf>,
+    photos: Option<Photos>,
 }
 
 enum Ceremony {
@@ -92,6 +94,22 @@ pub struct Config {
     /// The release key, base64: what signs an invite. A person whose entry
     /// carries a grant this key made is a member too, unless revoked.
     pub release_pub: Option<String>,
+    /// Our Rust for the browser (crates/web, built by the flake), served
+    /// under /_dd/web/. None: no pages that need it.
+    pub web_dir: Option<PathBuf>,
+    /// Photos: the ente account a passkey opens (pages::photos). None on a
+    /// box without the photos role.
+    pub photos: Option<Photos>,
+}
+
+/// What the photos page needs to make or open an ente account for a person:
+/// museum's address, the address suffix under which museum takes our
+/// verification code, and that code.
+#[derive(Clone, Debug)]
+pub struct Photos {
+    pub api: String,
+    pub email_suffix: String,
+    pub code: String,
 }
 
 /// fleet/members.json: ids let in, ids shut out. The file is either a bare
@@ -805,6 +823,65 @@ async fn demo(State(app): State<Arc<App>>) -> Response {
     r
 }
 
+/// The browser-side Rust, as wasm-bindgen laid it out: a .js and a .wasm.
+async fn web_file(
+    State(app): State<Arc<App>>,
+    axum::extract::Path(file): axum::extract::Path<String>,
+) -> Response {
+    let Some(dir) = &app.web_dir else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if file.contains('/') || file.starts_with('.') {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let ty = match file.rsplit('.').next() {
+        Some("js") => "application/javascript",
+        Some("wasm") => "application/wasm",
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    match std::fs::read(dir.join(&file)) {
+        Ok(b) => ([("content-type", ty), ("cache-control", "max-age=3600")], b).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Photos, opened with the passkey: the page runs our wasm against ente.
+async fn photos_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        // the demo has no passkey and no account: back to the tiles
+        Some(user) if user == pages::DEMO_USER => Redirect::to("/_dd/home").into_response(),
+        Some(user) if app.member(&user) && app.photos.is_some() => {
+            Html(pages::photos(&user)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to("/_dd/login?rd=/_dd/photos").into_response(),
+    }
+}
+
+/// What the photos page needs, for a member with a session: museum's
+/// address, this person's address there, the passkey relying party, and the
+/// verification code museum takes for addresses of ours.
+async fn photos_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    let Some(user) = app.sessions.user(cookie) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !app.member(&user) || user == pages::DEMO_USER {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(p) = &app.photos else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    Json(serde_json::json!({
+        "api": p.api,
+        "email": format!("{user}{}", p.email_suffix),
+        "rpId": app.domain,
+        "code": p.code,
+    }))
+    .into_response()
+}
+
 async fn logout(State(app): State<Arc<App>>) -> Response {
     let mut r = Redirect::to("/").into_response();
     r.headers_mut().insert(
@@ -1006,6 +1083,8 @@ pub async fn start(
         home: cfg.home,
         members: cfg.members,
         domain: domain.clone(),
+        web_dir: cfg.web_dir,
+        photos: cfg.photos,
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -1024,6 +1103,9 @@ pub async fn start(
         .route("/_dd/redeem/start", post(redeem_start))
         .route("/_dd/redeem/sign", post(join_sign))
         .route("/_dd/demo", get(demo))
+        .route("/_dd/web/{file}", get(web_file))
+        .route("/_dd/photos", get(photos_page))
+        .route("/_dd/photos/config", post(photos_config))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
         .route("/_dd/enrol/result", get(enrol_result))

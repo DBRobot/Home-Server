@@ -112,6 +112,7 @@ const r=await fetch('/_dd/join/start',{method:'POST',headers:{'content-type':'ap
 const {publicKey,ceremony}=await r.json();
 publicKey.challenge=b64u(publicKey.challenge);publicKey.user.id=b64u(publicKey.user.id);
 if(publicKey.excludeCredentials)publicKey.excludeCredentials=publicKey.excludeCredentials.map(c=>({...c,id:b64u(c.id)}));
+publicKey.extensions={...(publicKey.extensions||{}),prf:{}};
 const cred=await navigator.credentials.create({publicKey});
 const body={id:cred.id,rawId:u8b64(cred.rawId),type:cred.type,extensions:cred.getClientExtensionResults(),response:{
 attestationObject:u8b64(cred.response.attestationObject),clientDataJSON:u8b64(cred.response.clientDataJSON)}};
@@ -181,6 +182,7 @@ if(!r.ok)throw new Error(await r.text());
 const {publicKey,ceremony}=await r.json();
 publicKey.challenge=b64u(publicKey.challenge);publicKey.user.id=b64u(publicKey.user.id);
 if(publicKey.excludeCredentials)publicKey.excludeCredentials=publicKey.excludeCredentials.map(c=>({...c,id:b64u(c.id)}));
+publicKey.extensions={...(publicKey.extensions||{}),prf:{}};
 const cred=await navigator.credentials.create({publicKey});
 const body={id:cred.id,rawId:u8b64(cred.rawId),type:cred.type,extensions:cred.getClientExtensionResults(),response:{
 attestationObject:u8b64(cred.response.attestationObject),clientDataJSON:u8b64(cred.response.clientDataJSON)}};
@@ -291,6 +293,71 @@ signature:u8b64(a.response.signature),userHandle:a.response.userHandle?u8b64(a.r
 const g=await fetch('/_dd/redeem/sign',{method:'POST',headers:{'content-type':'application/json','x-dd-ceremony':s.ceremony},body:JSON.stringify(body)});
 if(!g.ok)throw new Error(await g.text());location.href='/_dd/home';}catch(e){m.textContent='That did not work: '+e.message}}
 document.getElementById('go').onclick=go;
+</script>"#;
+
+/// Photos: a person's ente account, opened by their passkey. Nothing to
+/// type; the page asks the passkey for its PRF secret, and our Rust in the
+/// browser makes or opens the account with it and hands ente's app a
+/// signed-in session. The master key never leaves this tab.
+pub fn photos(user: &str) -> String {
+    let mut out = open("Photos", AUTH_CSS, &me_bar(user));
+    out.push_str(&format!(
+        r#"<main><div class="card" data-user="{}">
+<h1>Photos</h1><p class="lead">Unlocking with your passkey.</p>
+<div id="msg">…</div>
+<div id="link" hidden>
+<p class="lead" style="margin-top:18px">No photo account for this passkey yet. Made one here before, with an email and a password? Sign in with it once and it becomes this passkey's. Otherwise start fresh.</p>
+<label for="le">Email</label><input id="le" autocomplete="email" autocapitalize="none" spellcheck="false">
+<label for="lp" style="margin-top:14px">Password</label><input id="lp" type="password" autocomplete="current-password">
+<button id="adopt">Link that account</button>
+<button id="fresh" style="margin-top:10px;background:var(--bg-2);color:var(--ink)">Start fresh</button>
+</div>
+<p class="note">Your photos are encrypted with a key only your passkey can make. No box holds it; nobody here can look.</p>
+</div></main>"#,
+        esc(user)
+    ));
+    out.push_str(PHOTOS_JS);
+    out.push_str("</body></html>");
+    out
+}
+
+const PHOTOS_JS: &str = r#"<script type="module">
+import init, { ente_login, ente_create, ente_adopt } from '/_dd/web/dd_web.js';
+const m=document.getElementById('msg');
+const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const u8b64=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function go(){try{
+const user=document.querySelector('.card').dataset.user;
+const c=await fetch('/_dd/photos/config',{method:'POST'});if(!c.ok)throw new Error('photos is not on this box');const cfg=await c.json();
+const e=await fetch('/_dd/directory/'+encodeURIComponent(user));if(!e.ok)throw new Error('no entry');
+const allow=((await e.json()).entry.passkeys||[]).map(p=>({type:'public-key',id:b64u(p.id)}));
+if(!allow.length)throw new Error('this account has no passkey in a browser yet: dd enrol adds one');
+const salt=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('dd-photos')));
+const a=await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rpId:cfg.rpId,allowCredentials:allow,userVerification:'preferred',extensions:{prf:{eval:{first:salt}}}}});
+const prf=a.getClientExtensionResults().prf;const secret=prf&&prf.results&&prf.results.first;
+if(!secret)throw new Error('this passkey cannot make the photos key on this browser; try your phone');
+const password=u8b64(secret);
+await init();
+m.textContent='Opening your photos…';
+let s;
+try{s=JSON.parse(await ente_login(cfg.api,cfg.email,password));}
+catch(err){if(!/404|not found|user not/i.test(String(err)))throw err;
+// no account under this passkey yet: link one made before, or start fresh
+s=await new Promise((res,rej)=>{const l=document.getElementById('link');l.hidden=false;m.textContent='';
+document.getElementById('adopt').onclick=async()=>{try{m.textContent='Linking…';l.hidden=true;
+res(JSON.parse(await ente_adopt(cfg.api,document.getElementById('le').value.trim(),document.getElementById('lp').value,cfg.email,password,cfg.code)));}catch(e){rej(e)}};
+document.getElementById('fresh').onclick=async()=>{try{m.textContent='Making your photo account…';l.hidden=true;
+res(JSON.parse(await ente_create(cfg.api,cfg.email,password,cfg.code)));}catch(e){rej(e)}};});}
+await seed(s);
+}catch(err){m.textContent='Could not open Photos: '+(err&&err.message||err);}}
+async function seed(s){
+localStorage.setItem('user',JSON.stringify({id:s.userId,email:s.email,token:s.token}));
+localStorage.setItem('keyAttributes',JSON.stringify(s.keyAttributes));
+sessionStorage.setItem('encryptionKey',JSON.stringify(s.sessionKey));
+await new Promise((res,rej)=>{const r=indexedDB.open('kv',1);r.onupgradeneeded=()=>{r.result.createObjectStore('kv')};r.onerror=()=>rej(r.error);
+r.onsuccess=()=>{const tx=r.result.transaction('kv','readwrite');tx.objectStore('kv').put(s.token,'token');tx.oncomplete=()=>{r.result.close();res()};tx.onerror=()=>rej(tx.error)}});
+location.replace('/');}
+go();
 </script>"#;
 
 /// The signed-in home page: the services this box offers, as tiles. Server
@@ -409,12 +476,22 @@ mod tests {
     }
 
     #[test]
+    fn photos_page_asks_the_passkey_and_runs_our_wasm() {
+        let html = photos("tom");
+        assert!(html.contains("data-user=\"tom\""));
+        assert!(html.contains("/_dd/web/dd_web.js"));
+        assert!(html.contains("prf"));
+        assert!(html.contains("/_dd/photos/config"));
+    }
+
+    #[test]
     fn dump_pages_for_a_look() {
         if let Ok(dir) = std::env::var("DD_DUMP_PAGES") {
             std::fs::write(format!("{dir}/login.html"), login()).unwrap();
             std::fs::write(format!("{dir}/enrol.html"), enrol()).unwrap();
             std::fs::write(format!("{dir}/join.html"), join()).unwrap();
             std::fs::write(format!("{dir}/waiting.html"), waiting("tom")).unwrap();
+            std::fs::write(format!("{dir}/photos.html"), photos("tom")).unwrap();
         }
     }
 

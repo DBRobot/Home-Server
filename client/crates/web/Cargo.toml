@@ -1,0 +1,22 @@
+[package]
+name = "dd-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Our Rust in the browser: the ente account for a person whose key is a passkey"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# ente's own account protocol and crypto, the same pinned commit as crate ente
+ente-accounts = { git = "https://github.com/ente-io/ente", rev = "d28c3462e70bf63f8323700ce77797237a0fd1b4" }
+ente-core = { git = "https://github.com/ente-io/ente", rev = "d28c3462e70bf63f8323700ce77797237a0fd1b4" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+zeroize = "1"
+# the version nixpkgs' wasm-bindgen-cli speaks; the two must match exactly
+wasm-bindgen = "=0.2.121"
+wasm-bindgen-futures = "0.4"
+getrandom = { version = "0.4", features = ["wasm_js"] }

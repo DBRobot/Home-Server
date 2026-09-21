@@ -5,6 +5,14 @@
     ../modules/ente.nix
   ];
   sops.secrets = {
+    # museum's verification code for addresses under users.<domain>: the
+    # photos page sends it when it makes a person's account, so it is read
+    # by museum (as ente) and by the verifier (as dd-verify), one key twice
+    ente-ott.owner = "ente";
+    ente-ott-verify = {
+      key = "ente-ott";
+      owner = "dd-verify";
+    };
     garage-key-id.owner = "ente";
     garage-key-secret.owner = "ente";
     ente-key-encryption.owner = "ente";
@@ -13,15 +21,20 @@
     ente-smtp-password.owner = "ente";
   };
 
+  dd.verify.photos = {
+    api = "https://api.${config.dd.domain}";
+    emailSuffix = "@users.${config.dd.domain}";
+    codeFile = config.sops.secrets.ente-ott-verify.path;
+  };
   dd.home.services = [
     {
       name = "Photos";
-      url = "https://photos.${config.dd.domain}/";
+      # the passkey opens it: the page makes or opens the ente account in
+      # the browser and hands ente's app the session
+      url = "https://photos.${config.dd.domain}/_dd/photos";
       # the demo sees a public album, if one is shared (dd.demo.album)
       demo = config.dd.demo.album;
-      # ente keeps its own account, on purpose: the photos are encrypted
-      # with a key only that account holds, so no box can read them
-      description = "Backed up from your phone, encrypted so only you can see them. Made with its own sign-up inside.";
+      description = "Your photos and videos, backed up from your phone. Encrypted with a key only your passkey makes.";
       icon = "photos";
       color = "#d9822b";
       rank = 10;
