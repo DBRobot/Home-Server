@@ -214,6 +214,10 @@ in
                   proxy_pass_request_body off;
                   proxy_set_header Content-Length "";
                   proxy_set_header X-Original-URI $request_uri;
+                  # the demo's leash is held in the verifier: it needs the
+                  # method and, via Host, where the request was going
+                  proxy_set_header X-Original-Method $request_method;
+                  proxy_set_header X-Original-Host $host;
                   # The subrequest inherits nothing from the location that
                   # made it, so it ran with nginx's default 1m body limit.
                   # When a large PUT was still arriving as the auth phase ran,

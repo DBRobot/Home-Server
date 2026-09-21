@@ -868,10 +868,13 @@ async fn the_demo_is_a_member_with_nothing_of_its_own() {
         .next()
         .unwrap()
         .to_string();
-    // a member to the gate, named demo so each service can decide
+    // a member to the gate, named demo so each service can decide; a read
+    // on a host a demo tile opens
     let r = reqwest::Client::new()
         .get(a.url("/verify"))
         .header("cookie", &cookie)
+        .header("x-original-method", "GET")
+        .header("x-original-host", "files.x")
         .send()
         .await
         .unwrap();
@@ -884,6 +887,30 @@ async fn the_demo_is_a_member_with_nothing_of_its_own() {
             .unwrap(),
         "demo"
     );
+    // a read where a tile sends it: yes. A write, or a host without a
+    // tile: no. nginx tells the gate the method and the host
+    let gate = |method: &str, host: &str| {
+        let c = cookie.clone();
+        let u = a.url("/verify");
+        let (method, host) = (method.to_string(), host.to_string());
+        async move {
+            reqwest::Client::new()
+                .get(u)
+                .header("cookie", c)
+                .header("x-original-method", method)
+                .header("x-original-host", host)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+    };
+    assert_eq!(gate("GET", "files.x").await, 200);
+    assert_eq!(gate("PROPFIND", "files.x").await, 200);
+    assert_eq!(gate("PUT", "files.x").await, 403);
+    assert_eq!(gate("DELETE", "files.x").await, 403);
+    assert_eq!(gate("GET", "llm.x").await, 403);
     // the banner, the demo tiles, not the others
     let (st, body) = get_with_cookie(&a, "/_dd/home", &cookie).await;
     assert_eq!(st, 200);

@@ -50,10 +50,8 @@ in
     locations."/".extraConfig = dav root "html" + ''
       error_page 401 = @login;
       error_page 403 = @waiting;
-      # the demo reads its folder of samples and writes nothing
-      if ($demo_write) {
-        return 403;
-      }
+      # the demo reads its folder of samples and writes nothing: the gate
+      # refuses its writing methods
     '';
     # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
     # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,
@@ -69,13 +67,7 @@ in
   # This is a map and not `if ($dav_user = "")` because if runs in the rewrite
   # phase, before auth_request has set the variable: the test would always see
   # an empty string. Map variables are evaluated where they are used.
-  # the demo account may look, not touch: any writing dav method from it
-  # is refused before the dav module sees it
   services.nginx.appendHttpConfig = ''
-    map "$dav_user:$request_method" $demo_write {
-      default 0;
-      "~^demo:(PUT|DELETE|MKCOL|COPY|MOVE|PROPPATCH|LOCK|UNLOCK)$" 1;
-    }
 
     map $dav_user $dav_dir {
       # __denied__ is a real 0555 root-owned directory created by
