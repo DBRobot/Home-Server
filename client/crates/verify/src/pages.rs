@@ -25,7 +25,7 @@ const HOME_CSS: &str = r##"main{max-width:980px;margin:0 auto;padding-inline:24p
 .tile:hover{transform:translateY(-2px);box-shadow:var(--shadow-hover)}
 .icon{width:56px;height:56px;border-radius:14px;display:grid;place-items:center;color:#fff;box-shadow:inset 0 -2px 0 rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.18)}.icon svg{width:28px;height:28px}
 .tile h2{margin:0 0 4px;font-size:18px;font-weight:650;letter-spacing:-.01em}.tile p{margin:0;color:var(--ink-2);font-size:14px;line-height:1.45}
-.empty{color:var(--ink-2)}@media (prefers-reduced-motion:reduce){.tile{transition:none}.tile:hover{transform:none}}
+.empty{color:var(--ink-2)}.banner{margin:0 0 24px;padding:14px 18px;border-radius:12px;background:var(--card);box-shadow:var(--shadow);color:var(--ink-2);font-size:14px;border-left:4px solid var(--brand)}@media (prefers-reduced-motion:reduce){.tile{transition:none}.tile:hover{transform:none}}
 "##;
 
 const AUTH_CSS: &str = r##"main{max-width:420px;margin:0 auto;padding-inline:24px;padding-block:56px 72px}
@@ -65,7 +65,7 @@ pub fn login() -> String {
 <label for="u">Username</label>
 <input id="u" autocomplete="username webauthn" autocapitalize="none" spellcheck="false">
 <button id="go">Use passkey</button><div id="msg"></div>
-<p class="note">New here? <a href="/_dd/join">Create an account</a>.<br>Have a device with <code>dd</code> on it? Run <code>dd enrol</code> there and open the link it prints.</p>
+<p class="note">New here? <a href="/_dd/join">Create an account</a>, or <a href="/_dd/demo">look around first</a>.<br>Have a device with <code>dd</code> on it? Run <code>dd enrol</code> there and open the link it prints.</p>
 "#);
     out.push_str(LOGIN_JS);
     out.push_str("</div></main></body></html>");
@@ -95,7 +95,7 @@ pub fn join() -> String {
 <label for="c" style="margin-top:14px">Invite code <span style="font-weight:400;color:var(--ink-2)">(if someone gave you one)</span></label>
 <input id="c" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxxx-xxxxx">
 <button id="go">Create passkey</button><div id="msg"></div>
-<p class="note">Already have one? <a href="/_dd/login">Sign in</a>.</p>
+<p class="note">Already have one? <a href="/_dd/login">Sign in</a>. Just looking? <a href="/_dd/demo">View the demo</a>.</p>
 "#);
     out.push_str(INVITE_JS);
     out.push_str(JOIN_JS);
@@ -202,7 +202,15 @@ pub struct Service {
     pub icon: String,
     /// a css colour for the tile's icon
     pub color: String,
+    /// where the demo visitor goes for this tile; None: the tile is not in
+    /// the demo
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demo: Option<String>,
 }
+
+/// The account that needs no invite and no key: a look at what a member
+/// sees, with nothing of their own and nothing kept.
+pub const DEMO_USER: &str = "demo";
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -288,16 +296,30 @@ document.getElementById('go').onclick=go;
 /// The signed-in home page: the services this box offers, as tiles. Server
 /// rendered, so the browser runs nothing.
 pub fn home(user: &str, services: &[Service]) -> String {
+    let demo = user == DEMO_USER;
     let mut out = open("Distributed Datacenter", HOME_CSS, &me_bar(user));
-    out.push_str("<main><h1>Your services</h1>");
-    if services.is_empty() {
+    if demo {
+        out.push_str(r#"<main><div class="banner"><strong>This is a demo.</strong> You are seeing what a member sees, without the keys: nothing here is yours, nothing you do is kept, and some doors stay shut. To join, someone who is in gives you a code.</div><h1>The services</h1>"#);
+    } else {
+        out.push_str("<main><h1>Your services</h1>");
+    }
+    let shown: Vec<&Service> = services
+        .iter()
+        .filter(|s| !demo || s.demo.is_some())
+        .collect();
+    if shown.is_empty() {
         out.push_str(r#"<p class="empty">Nothing runs here yet.</p>"#);
     } else {
         out.push_str(r#"<ul class="grid">"#);
-        for s in services {
+        for s in shown {
+            let url = if demo {
+                s.demo.as_deref().unwrap_or(&s.url)
+            } else {
+                &s.url
+            };
             out.push_str(&format!(
                 r#"<li><a class="tile" href="{}"><span class="icon" style="background:{}" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">{}</svg></span><span><h2>{}</h2><p>{}</p></span></a></li>"#,
-                esc(&s.url),
+                esc(url),
                 esc(&s.color),
                 icon(&s.icon),
                 esc(&s.name),
@@ -321,6 +343,7 @@ mod tests {
             description: "what it is".into(),
             icon: icon.into(),
             color: "#123456".into(),
+            demo: None,
         }
     }
 
@@ -356,6 +379,33 @@ mod tests {
         assert!(html.contains("/_dd/logout"));
         assert!(!html.contains("class=\"tile\""));
         assert!(html.contains("/_dd/redeem/start"));
+    }
+
+    #[test]
+    fn the_demo_sees_only_demo_tiles_and_a_banner() {
+        let a = Service {
+            name: "Files".into(),
+            url: "https://files.x/".into(),
+            description: "d".into(),
+            icon: "files".into(),
+            color: "#000".into(),
+            demo: Some("https://files.x/demo/".into()),
+        };
+        let b = Service {
+            name: "Chat".into(),
+            url: "https://llm.x/".into(),
+            description: "d".into(),
+            icon: "chat".into(),
+            color: "#000".into(),
+            demo: None,
+        };
+        let html = home(DEMO_USER, &[a.clone(), b.clone()]);
+        assert!(html.contains("This is a demo"));
+        assert!(html.contains("https://files.x/demo/"));
+        assert!(!html.contains("Chat"));
+        let html = home("tom", &[a, b]);
+        assert!(!html.contains("This is a demo"));
+        assert!(html.contains("https://files.x/\"") && html.contains("Chat"));
     }
 
     #[test]

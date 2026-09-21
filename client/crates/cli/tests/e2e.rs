@@ -59,9 +59,20 @@ impl Box_ {
         members: Option<verify::Members>,
         release_pub: Option<String>,
     ) -> Self {
+        Self::start_home(full, peers, sync_secs, members, release_pub, vec![]).await
+    }
+    /// and the tiles this box offers
+    async fn start_home(
+        full: bool,
+        peers: Vec<String>,
+        sync_secs: u64,
+        members: Option<verify::Members>,
+        release_pub: Option<String>,
+        home: Vec<verify::pages::Service>,
+    ) -> Self {
         let dir = scratch("box").join("keys");
         let (addr, _task) = verify::start(verify::Config {
-            home: vec![],
+            home,
             members,
             release_pub,
             bind: "127.0.0.1:0".parse().unwrap(),
@@ -804,6 +815,87 @@ async fn an_invite_code_lets_one_person_in_once() {
     tokio::time::sleep(Duration::from_millis(2500)).await;
     let (st, _) = join_with_code(&a, &mut mallory, "mallory", Some(&code3)).await;
     assert_eq!(st, 404);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_demo_is_a_member_with_nothing_of_its_own() {
+    let tile = |name: &str, demo: Option<&str>| verify::pages::Service {
+        name: name.into(),
+        url: format!("https://{name}.x/"),
+        description: "d".into(),
+        icon: "".into(),
+        color: "#000".into(),
+        demo: demo.map(String::from),
+    };
+    // no tile lets the demo in: there is no demo
+    let plain = Box_::start_home(
+        true,
+        vec![],
+        300,
+        Some(verify::Members::list(vec![])),
+        None,
+        vec![tile("files", None)],
+    )
+    .await;
+    assert_eq!(get_with_cookie(&plain, "/_dd/demo", "").await.0, 404);
+
+    let a = Box_::start_home(
+        true,
+        vec![],
+        300,
+        Some(verify::Members::list(vec![])),
+        None,
+        vec![tile("files", Some("https://files.x/")), tile("llm", None)],
+    )
+    .await;
+    // one click: a session as demo, sent to the home page
+    let r = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+        .get(a.url("/_dd/demo"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 303);
+    let cookie = r
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    // a member to the gate, named demo so each service can decide
+    let r = reqwest::Client::new()
+        .get(a.url("/verify"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.headers()
+            .get("x-auth-request-preferred-username")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "demo"
+    );
+    // the banner, the demo tiles, not the others
+    let (st, body) = get_with_cookie(&a, "/_dd/home", &cookie).await;
+    assert_eq!(st, 200);
+    assert!(body.contains("This is a demo"), "{body}");
+    assert!(
+        body.contains("https://files.x/") && !body.contains("llm"),
+        "{body}"
+    );
+    // nobody takes the demo's name
+    let mut key = SoftPasskey::new(true);
+    let (st, why) = join_in_browser(&a, &mut key, "demo").await;
+    assert_eq!(st, 400, "{why}");
 }
 
 fn enrol_token(dev: &Device, b: &Box_) -> String {

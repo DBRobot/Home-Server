@@ -59,6 +59,11 @@ in
             default = 50;
             description = "tiles are shown in rank order";
           };
+          demo = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "where the demo account goes for this tile; null: the tile is not in the demo. The demo exists when any tile has one.";
+          };
         };
       }
     );
@@ -72,6 +77,11 @@ in
       members = [ ];
       revoked = [ ];
     };
+  };
+  options.dd.demo.album = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
+    default = null;
+    description = "A public album link (ente: share an album, public link) the demo's Photos tile opens. Null: no Photos in the demo.";
   };
   options.dd.verify.releasePublicKey = lib.mkOption {
     type = lib.types.nullOr lib.types.str;
