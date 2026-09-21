@@ -794,14 +794,14 @@ async fn an_invite_code_lets_one_person_in_once() {
     assert!(why.contains("reserved"), "{why}");
 
     // an expired code is nothing
-    let out = owner.dd_ok(&args(&["invite", "--ttl", "1s"], &d));
+    let out = owner.dd_ok(&args(&["invite", "--ttl", "2s"], &d));
     let code3 = out
         .lines()
         .find_map(|l| l.strip_prefix("code: "))
         .unwrap()
         .trim()
         .to_string();
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
     let (st, _) = join_with_code(&a, &mut mallory, "mallory", Some(&code3)).await;
     assert_eq!(st, 404);
 }
