@@ -36,7 +36,15 @@ in
         # generate-runner-token` and kept in sops; the runner registers on
         # first start and keeps its own credential in its state dir after
         tokenFile = config.sops.templates."forgejo-runner.env".path;
-        labels = [ "nix:host" ];
+        # nix: the job runs on a box with nix. gating: what this box builds and
+      # reports is what the fleet installs and what merges main; that is
+      # only ever a box the release signer owns (roles/runner.nix). A
+      # stranger's box, when there is one, gets a runner without the second
+      # label, a read-only cache key, and jobs whose verdicts are advisory.
+      labels = [
+        "nix:host"
+        "gating:host"
+      ];
         settings.runner.capacity = config.dd.runner.capacity;
         hostPackages = with pkgs; [
           bash
@@ -67,6 +75,8 @@ in
       home = "/var/lib/gitea-runner";
     };
     users.groups.forgejo-runner = { };
+    # (the nixos module registers again by itself when the token or the
+    # labels change, so a new scope reaches the forge on the next start)
     systemd.services."gitea-runner-${name}".serviceConfig = {
       DynamicUser = lib.mkForce false;
       User = lib.mkForce "forgejo-runner";

@@ -1,6 +1,8 @@
-# The entry point, for the forge on node1. Same tree as .github/workflows,
-# for the runner there: jobs run on this box with nix already present, so
-# nothing is installed and every build lands in the box's own store.
+# The entry point, for the forge on node1. Jobs run on a box with nix
+# already present, so nothing is installed and every build lands in the
+# box's own store. Every job here gates a merge or feeds the cache, so
+# every job will ask for a gating runner, a box the release signer owns,
+# once the runners carry that label (the release after this lands).
 # files_modified decides what changed; the leaves run only for the parts
 # that did.
 name: entry_point
