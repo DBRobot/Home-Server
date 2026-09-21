@@ -156,6 +156,31 @@ impl App {
         self.home.iter().any(|s| s.demo.is_some())
     }
 
+    /// What the demo may do: read, on a host one of its tiles opens. nginx
+    /// passes the original method and host with the gate's subrequest.
+    fn demo_allows(&self, headers: &HeaderMap) -> bool {
+        let method = headers
+            .get("x-original-method")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("GET");
+        if !matches!(method, "GET" | "HEAD" | "OPTIONS" | "PROPFIND") {
+            return false;
+        }
+        let host = headers
+            .get("x-original-host")
+            .or_else(|| headers.get("host"))
+            .and_then(|v| v.to_str().ok())
+            .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
+            .unwrap_or_default();
+        self.home.iter().any(|s| {
+            s.demo
+                .as_deref()
+                .and_then(|u| u.split("//").nth(1))
+                .and_then(|u| u.split('/').next())
+                .is_some_and(|h| h.eq_ignore_ascii_case(&host))
+        })
+    }
+
     fn member(&self, user: &str) -> bool {
         if user == pages::DEMO_USER {
             return self.demo();
@@ -319,6 +344,12 @@ async fn verify(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
         // 403, not 401: nginx sends a 401 to the login page, and this person
         // is logged in. They land on the home page, which says so.
         Some(user) if !app.member(&user) => StatusCode::FORBIDDEN.into_response(),
+        // the demo looks and does not touch: reads only, and only where a
+        // tile sends it. Decided here, where the name is certain; an nginx
+        // `if` runs before the gate has answered and cannot know it
+        Some(user) if user == pages::DEMO_USER && !app.demo_allows(&headers) => {
+            StatusCode::FORBIDDEN.into_response()
+        }
         Some(user) => {
             let mut r = StatusCode::OK.into_response();
             let v = HeaderValue::from_str(&user).unwrap();
