@@ -68,12 +68,10 @@
             ];
             # the tests of these two, not the workspace's: the helper's test
             # drives the dd binary, which only this derivation builds
-            cargoTestFlags = [
-              "-p"
-              "dd"
-              "-p"
-              "git-remote-dd"
-            ];
+            # the tests ran already, in ci's rust job, on this same source;
+            # nix running them again inside the build doubled every client
+            # change's cost for nothing
+            doCheck = false;
             nativeBuildInputs = [ pkgs.pkg-config ];
             # the encrypted-remote and signed-commit tests drive real git and ssh-keygen
             nativeCheckInputs = [
@@ -96,10 +94,10 @@
               "-p"
               "release"
             ];
-            cargoTestFlags = [
-              "-p"
-              "release"
-            ];
+            # the tests ran already, in ci's rust job, on this same source;
+            # nix running them again inside the build doubled every client
+            # change's cost for nothing
+            doCheck = false;
             nativeBuildInputs = [ pkgs.pkg-config ];
           };
 
@@ -116,10 +114,10 @@
               "-p"
               "verify"
             ];
-            cargoTestFlags = [
-              "-p"
-              "verify"
-            ];
+            # the tests ran already, in ci's rust job, on this same source;
+            # nix running them again inside the build doubled every client
+            # change's cost for nothing
+            doCheck = false;
             nativeBuildInputs = [ pkgs.pkg-config ];
           };
 

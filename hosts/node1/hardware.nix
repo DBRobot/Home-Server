@@ -13,6 +13,8 @@
   boot.zfs.extraPools = [ "vault" ];
 
   # Which pool holds what. vault is the 4T usb disk; tank the nvme root.
+  # 62G: three ci jobs at once (the 14G box takes the default two)
+  dd.runner.capacity = 3;
   dd.zfs.datasets = {
     "vault/photos" = {
       # garage's blocks: ente's and the media tier's ciphertext
