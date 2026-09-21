@@ -70,10 +70,12 @@ in
     a_id = a.succeed("set -a; . ${rpc}; garage node id -q").strip().split("@")[0]
     b.succeed(f"set -a; . ${rpc}; garage node connect {a_id}@a:3901")
     for m in (a, b):
-        m.succeed("systemctl start garage-setup.service")
-    a.wait_until_succeeds("set -a; . ${rpc}; garage layout show > /tmp/l && grep -q 'Current cluster layout version: [1-9]' /tmp/l")
+        m.succeed("systemctl restart garage-setup.service")
+    # both boxes hold the applied layout before the buckets and keys are made
     for m in (a, b):
-        m.succeed("systemctl start garage-setup.service") # buckets and keys, now that the layout exists
+        m.wait_until_succeeds("set -a; . ${rpc}; garage layout show > /tmp/l && grep -q 'Current cluster layout version: [1-9]' /tmp/l")
+    for m in (a, b):
+        m.succeed("systemctl restart garage-setup.service") # buckets and keys, now that the layout exists
 
     # a backs up, b backs up
     a.succeed("mkdir -p /srv/state && echo 'the thing worth having tomorrow' > /srv/state/file && head -c 2000000 /dev/urandom > /srv/state/blob")
@@ -97,7 +99,14 @@ in
     b.succeed("grep -q 'worth having tomorrow' /tmp/restore/srv/state/file")
     b.succeed("[ $(stat -c %s /tmp/restore/srv/state/blob) = 2000000 ]")
 
-    # with a down the cluster refuses new writes: two copies or nothing
-    b.fail("systemctl start restic-backups-dd.service")
+    # with a down the cluster refuses new writes: two copies or nothing.
+    # Asked directly, not through restic, which retries for a quarter hour
+    # before it agrees
+    # b learns a is gone a moment after it is; until then a write may still
+    # land on a as it dies. Wait for the refusal rather than expect it at once
+    b.wait_until_fails(
+        "set -a; . ${(storageBox "b").dd.backup.envFile}; "
+        "AWS_MAX_ATTEMPTS=1 aws --endpoint-url http://127.0.0.1:3900 s3 cp /etc/hostname s3://backups-b/probe"
+    )
   '';
 }
