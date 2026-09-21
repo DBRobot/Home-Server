@@ -83,6 +83,28 @@ in
     default = null;
     description = "A public album link (ente: share an album, public link) the demo's Photos tile opens. Null: no Photos in the demo.";
   };
+  options.dd.verify.photos = lib.mkOption {
+    type = lib.types.nullOr (
+      lib.types.submodule {
+        options = {
+          api = lib.mkOption {
+            type = lib.types.str;
+            description = "museum's address, e.g. https://api.<domain>";
+          };
+          emailSuffix = lib.mkOption {
+            type = lib.types.str;
+            description = "the address suffix museum takes our verification code for; a person's ente address is <name><suffix>";
+          };
+          codeFile = lib.mkOption {
+            type = lib.types.str;
+            description = "file holding that code, readable by the verifier";
+          };
+        };
+      }
+    );
+    default = null;
+    description = "Photos opened by passkey: the ente account made and opened in the browser (pages::photos). Set by the photos role.";
+  };
   options.dd.verify.releasePublicKey = lib.mkOption {
     type = lib.types.nullOr lib.types.str;
     description = "The release key, base64: what signs an invite (dd invite). Every box holds invites; the full one checks grants against this.";
@@ -118,6 +140,11 @@ in
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
+      // lib.optionalAttrs (full && cfg.photos != null) {
+        VERIFY_PHOTOS_API = cfg.photos.api;
+        VERIFY_PHOTOS_SUFFIX = cfg.photos.emailSuffix;
+        VERIFY_PHOTOS_CODE_FILE = cfg.photos.codeFile;
+      }
       // lib.optionalAttrs (cfg.releasePublicKey != null) {
         VERIFY_RELEASE_PUB = cfg.releasePublicKey;
       }
@@ -126,6 +153,8 @@ in
         # covers every service on this box and the session cookie rides along
         VERIFY_DOMAIN = base;
         VERIFY_MEMBERS = builtins.toJSON config.dd.members;
+        # our Rust for the browser, next to the pages that use it
+        VERIFY_WEB_DIR = "${self.packages.${pkgs.stdenv.hostPlatform.system}.web}";
         # the per-box issuer for jellyfin, the one service that speaks nothing
         # but oidc. its key is generated on first start and trusted by exactly
         # this client on exactly this box.
@@ -236,6 +265,7 @@ in
             "jellyfin"
             "git"
             "home"
+            "photos"
           ]
         ))
         # the front door itself: home.<domain> is the verifier's page and

@@ -44,6 +44,17 @@ async fn main() -> Result<()> {
             None
         },
         // every box holds it: a directory-only box keeps invites too
+        web_dir: std::env::var("VERIFY_WEB_DIR").ok().map(Into::into),
+        photos: match std::env::var("VERIFY_PHOTOS_API") {
+            Ok(api) => Some(verify::Photos {
+                api,
+                email_suffix: env("VERIFY_PHOTOS_SUFFIX")?,
+                code: std::fs::read_to_string(env("VERIFY_PHOTOS_CODE_FILE")?)?
+                    .trim()
+                    .to_string(),
+            }),
+            Err(_) => None,
+        },
         release_pub: std::env::var("VERIFY_RELEASE_PUB")
             .ok()
             .map(|s| s.trim().to_string())

@@ -38,8 +38,8 @@ jobs:
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
-      - name: build dd, verify, agent
-        run: nix build --no-link .#dd .#verify .#agent
+      - name: build dd, verify, agent, web
+        run: nix build --no-link .#dd .#verify .#agent .#web
 
   build_host:
     if: ${{ inputs.run }}

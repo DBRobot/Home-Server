@@ -30,6 +30,34 @@ let
   };
 in
 {
+  # One fixed ente, whatever nixpkgs moves to: the photos page hands ente's
+  # web app a session in the shape this version reads, and museum takes
+  # our verification code the way this version does. Bumping is a decision
+  # here, with the page checked against it, not a side effect of a nixpkgs
+  # update.
+  nixpkgs.overlays = [
+    (final: prev: {
+      museum = prev.museum.overrideAttrs (o: {
+        version = "1.3.36";
+        src = prev.fetchFromGitHub {
+          owner = "ente";
+          repo = "ente";
+          rev = "photos-v1.3.36";
+          hash = "sha256-9MWmJ3QUgS7BToTnSZzTi4ywGW1RtwrCO+9yQJkvejM=";
+        };
+      });
+      ente-web = prev.ente-web.overrideAttrs (o: {
+        version = "1.3.36";
+        src = prev.fetchFromGitHub {
+          owner = "ente";
+          repo = "ente";
+          rev = "photos-v1.3.36";
+          hash = "sha256-o75r8LFgG3BT3IIPiD9x6gY3fRDoxJ3ZTBPAYr3hLWI=";
+        };
+      });
+    })
+  ];
+
   services.ente = {
     web = {
       enable = true;
@@ -61,6 +89,14 @@ in
           hash._secret = config.sops.secrets.ente-key-hash.path;
         };
         jwt.secret._secret = config.sops.secrets.ente-jwt-secret.path;
+        # Addresses under users.<domain> are ours: a person's ente account
+        # is <name>@users.<domain>, made by the photos page with this code
+        # instead of a mail nobody would receive. Museum honours it because
+        # the nixos module runs it as ENVIRONMENT=local.
+        internal.hardcoded-ott = {
+          local-domain-suffix = "@users.${base}";
+          local-domain-value._secret = config.sops.secrets.ente-ott.path;
+        };
         # gomail does STARTTLS on its own unless SSL is set, so 587/tls rather
         # than 465/ssl. Gmail rewrites From to the authenticated account, so
         # the sender address cannot be one of our own subdomains.
