@@ -4,8 +4,6 @@
 //! derivation, SRP and secret boxes are ente's crates compiled to wasm; the
 //! master key exists in the browser and nowhere else.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
 use ente_accounts::client::AccountsClient;
 use ente_accounts::error::{Error, Result};
 use ente_accounts::flow::{
@@ -55,7 +53,6 @@ impl AuthFlowUi for NoUi {
 struct Session {
     user_id: i64,
     email: String,
-    /// base64url, as the app keeps it
     token: String,
     key_attributes: serde_json::Value,
     session_key: SessionKey,
@@ -85,7 +82,8 @@ fn session(email: &str, account: AuthenticatedAccount) -> Result<String> {
     let s = Session {
         user_id: account.user_id,
         email: email.to_string(),
-        token: B64_URL.encode(&account.secrets.token),
+        // url-safe with padding: what ente web keeps and museum decodes
+        token: b64::encode_url_safe(&account.secrets.token),
         key_attributes: serde_json::to_value(&account.key_attributes)?,
         session_key: SessionKey {
             encrypted_data: b64::encode(&sealed.encrypted_data),
