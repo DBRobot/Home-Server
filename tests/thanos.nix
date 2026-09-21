@@ -81,10 +81,10 @@ in
     a_id = a.succeed("set -a; . ${rpc}; garage node id -q").strip().split("@")[0]
     b.succeed(f"set -a; . ${rpc}; garage node connect {a_id}@a:3901")
     for m in (a, b):
-        m.succeed("systemctl start garage-setup.service")
+        m.succeed("systemctl restart garage-setup.service")
     a.wait_until_succeeds("set -a; . ${rpc}; garage layout show > /tmp/l && grep -q 'Current cluster layout version: [1-9]' /tmp/l")
     for m in (a, b):
-        m.succeed("systemctl start garage-setup.service")
+        m.succeed("systemctl restart garage-setup.service")
 
     # every box: prometheus with the box label, a sidecar that can reach
     # the bucket (it checks at start and fails if it cannot)
