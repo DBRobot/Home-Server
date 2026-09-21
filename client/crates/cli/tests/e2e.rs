@@ -41,10 +41,29 @@ impl Box_ {
         sync_secs: u64,
         members: Option<Vec<String>>,
     ) -> Self {
+        Self::start_with(
+            full,
+            peers,
+            sync_secs,
+            members.map(verify::Members::list),
+            None,
+        )
+        .await
+    }
+    /// everything: the member list with revocations, and the release key
+    /// whose invites count
+    async fn start_with(
+        full: bool,
+        peers: Vec<String>,
+        sync_secs: u64,
+        members: Option<verify::Members>,
+        release_pub: Option<String>,
+    ) -> Self {
         let dir = scratch("box").join("keys");
         let (addr, _task) = verify::start(verify::Config {
             home: vec![],
             members,
+            release_pub,
             bind: "127.0.0.1:0".parse().unwrap(),
             dir: dir.clone(),
             peers,
@@ -384,7 +403,9 @@ async fn membership_gates_the_services_not_the_account() {
     let out = dev.dd_ok(&args(&["member", "list", "--repo", &repo], &d));
     assert!(out.contains(&id) && out.contains("tom"), "{out}");
     dev.dd_ok(&args(&["member", "remove", "tom", "--repo", &repo], &d));
-    assert!(!file().contains(&id), "{}", file());
+    let f: serde_json::Value = serde_json::from_str(&file()).unwrap();
+    assert!(f["members"].as_array().unwrap().is_empty(), "{}", file());
+    assert_eq!(f["revoked"][0], id, "{}", file());
     assert!(
         !dev.dd(&args(&["member", "remove", "tom", "--repo", &repo], &d))
             .ok
@@ -394,6 +415,29 @@ async fn membership_gates_the_services_not_the_account() {
 /// The browser side of a join, against a box: name, passkey, signed entry.
 /// Returns the session cookie the box hands back.
 async fn join_in_browser(b: &Box_, authenticator: &mut SoftPasskey, name: &str) -> (u16, String) {
+    join_with_code(b, authenticator, name, None).await
+}
+
+/// What the browser sends for a code: the proof the code's key makes for
+/// this root, as the x-dd-grant header carries it.
+fn grant_header(code: &str, root: &str) -> String {
+    use base64::Engine as _;
+    let key = identity::code_key(code);
+    let pk = identity::encode_public(&key.verifying_key());
+    let redeemed = identity::now();
+    let proof = identity::prove(&key, &pk, root, redeemed);
+    base64::engine::general_purpose::STANDARD.encode(
+        serde_json::json!({ "invite_public_key": pk, "redeemed": redeemed, "proof": proof })
+            .to_string(),
+    )
+}
+
+async fn join_with_code(
+    b: &Box_,
+    authenticator: &mut SoftPasskey,
+    name: &str,
+    code: Option<&str>,
+) -> (u16, String) {
     let origin = Url::parse("https://localhost").unwrap();
     let http = reqwest::Client::new();
     let r = http
@@ -412,14 +456,19 @@ async fn join_in_browser(b: &Box_, authenticator: &mut SoftPasskey, name: &str) 
     let reg = authenticator
         .do_registration(origin.clone(), ccr)
         .expect("software authenticator registration");
-    let r = http
+    let mut req = http
         .post(b.url("/_dd/join/finish"))
-        .header("x-dd-ceremony", &ceremony)
-        .json(&reg)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+        .header("x-dd-ceremony", &ceremony);
+    if let Some(code) = code {
+        req = req.header(
+            "x-dd-grant",
+            grant_header(code, &format!("webauthn:{}", reg.id)),
+        );
+    }
+    let r = req.json(&reg).send().await.unwrap();
+    if r.status() != 200 {
+        return (r.status().as_u16(), r.text().await.unwrap_or_default());
+    }
     let mut j: serde_json::Value = r.json().await.unwrap();
     let ceremony = j["ceremony"].as_str().unwrap().to_string();
     j.as_object_mut().unwrap().remove("ceremony");
@@ -436,6 +485,9 @@ async fn join_in_browser(b: &Box_, authenticator: &mut SoftPasskey, name: &str) 
         .await
         .unwrap();
     let status = r.status().as_u16();
+    if status != 200 {
+        return (status, r.text().await.unwrap_or_default());
+    }
     let cookie = r
         .headers()
         .get("set-cookie")
@@ -541,6 +593,211 @@ async fn an_account_made_in_a_browser_is_a_passkey_root_and_waits_for_membership
     ));
     let file = std::fs::read_to_string(format!("{repo}/fleet/members.json")).unwrap();
     assert!(file.contains(&id), "{file}");
+}
+
+/// Sign in on `b` with a passkey already in the entry; the session cookie.
+async fn login_in_browser(b: &Box_, authenticator: &mut SoftPasskey, name: &str) -> (u16, String) {
+    let origin = Url::parse("https://localhost").unwrap();
+    let http = reqwest::Client::new();
+    let r = http
+        .post(b.url("/_dd/login/start"))
+        .json(&serde_json::json!({ "username": name }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    let mut j: serde_json::Value = r.json().await.unwrap();
+    let ceremony = j["ceremony"].as_str().unwrap().to_string();
+    j.as_object_mut().unwrap().remove("ceremony");
+    let rcr: RequestChallengeResponse = serde_json::from_value(j).unwrap();
+    let cred = authenticator.do_authentication(origin, rcr).unwrap();
+    let r = http
+        .post(b.url("/_dd/login/finish"))
+        .header("x-dd-ceremony", &ceremony)
+        .json(&cred)
+        .send()
+        .await
+        .unwrap();
+    let status = r.status().as_u16();
+    let cookie = r
+        .headers()
+        .get("set-cookie")
+        .map(|c| c.to_str().unwrap().split(';').next().unwrap().to_string())
+        .unwrap_or_default();
+    (status, cookie)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invite_code_lets_one_person_in_once() {
+    // the owner's laptop: a release key, a repo
+    let owner = Device::new();
+    let repo = scratch("repo");
+    std::fs::create_dir_all(repo.join("fleet")).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let repo = repo.to_str().unwrap().to_string();
+    let out = owner.dd_ok(&["release", "init", "--repo", &repo]);
+    let release_pub = out.lines().last().unwrap().trim().to_string();
+    assert_eq!(release_pub.len(), 44, "{out}");
+
+    // a box released with nobody on the list, holding the release key
+    let a = Box_::start_with(
+        true,
+        vec![],
+        300,
+        Some(verify::Members::list(vec![])),
+        Some(release_pub.clone()),
+    )
+    .await;
+    let d = dirs([&a]);
+
+    // an invite from the owner; one from anyone else is refused
+    let out = owner.dd_ok(&args(&["invite", "--ttl", "10m"], &d));
+    let code = out
+        .lines()
+        .find_map(|l| l.strip_prefix("code: "))
+        .expect("dd invite prints the code")
+        .trim()
+        .to_string();
+    assert_eq!(code.len(), 11, "{out}");
+    let stranger = identity::generate();
+    let forged = identity::sign_invite(
+        identity::Invite {
+            public_key: identity::encode_public(&identity::code_key("nope-nope").verifying_key()),
+            issued: identity::now(),
+            expires: identity::now() + 600,
+        },
+        &stranger,
+    )
+    .unwrap();
+    let http = reqwest::Client::new();
+    {
+        use base64::Engine as _;
+        let key = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(forged.invite.public_key.as_bytes());
+        let r = http
+            .put(a.url(&format!("/_dd/invite/{key}")))
+            .json(&forged)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 403);
+    }
+
+    // eve joins with the code: a member at once
+    let mut eve = SoftPasskey::new(true);
+    let (st, cookie) = join_with_code(&a, &mut eve, "eve", Some(&code)).await;
+    assert_eq!(st, 200);
+    assert_eq!(get_with_cookie(&a, "/verify", &cookie).await.0, 200);
+    let (_, body) = get_with_cookie(&a, "/_dd/home", &cookie).await;
+    assert!(body.contains("Your services"), "{body}");
+    let e = entry(&a, "eve").await.unwrap();
+    assert!(e["entry"]["grant"]["proof"].is_string());
+
+    // the same code, another person: refused, the code is used up
+    let mut mallory = SoftPasskey::new(true);
+    let (st, why) = join_with_code(&a, &mut mallory, "mallory", Some(&code)).await;
+    assert_eq!(st, 409, "{why}");
+    assert!(why.contains("already been used"), "{why}");
+    // and a code nobody issued
+    let (st, _) = join_with_code(&a, &mut mallory, "mallory", Some("zzzzz-zzzzz")).await;
+    assert_eq!(st, 404);
+
+    // fay already has an account and is waiting; a second code, typed there
+    let mut fay = SoftPasskey::new(true);
+    let (st, fay_cookie) = join_in_browser(&a, &mut fay, "fay").await;
+    assert_eq!(st, 200);
+    assert_eq!(get_with_cookie(&a, "/verify", &fay_cookie).await.0, 403);
+    let out = owner.dd_ok(&args(&["invite"], &d));
+    let code2 = out
+        .lines()
+        .find_map(|l| l.strip_prefix("code: "))
+        .unwrap()
+        .trim()
+        .to_string();
+    let fay_root = entry(&a, "fay").await.unwrap()["entry"]["root"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = http
+        .post(a.url("/_dd/redeem/start"))
+        .header("cookie", &fay_cookie)
+        .header("x-dd-grant", grant_header(&code2, &fay_root))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    let mut j: serde_json::Value = r.json().await.unwrap();
+    let ceremony = j["ceremony"].as_str().unwrap().to_string();
+    j.as_object_mut().unwrap().remove("ceremony");
+    let rcr: RequestChallengeResponse = serde_json::from_value(j).unwrap();
+    let cred = fay
+        .do_authentication(Url::parse("https://localhost").unwrap(), rcr)
+        .unwrap();
+    let r = http
+        .post(a.url("/_dd/redeem/sign"))
+        .header("x-dd-ceremony", &ceremony)
+        .json(&cred)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
+    assert_eq!(get_with_cookie(&a, "/verify", &fay_cookie).await.0, 200);
+    assert_eq!(entry(&a, "fay").await.unwrap()["entry"]["version"], 2);
+
+    // the owner sees them, and can shut one out again: revoked beats a grant
+    let out = owner.dd_ok(&args(&["member", "list", "--repo", &repo], &d));
+    assert!(
+        out.contains("eve  invited") && out.contains("fay  invited"),
+        "{out}"
+    );
+    owner.dd_ok(&args(&["member", "remove", "eve", "--repo", &repo], &d));
+    let eve_id = identity::member_id(e["entry"]["root"].as_str().unwrap());
+    let b = Box_::start_with(
+        true,
+        vec![a.directory()],
+        1,
+        Some(verify::Members {
+            members: vec![],
+            revoked: vec![eve_id],
+        }),
+        Some(release_pub.clone()),
+    )
+    .await;
+    wait_for(|| async { entry(&b, "fay").await.is_some() && entry(&b, "eve").await.is_some() })
+        .await;
+    let (st, c) = login_in_browser(&b, &mut fay, "fay").await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        get_with_cookie(&b, "/verify", &c).await.0,
+        200,
+        "fay's grant carries to b"
+    );
+    let (st, c) = login_in_browser(&b, &mut eve, "eve").await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        get_with_cookie(&b, "/verify", &c).await.0,
+        403,
+        "eve is revoked"
+    );
+
+    // an expired code is nothing
+    let out = owner.dd_ok(&args(&["invite", "--ttl", "1s"], &d));
+    let code3 = out
+        .lines()
+        .find_map(|l| l.strip_prefix("code: "))
+        .unwrap()
+        .trim()
+        .to_string();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let (st, _) = join_with_code(&a, &mut mallory, "mallory", Some(&code3)).await;
+    assert_eq!(st, 404);
 }
 
 fn enrol_token(dev: &Device, b: &Box_) -> String {
@@ -877,6 +1134,7 @@ async fn start_at(
     let (addr, _task) = verify::start(verify::Config {
         home: vec![],
         members: None,
+        release_pub: None,
         bind: addr,
         dir: dir.clone(),
         peers,

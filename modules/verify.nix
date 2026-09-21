@@ -66,9 +66,17 @@ in
   };
 
   options.dd.members = lib.mkOption {
-    type = lib.types.listOf lib.types.str;
-    description = "Member ids (dd member list): whose root may use the services. From fleet/members.json, so it comes with the signed release; a box cannot add to it.";
-    default = [ ];
+    type = lib.types.attrsOf (lib.types.listOf lib.types.str);
+    description = "fleet/members.json: `members`, ids let in, and `revoked`, ids shut out (dd member add|remove). Comes with the signed release; a box cannot add to it.";
+    default = {
+      members = [ ];
+      revoked = [ ];
+    };
+  };
+  options.dd.verify.releasePublicKey = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
+    description = "The release key, base64: what signs an invite (dd invite). Every box holds invites; the full one checks grants against this.";
+    default = null;
   };
 
   config = {
@@ -99,6 +107,9 @@ in
         VERIFY_DIR = "/var/lib/dd-verify/keys";
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
+      }
+      // lib.optionalAttrs (cfg.releasePublicKey != null) {
+        VERIFY_RELEASE_PUB = cfg.releasePublicKey;
       }
       // lib.optionalAttrs full {
         # the browser login: passkeys scoped to the whole domain, so one login

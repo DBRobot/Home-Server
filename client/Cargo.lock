@@ -5594,6 +5594,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "biscuit-auth",
+ "ed25519-dalek",
  "hmac 0.12.1",
  "identity",
  "jsonwebtoken",

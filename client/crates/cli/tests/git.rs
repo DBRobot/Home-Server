@@ -48,6 +48,7 @@ async fn commits_are_signed_by_the_device_and_verified_through_the_directory() {
         peers: vec![],
         sync_secs: 300,
         members: None,
+        release_pub: None,
         domain: None,
         oidc: None,
     })

@@ -136,6 +136,7 @@ pub async fn create(
         recovery: identity::encode_public(&recovery.verifying_key()),
         devices: vec![device_of(kp)],
         passkeys: vec![],
+        grant: None,
         version: 1,
         updated: identity::now(),
     };
@@ -229,6 +230,8 @@ pub async fn recover(
         recovery: identity::encode_public(&next_recovery.verifying_key()),
         devices: vec![device_of(kp)],
         passkeys: vec![],
+        // a grant proves a root; this one is new. `dd invite` again
+        grant: None,
         version: cur.entry.version + 1,
         updated: identity::now(),
     };

@@ -39,10 +39,15 @@ async fn main() -> Result<()> {
         home: serde_json::from_str(&env_or("VERIFY_HOME", "[]")).context("VERIFY_HOME")?,
         // required on a full box: an unset list would be an open door
         members: if full {
-            Some(serde_json::from_str(&env("VERIFY_MEMBERS")?).context("VERIFY_MEMBERS")?)
+            Some(verify::Members::parse(&env("VERIFY_MEMBERS")?).context("VERIFY_MEMBERS")?)
         } else {
             None
         },
+        // every box holds it: a directory-only box keeps invites too
+        release_pub: std::env::var("VERIFY_RELEASE_PUB")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     };
     let (_, task) = verify::start(cfg).await?;
     task.await?

@@ -28,6 +28,11 @@ use serde::{Deserialize, Serialize};
 
 pub struct Directory {
     dir: PathBuf,
+    /// signed invites, by the code's public key; next to the entries
+    invites: PathBuf,
+    /// the release key: what signs an invite. None: grants cannot be
+    /// checked here and are refused
+    release: Option<ed25519_dalek::VerifyingKey>,
     /// the other boxes' directory urls, e.g. https://files.example/_dd/directory
     peers: Vec<String>,
     http: reqwest::Client,
@@ -43,11 +48,22 @@ pub struct Listed {
 }
 
 impl Directory {
-    pub fn open(dir: PathBuf, peers: Vec<String>) -> Result<Self> {
+    pub fn open(
+        dir: PathBuf,
+        peers: Vec<String>,
+        release: Option<ed25519_dalek::VerifyingKey>,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&dir)?;
+        let invites = dir
+            .parent()
+            .map(|p| p.join("invites"))
+            .unwrap_or_else(|| dir.join("invites"));
+        std::fs::create_dir_all(&invites)?;
         let synced = AtomicBool::new(peers.is_empty());
         Ok(Self {
             dir,
+            invites,
+            release,
             peers,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
@@ -182,6 +198,17 @@ impl Directory {
             if theirs.entry.name != l.name {
                 continue;
             }
+            if let Some(g) = &theirs.entry.grant {
+                let ok = self
+                    .release
+                    .as_ref()
+                    .is_some_and(|r| identity::verify_grant(&theirs.entry, r).is_ok())
+                    && !self.grant_taken(&g.invite.invite.public_key, &theirs.entry.root);
+                if !ok {
+                    eprintln!("directory: refused {} from {peer}: grant", l.name);
+                    continue;
+                }
+            }
             match identity::accept(ours.as_ref(), &theirs) {
                 Ok(()) => {
                     self.store(&theirs)?;
@@ -223,6 +250,7 @@ pub fn router(d: Arc<Directory>) -> Router {
     Router::new()
         .route("/_dd/directory", get(list))
         .route("/_dd/directory/{name}", get(get_entry).put(put_entry))
+        .route("/_dd/invite/{key}", get(get_invite).put(put_invite))
         .with_state(d)
 }
 
@@ -251,6 +279,44 @@ async fn get_entry(State(d): State<Arc<Directory>>, Path(name): Path<String>) ->
     }
 }
 
+/// `key` is the invite's public key, base64url of the base64 text.
+fn invite_key(key: &str) -> Option<String> {
+    use base64::Engine as _;
+    String::from_utf8(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(key)
+            .ok()?,
+    )
+    .ok()
+}
+
+async fn get_invite(State(d): State<Arc<Directory>>, Path(key): Path<String>) -> Response {
+    let Some(key) = invite_key(&key) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    match d.invite(&key) {
+        Some(inv) => Json(inv).into_response(),
+        None => (StatusCode::NOT_FOUND, "no such invite, or it has expired").into_response(),
+    }
+}
+
+async fn put_invite(
+    State(d): State<Arc<Directory>>,
+    Path(key): Path<String>,
+    Json(inv): Json<identity::SignedInvite>,
+) -> Response {
+    if invite_key(&key).as_deref() != Some(inv.invite.public_key.as_str()) {
+        return (StatusCode::BAD_REQUEST, "key in path and invite differ").into_response();
+    }
+    match d.put_invite(&inv) {
+        Ok(()) => {
+            eprintln!("directory: invite held until {}", inv.invite.expires);
+            StatusCode::OK.into_response()
+        }
+        Err(e) => (StatusCode::FORBIDDEN, e).into_response(),
+    }
+}
+
 async fn put_entry(
     State(d): State<Arc<Directory>>,
     Path(name): Path<String>,
@@ -266,7 +332,101 @@ async fn put_entry(
     }
 }
 
+fn invite_file_name(public_key: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_key.as_bytes())
+}
+
 impl Directory {
+    pub fn release(&self) -> Option<&ed25519_dalek::VerifyingKey> {
+        self.release.as_ref()
+    }
+
+    /// An invite the owner signed, kept until it expires. Anyone may put
+    /// one; only one the release key signed is kept.
+    pub fn put_invite(&self, inv: &identity::SignedInvite) -> std::result::Result<(), String> {
+        let Some(release) = &self.release else {
+            return Err("this box holds no release key to check invites with".into());
+        };
+        identity::verify_invite(inv, release).map_err(|e| format!("refused: {e}"))?;
+        if inv.invite.expires <= identity::now() {
+            return Err("that invite has already expired".into());
+        }
+        let p = self
+            .invites
+            .join(format!("{}.json", invite_file_name(&inv.invite.public_key)));
+        let tmp = self
+            .invites
+            .join(format!(".{}.tmp", invite_file_name(&inv.invite.public_key)));
+        std::fs::write(
+            &tmp,
+            serde_json::to_vec_pretty(inv).map_err(|e| e.to_string())?,
+        )
+        .and_then(|_| std::fs::rename(&tmp, &p))
+        .map_err(|e| e.to_string())
+    }
+
+    /// The invite for a code's public key, if held and not yet expired.
+    /// Expired ones are removed as they are met.
+    pub fn invite(&self, public_key: &str) -> Option<identity::SignedInvite> {
+        let p = self
+            .invites
+            .join(format!("{}.json", invite_file_name(public_key)));
+        let inv: identity::SignedInvite = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
+        if inv.invite.expires <= identity::now() {
+            let _ = std::fs::remove_file(&p);
+            return None;
+        }
+        Some(inv)
+    }
+
+    /// One code, one person: is this invite already in another root's entry?
+    pub fn grant_taken(&self, invite_public_key: &str, root: &str) -> bool {
+        let Ok(listed) = self.list() else {
+            return false;
+        };
+        listed.iter().any(|l| {
+            self.entry(&l.name)
+                .ok()
+                .flatten()
+                .and_then(|e| {
+                    e.entry
+                        .grant
+                        .map(|g| (g.invite.invite.public_key, e.entry.root))
+                })
+                .is_some_and(|(k, r)| k == invite_public_key && r != root)
+        })
+    }
+
+    /// A grant in an entry this box is about to hold: the owner's signature,
+    /// the root's proof, and, if it is new here, still inside its window by
+    /// this box's clock and not already used by someone else.
+    fn check_grant(
+        &self,
+        existing: Option<&identity::SignedEntry>,
+        new: &identity::Entry,
+    ) -> std::result::Result<(), String> {
+        let Some(g) = &new.grant else {
+            return Ok(());
+        };
+        let Some(release) = &self.release else {
+            return Err("this box cannot check invites".into());
+        };
+        identity::verify_grant(new, release).map_err(|e| format!("grant: {e}"))?;
+        let already = existing
+            .and_then(|e| e.entry.grant.as_ref())
+            .is_some_and(|old| old == g);
+        if !already {
+            if g.invite.invite.expires <= identity::now() {
+                return Err("that invite has expired".into());
+            }
+            if self.grant_taken(&g.invite.invite.public_key, &new.root) {
+                return Err("that code has already been used".into());
+            }
+        }
+        Ok(())
+    }
+
     /// The one way in: the accept rule, then the peers for a new name,
     /// then the store. Used by the PUT from `dd` and by the browser join.
     pub(crate) async fn admit(
@@ -281,6 +441,10 @@ impl Directory {
         if let Err(e) = identity::accept(existing.as_ref(), &signed) {
             eprintln!("directory: refused update for {name}: {e}");
             return Err((StatusCode::FORBIDDEN, format!("refused: {e}")));
+        }
+        if let Err(e) = self.check_grant(existing.as_ref(), &signed.entry) {
+            eprintln!("directory: refused update for {name}: {e}");
+            return Err((StatusCode::CONFLICT, e));
         }
         if existing.is_none()
             && let Err((status, why)) = self.first_sight_allowed(&signed).await
