@@ -133,7 +133,16 @@ in
         VERIFY_OIDC_CLIENT_ID = "jellyfin";
         VERIFY_OIDC_CLIENT_SECRET_FILE = config.sops.secrets.jellyfin-oauth-secret.path;
         VERIFY_HOME = builtins.toJSON (
-          map (t: { inherit (t) name url description icon color; }) (
+          map (t: {
+            inherit (t)
+              name
+              url
+              description
+              icon
+              color
+              demo
+              ;
+          }) (
             lib.sort (a: b: a.rank < b.rank) config.dd.home.services
           )
         );
