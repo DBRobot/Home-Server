@@ -170,7 +170,8 @@ pub async fn ente_adopt(
         .await
         .map_err(js)?
     };
-    client.set_auth_token(Some(b64::encode(&account.secrets.token)));
+    // museum reads the token as url-safe base64, as ente's own clients send it
+    client.set_auth_token(Some(b64::encode_url_safe(&account.secrets.token)));
     // museum only takes a code it has opened for that address, and opens
     // the fleet's only when asked as for a sign-up (a "change" gets a random
     // one, mailed to an address that has no mailbox)
