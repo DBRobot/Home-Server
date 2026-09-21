@@ -2,6 +2,7 @@
   config,
   pkgs,
   lib,
+  utils,
   ...
 }:
 let
@@ -70,7 +71,10 @@ in
         cache.enabled = false;
       };
     };
-    systemd.services."gitea-runner-${name}" = lib.mkIf (cfg.tokenFile != null) {
+    # the nixos module names the unit with systemd's escaping: the dash in
+    # members-<host> becomes \x2d, and settings under the plain name went
+    # to a unit that does not exist
+    systemd.services."gitea-runner-${utils.escapeSystemdPath name}" = lib.mkIf (cfg.tokenFile != null) {
       after = [ "docker.service" ];
       requires = [ "docker.service" ];
       # The same plain user as the host runner, not the module's dynamic
