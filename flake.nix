@@ -142,6 +142,7 @@
           backup = vm ./tests/backup.nix;
           release = vm ./tests/release.nix;
           thanos = vm ./tests/thanos.nix;
+          members-runner = vm ./tests/members-runner.nix;
           placement = import ./tests/placement.nix args;
           boxes = import ./tests/boxes.nix args;
         };
