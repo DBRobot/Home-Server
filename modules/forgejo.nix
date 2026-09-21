@@ -186,7 +186,13 @@ in
       '';
     };
 
-    services.nginx.virtualHosts.${host} = {
+    services.nginx.appendHttpConfig = ''
+    map $auth_user $forge_user {
+      default $auth_user;
+      demo "";
+    }
+  '';
+  services.nginx.virtualHosts.${host} = {
       useACMEHost = base;
       forceSSL = true;
       locations."/" = {
@@ -197,7 +203,8 @@ in
           # replaced either way, so nobody names themselves.
           auth_request /_dd/verify;
           auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;
-          proxy_set_header X-WEBAUTH-USER $auth_user;
+          # the demo is nobody here: public repos, no account made for it
+          proxy_set_header X-WEBAUTH-USER $forge_user;
           # nobody: still let them in, as nobody. Public repos are public and
           # forgejo shows private ones to no one it does not know.
           error_page 401 = @anonymous;

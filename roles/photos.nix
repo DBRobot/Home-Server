@@ -17,6 +17,8 @@
     {
       name = "Photos";
       url = "https://photos.${config.dd.domain}/";
+      # the demo sees a public album, if one is shared (dd.demo.album)
+      demo = config.dd.demo.album;
       # ente keeps its own account, on purpose: the photos are encrypted
       # with a key only that account holds, so no box can read them
       description = "Backed up from your phone, encrypted so only you can see them. Made with its own sign-up inside.";

@@ -1,4 +1,4 @@
-{ config, ... }:
+{ config, pkgs, ... }:
 let
   base = config.dd.domain;
   host = "files.${base}";
@@ -50,6 +50,10 @@ in
     locations."/".extraConfig = dav root "html" + ''
       error_page 401 = @login;
       error_page 403 = @waiting;
+      # the demo reads its folder of samples and writes nothing
+      if ($demo_write) {
+        return 403;
+      }
     '';
     # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
     # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,
@@ -65,7 +69,14 @@ in
   # This is a map and not `if ($dav_user = "")` because if runs in the rewrite
   # phase, before auth_request has set the variable: the test would always see
   # an empty string. Map variables are evaluated where they are used.
+  # the demo account may look, not touch: any writing dav method from it
+  # is refused before the dav module sees it
   services.nginx.appendHttpConfig = ''
+    map "$dav_user:$request_method" $demo_write {
+      default 0;
+      "~^demo:(PUT|DELETE|MKCOL|COPY|MOVE|PROPPATCH|LOCK|UNLOCK)$" 1;
+    }
+
     map $dav_user $dav_dir {
       # __denied__ is a real 0555 root-owned directory created by
       # user-accounts in modules/user-accounts.nix. It exists so a request that
@@ -91,6 +102,13 @@ in
   # temp path on the same filesystem every PUT is a cross-device copy
   systemd.tmpfiles.rules = [
     "d /srv/upload-tmp 0700 nginx nginx -"
+    # the demo's folder: what a visitor gets to browse
+    "d ${root}/demo 0755 nginx nginx -"
+    "L+ ${root}/demo/README.txt - - - - ${pkgs.writeText "demo-readme" ''
+      This is the demo's folder. A member's folder looks like this, with
+      their own files in it, reachable from the browser, a phone, or any
+      program that speaks WebDAV. The demo can look; only a member writes.
+    ''}"
   ];
 
   # A folder for every name in the directory, the moment the entry lands:

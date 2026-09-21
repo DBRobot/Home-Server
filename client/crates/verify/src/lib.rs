@@ -12,7 +12,7 @@
 
 mod directory;
 mod oidc;
-mod pages;
+pub mod pages;
 mod session;
 
 use std::collections::HashMap;
@@ -151,7 +151,15 @@ impl App {
 
     /// Signed in is not let in: the person's root has to be on the member
     /// list this box was released with.
+    /// the demo is on when any tile has somewhere to send it
+    fn demo(&self) -> bool {
+        self.home.iter().any(|s| s.demo.is_some())
+    }
+
     fn member(&self, user: &str) -> bool {
+        if user == pages::DEMO_USER {
+            return self.demo();
+        }
         let Some(m) = &self.members else {
             return true;
         };
@@ -443,6 +451,13 @@ async fn join_start(
     }
     // guest names are for the fleet's own probes and are dropped after
     // minutes; a person typing one would lose the account. A probe says so.
+    if user == pages::DEMO_USER {
+        return (
+            StatusCode::BAD_REQUEST,
+            "that name is the demo's; pick another",
+        )
+            .into_response();
+    }
     if directory::is_guest(&user) && headers.get("x-dd-probe").is_none() {
         return (
             StatusCode::BAD_REQUEST,
@@ -744,6 +759,21 @@ async fn home_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response 
     }
 }
 
+/// A look without a key: a session as the demo account, which every box
+/// treats as a member with nothing of its own. Each service decides what
+/// the demo may do there (nginx, by the username the verifier reports).
+async fn demo(State(app): State<Arc<App>>) -> Response {
+    if !app.demo() {
+        return (StatusCode::NOT_FOUND, "no demo here").into_response();
+    }
+    let mut r = Redirect::to("/_dd/home").into_response();
+    r.headers_mut().insert(
+        "set-cookie",
+        HeaderValue::from_str(&app.sessions.issue(pages::DEMO_USER)).unwrap(),
+    );
+    r
+}
+
 async fn logout(State(app): State<Arc<App>>) -> Response {
     let mut r = Redirect::to("/").into_response();
     r.headers_mut().insert(
@@ -962,6 +992,7 @@ pub async fn start(
         .route("/_dd/join/sign", post(join_sign))
         .route("/_dd/redeem/start", post(redeem_start))
         .route("/_dd/redeem/sign", post(join_sign))
+        .route("/_dd/demo", get(demo))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
         .route("/_dd/enrol/result", get(enrol_result))
