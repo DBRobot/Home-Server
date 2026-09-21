@@ -171,6 +171,10 @@ pub async fn ente_adopt(
         .map_err(js)?
     };
     client.set_auth_token(Some(b64::encode(&account.secrets.token)));
+    // museum only takes a code it has opened for that address, and opens
+    // the fleet's only when asked as for a sign-up (a "change" gets a random
+    // one, mailed to an address that has no mailbox)
+    client.send_otp(email, "signup").await.map_err(js)?;
     client.change_email(email, code).await.map_err(js)?;
     let changed = {
         let flow = AuthFlow::new(&client, &mut ui);
