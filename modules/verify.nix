@@ -62,7 +62,7 @@ in
           demo = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
-            description = "where the demo account goes for this tile; null: the tile is not in the demo. The demo exists when any tile has one.";
+            description = "What the demo account may do on this tile's host, enforced at the gate: `full` (the service's own permissions are the limit), `read` (no writing method), `rate:N` (reads free, N other requests an hour). Null: nothing; the tile is greyed for it. The demo exists when any tile grants something.";
           };
         };
       }
@@ -77,11 +77,6 @@ in
       members = [ ];
       revoked = [ ];
     };
-  };
-  options.dd.demo.album = lib.mkOption {
-    type = lib.types.nullOr lib.types.str;
-    default = null;
-    description = "A public album link (ente: share an album, public link) the demo's Photos tile opens. Null: no Photos in the demo.";
   };
   options.dd.verify.photos = lib.mkOption {
     type = lib.types.nullOr (

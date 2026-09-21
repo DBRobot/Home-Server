@@ -10,6 +10,8 @@
     {
       name = "Chat";
       url = "https://llm.${config.dd.domain}/";
+      # a prompt is real compute on one model: ten an hour for the demo
+      demo = "rate:10";
       description = "An assistant that runs here, not in someone else's cloud.";
       icon = "chat";
       color = "#2f9e6f";

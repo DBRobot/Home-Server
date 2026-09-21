@@ -51,6 +51,8 @@ struct App {
     domain: String,
     web_dir: Option<PathBuf>,
     photos: Option<Photos>,
+    /// the demo's counted requests, per host and hour (`rate:N`)
+    demo_rate: Mutex<HashMap<String, (u64, u32)>>,
 }
 
 enum Ceremony {
@@ -174,29 +176,48 @@ impl App {
         self.home.iter().any(|s| s.demo.is_some())
     }
 
-    /// What the demo may do: read, on a host one of its tiles opens. nginx
-    /// passes the original method and host with the gate's subrequest.
+    /// What the demo may do, by the tile whose host the request is for:
+    /// `full`, `read`, `rate:N`, or nothing. nginx passes the original
+    /// method and host with the gate's subrequest. This is the permission
+    /// set of one account; the services' own permissions do the rest.
     fn demo_allows(&self, headers: &HeaderMap) -> bool {
         let method = headers
             .get("x-original-method")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("GET");
-        if !matches!(method, "GET" | "HEAD" | "OPTIONS" | "PROPFIND") {
-            return false;
-        }
+        let reading = matches!(method, "GET" | "HEAD" | "OPTIONS" | "PROPFIND");
         let host = headers
             .get("x-original-host")
             .or_else(|| headers.get("host"))
             .and_then(|v| v.to_str().ok())
             .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
             .unwrap_or_default();
-        self.home.iter().any(|s| {
-            s.demo
-                .as_deref()
-                .and_then(|u| u.split("//").nth(1))
-                .and_then(|u| u.split('/').next())
-                .is_some_and(|h| h.eq_ignore_ascii_case(&host))
-        })
+        let Some(allow) = self.home.iter().find_map(|s| {
+            let h = s.url.split("//").nth(1)?.split('/').next()?;
+            h.eq_ignore_ascii_case(&host)
+                .then(|| s.demo.clone())
+                .flatten()
+        }) else {
+            return false;
+        };
+        match allow.as_str() {
+            "full" => true,
+            "read" => reading,
+            a => match a.strip_prefix("rate:").and_then(|n| n.parse::<u32>().ok()) {
+                Some(_) if reading => true,
+                Some(per_hour) => {
+                    let hour = session::now() / 3600;
+                    let mut m = self.demo_rate.lock().unwrap();
+                    let e = m.entry(host).or_insert((hour, 0));
+                    if e.0 != hour {
+                        *e = (hour, 0);
+                    }
+                    e.1 += 1;
+                    e.1 <= per_hour
+                }
+                None => false,
+            },
+        }
     }
 
     fn member(&self, user: &str) -> bool {
@@ -1085,6 +1106,7 @@ pub async fn start(
         domain: domain.clone(),
         web_dir: cfg.web_dir,
         photos: cfg.photos,
+        demo_rate: Mutex::new(HashMap::new()),
     });
     let router = Router::new()
         .route("/verify", get(verify))

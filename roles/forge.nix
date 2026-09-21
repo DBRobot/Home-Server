@@ -11,8 +11,9 @@
     {
       name = "Code";
       url = "https://git.${config.dd.domain}/";
-      # anonymous: public repos, no account (modules/forgejo.nix)
-      demo = "https://git.${config.dd.domain}/";
+      # the forge is told nobody is there (modules/forgejo.nix): public
+      # repos, no account
+      demo = "full";
       description = "Repositories and issues.";
       icon = "code";
       color = "#4a5a8a";
