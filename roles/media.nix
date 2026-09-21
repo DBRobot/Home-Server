@@ -19,8 +19,8 @@
       # nobody here, and a first-time person landing on it is lost
       url = "https://jellyfin.${config.dd.domain}/sso/OID/p/dd";
       # the demo is a jellyfin user like any other, made on first visit,
-      # with jellyfin's defaults: watch, no admin
-      demo = "https://jellyfin.${config.dd.domain}/sso/OID/p/dd";
+      # with jellyfin's defaults: watch, no admin. jellyfin is the limit
+      demo = "full";
       description = "Movies and series, on any screen.";
       icon = "videos";
       color = "#b4457a";
@@ -29,8 +29,8 @@
     {
       name = "Files";
       url = "https://files.${config.dd.domain}/";
-      # a folder of samples, read-only (modules/webdav-media.nix)
-      demo = "https://files.${config.dd.domain}/";
+      # a folder of samples; the gate refuses its writing methods
+      demo = "read";
       description = "Your folder, from the browser or a file manager.";
       icon = "files";
       color = "#2f6fd6";

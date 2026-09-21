@@ -820,7 +820,7 @@ async fn an_invite_code_lets_one_person_in_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_demo_is_a_member_with_nothing_of_its_own() {
+async fn the_demo_is_an_account_with_a_small_permission_set() {
     let tile = |name: &str, demo: Option<&str>| verify::pages::Service {
         name: name.into(),
         url: format!("https://{name}.x/"),
@@ -829,7 +829,7 @@ async fn the_demo_is_a_member_with_nothing_of_its_own() {
         color: "#000".into(),
         demo: demo.map(String::from),
     };
-    // no tile lets the demo in: there is no demo
+    // no tile lets the demo do anything: there is no demo
     let plain = Box_::start_home(
         true,
         vec![],
@@ -847,7 +847,12 @@ async fn the_demo_is_a_member_with_nothing_of_its_own() {
         300,
         Some(verify::Members::list(vec![])),
         None,
-        vec![tile("files", Some("https://files.x/")), tile("llm", None)],
+        vec![
+            tile("files", Some("read")),
+            tile("llm", Some("rate:2")),
+            tile("grafana", Some("full")),
+            tile("photos", None),
+        ],
     )
     .await;
     // one click: a session as demo, sent to the home page
@@ -870,55 +875,52 @@ async fn the_demo_is_a_member_with_nothing_of_its_own() {
         .next()
         .unwrap()
         .to_string();
-    // a member to the gate, named demo so each service can decide; a read
-    // on a host a demo tile opens
-    let r = reqwest::Client::new()
-        .get(a.url("/verify"))
-        .header("cookie", &cookie)
-        .header("x-original-method", "GET")
-        .header("x-original-host", "files.x")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 200);
-    assert_eq!(
-        r.headers()
-            .get("x-auth-request-preferred-username")
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        "demo"
-    );
-    // a read where a tile sends it: yes. A write, or a host without a
-    // tile: no. nginx tells the gate the method and the host
+    // the gate, told the method and host by nginx, answers by the tile's
+    // permission: read, a counted rate, everything, or nothing
     let gate = |method: &str, host: &str| {
         let c = cookie.clone();
         let u = a.url("/verify");
         let (method, host) = (method.to_string(), host.to_string());
         async move {
-            reqwest::Client::new()
+            let r = reqwest::Client::new()
                 .get(u)
                 .header("cookie", c)
                 .header("x-original-method", method)
                 .header("x-original-host", host)
                 .send()
                 .await
-                .unwrap()
-                .status()
-                .as_u16()
+                .unwrap();
+            (
+                r.status().as_u16(),
+                r.headers()
+                    .get("x-auth-request-preferred-username")
+                    .map(|v| v.to_str().unwrap().to_string()),
+            )
         }
     };
-    assert_eq!(gate("GET", "files.x").await, 200);
-    assert_eq!(gate("PROPFIND", "files.x").await, 200);
-    assert_eq!(gate("PUT", "files.x").await, 403);
-    assert_eq!(gate("DELETE", "files.x").await, 403);
-    assert_eq!(gate("GET", "llm.x").await, 403);
-    // the banner, the demo tiles, not the others
+    assert_eq!(gate("GET", "files.x").await, (200, Some("demo".into())));
+    assert_eq!(gate("PROPFIND", "files.x").await.0, 200);
+    assert_eq!(gate("PUT", "files.x").await.0, 403);
+    assert_eq!(gate("DELETE", "files.x").await.0, 403);
+    assert_eq!(gate("POST", "grafana.x").await.0, 200);
+    // chat: reads are free, two prompts this hour, then no
+    assert_eq!(gate("GET", "llm.x").await.0, 200);
+    assert_eq!(gate("POST", "llm.x").await.0, 200);
+    assert_eq!(gate("POST", "llm.x").await.0, 200);
+    assert_eq!(gate("POST", "llm.x").await.0, 403);
+    assert_eq!(gate("GET", "llm.x").await.0, 200);
+    // no permission, no door; and a host that is no tile at all
+    assert_eq!(gate("GET", "photos.x").await.0, 403);
+    assert_eq!(gate("GET", "elsewhere.x").await.0, 403);
+    // every tile on the page, the shut one greyed
     let (st, body) = get_with_cookie(&a, "/_dd/home", &cookie).await;
     assert_eq!(st, 200);
     assert!(body.contains("This is a demo"), "{body}");
+    assert!(body.contains("href=\"https://files.x/\""), "{body}");
     assert!(
-        body.contains("https://files.x/") && !body.contains("llm"),
+        body.contains("photos")
+            && body.contains("Not in the demo.")
+            && !body.contains("href=\"https://photos.x/\""),
         "{body}"
     );
     // nobody takes the demo's name

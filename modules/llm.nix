@@ -21,7 +21,7 @@ in
         # defined for every browser-facing vhost in modules/verify.nix)
         error_page 401 = @login;
         error_page 403 = @waiting;
-        # not in the demo: no tile sends it here, so the gate refuses it
+        # the demo's prompts are counted at the gate (rate:N on the tile)
         proxy_buffering off; # streamed completions
         proxy_read_timeout 600s; # cpu generation is slow
         client_max_body_size 0;

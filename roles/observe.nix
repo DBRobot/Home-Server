@@ -13,8 +13,8 @@
     {
       name = "Metrics";
       url = "https://grafana.${config.dd.domain}/";
-      # a viewer, as every first visit is
-      demo = "https://grafana.${config.dd.domain}/";
+      # a viewer, as every first visit is; grafana's role is the limit
+      demo = "full";
       description = "How the machines are doing.";
       icon = "metrics";
       color = "#c4562d";
