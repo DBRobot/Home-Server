@@ -71,13 +71,9 @@ in
           DEFAULT_PRIVATE = "public";
           DEFAULT_PUSH_CREATE_PRIVATE = false;
           ENABLE_PUSH_CREATE_USER = true;
-          # A workflow is code that runs on a box. Every member has repos
-          # here, so a new repo gets no actions unit: a workflow in it never
-          # runs anywhere. An admin turns actions on for a repo whose
-          # workflows the fleet should run, and the runners are registered
-          # to the fleet owner's repos alone, so even that is not enough
-          # for anyone else's.
-          DEFAULT_REPO_UNITS = "repo.code,repo.issues,repo.pulls,repo.releases,repo.wiki,repo.projects,repo.packages";
+          # A workflow is code that runs on a box. Every repo may have one:
+          # a member's lands on the members' runner (modules/members-runner.nix),
+          # sandboxed, and the host runners take the owner's repos alone.
         };
         mailer.ENABLED = false;
         actions = {

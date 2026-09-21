@@ -8,9 +8,16 @@
   imports = [
     ./_sops.nix
     ../modules/forgejo-runner.nix
+    ../modules/members-runner.nix
     ../modules/cache.nix
   ];
 
+  # the members' runner registers for every repo; its token is global
+  sops.secrets.forgejo-members-runner-token = { };
+  sops.templates."forgejo-members-runner.env".content = ''
+    TOKEN=${config.sops.placeholder.forgejo-members-runner-token}
+  '';
+  dd.membersRunner.tokenFile = config.sops.templates."forgejo-members-runner.env".path;
   sops.secrets.nix-cache-signing-key = { };
   dd.cache.signingKeyFile = config.sops.secrets.nix-cache-signing-key.path;
   # the box's cache key, as nix reads credentials; write is granted below
