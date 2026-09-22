@@ -67,6 +67,14 @@
   # after a reinstall this way; a box has the profiles its hardware file
   # declares and nothing else
   networking.networkmanager.settings.main.no-auto-default = "*";
+  # tailscaled owns its tunnel: when NetworkManager restarted mid-release
+  # it took tailscale0 as its own, dropped the address, and the box fell
+  # off the tailnet until tailscaled was restarted. Same for docker's
+  networking.networkmanager.unmanaged = [
+    "interface-name:tailscale0"
+    "interface-name:docker0"
+    "interface-name:veth*"
+  ];
 
   services.openssh = {
     enable = true;
