@@ -175,6 +175,18 @@ async fn create(
     }
 }
 
+async fn configure(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Form(settings): Form<BTreeMap<String, String>>,
+) -> Response {
+    let Some(u) = user(&h) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    back(&format!("/server/{id}"), a.m.configure(&u, &id, &settings))
+}
+
 macro_rules! act {
     ($name:ident, $call:ident, $to:expr) => {
         async fn $name(
@@ -231,6 +243,7 @@ async fn main() -> Result<()> {
         .route("/server/{id}/state", get(server_state))
         .route("/create/{game}", post(create))
         .route("/start/{id}", post(start))
+        .route("/configure/{id}", post(configure))
         .route("/stop/{id}", post(stop))
         .route("/delete/{id}", post(delete))
         .with_state(app);

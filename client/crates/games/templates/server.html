@@ -27,6 +27,19 @@
   </div>
 </div></div>
 
+{% if mine && !demo && !fields.is_empty() %}
+<section style="margin-top:28px">
+  <h2>Settings</h2>
+  <form method="post" action="/configure/{{ s.id }}" class="panel" style="padding:20px 24px">
+    {% for f in fields %}{% include "field.html" %}{% endfor %}
+    <div class="row">
+      <button>Save{% if !idle %} and restart{% endif %}</button>
+      <span class="spec">Settings take effect when the server starts; a running one restarts, world kept.</span>
+    </div>
+  </form>
+</section>
+{% endif %}
+
 <section style="margin-top:28px">
   <h2>Log</h2>
   <pre id="log" class="log">{% if log.is_empty() %}nothing yet{% else %}{{ log }}{% endif %}</pre>

@@ -470,6 +470,46 @@ impl Manager {
         self.units.start(&i.id)
     }
 
+    /// The settings a person may set, changed; they take effect when the
+    /// server next starts (the guest fills its files at start). A running
+    /// server is restarted for them, world kept.
+    pub fn configure(
+        &self,
+        owner: &str,
+        id: &str,
+        settings: &BTreeMap<String, String>,
+    ) -> Result<()> {
+        let mut i = self.owned(owner, id)?;
+        let spec = self
+            .cfg
+            .catalogue
+            .get(&i.game)
+            .with_context(|| format!("no such game: {}", i.game))?;
+        for s in spec.visible_settings() {
+            if let Some(v) = settings.get(&s.var) {
+                let v = v.trim();
+                if v.is_empty() {
+                    continue;
+                }
+                if let Some(c) = &s.choices
+                    && !c.iter().any(|x| x == v)
+                {
+                    bail!("{}: not one of the choices", s.label);
+                }
+                if s.kind == "number" && v.parse::<f64>().is_err() {
+                    bail!("{}: not a number", s.label);
+                }
+                i.env.insert(s.var.clone(), v.to_string());
+            }
+        }
+        self.save(&i)?;
+        if i.desired == "running" {
+            self.units.stop(&i.id)?;
+            self.units.start(&i.id)?;
+        }
+        Ok(())
+    }
+
     pub fn stop(&self, owner: &str, id: &str) -> Result<()> {
         let mut i = self.owned(owner, id)?;
         i.desired = "stopped".into();
@@ -649,6 +689,21 @@ mod tests {
         assert!(fake.up.lock().unwrap().contains(&a.id));
         assert!(!fake.up.lock().unwrap().contains(&b.id));
         assert_eq!(m.restore(), 0, "already up");
+    }
+
+    #[test]
+    fn settings_change_and_a_running_server_restarts_for_them() {
+        let (m, fake) = manager(1, 16384);
+        let i = m.create("tom", "valheim", &BTreeMap::new()).unwrap();
+        let mut set = BTreeMap::new();
+        set.insert("SERVER_NAME".to_string(), "Renamed".to_string());
+        set.insert("SRCDS_APPID".to_string(), "1".to_string());
+        m.configure("tom", &i.id, &set).unwrap();
+        let i = m.instance(&i.id).unwrap();
+        assert_eq!(i.env["SERVER_NAME"], "Renamed");
+        assert_eq!(i.env["SRCDS_APPID"], "896660", "not a person's to set");
+        assert!(fake.up.lock().unwrap().contains(&i.id), "back up after");
+        assert!(m.configure("ann", &i.id, &set).is_err(), "not hers");
     }
 
     #[test]
