@@ -26,7 +26,6 @@ let
   };
   guest = guestPkgs.nixos ./game-guest.nix;
   vm = guest.config.system.build.vm;
-  catalogue = pkgs.writeText "games.json" (builtins.toJSON cfg.catalogue);
 
   # One instance, by id: read its record, give the guest its memory, cores
   # and ports, its own disk, and its directory. Everything that differs
@@ -39,7 +38,9 @@ let
     [ -s "$rec" ] || { echo "no such instance: $id" >&2; exit 1; }
     mem=$(${pkgs.jq}/bin/jq -r '.memory' "$rec")
     cores=$(${pkgs.jq}/bin/jq -r '.cores' "$rec")
-    fwd=$(${pkgs.jq}/bin/jq -r '[.ports[] | "hostfwd=\(.proto)::\(.host)-:\(.guest)"] | join(",")' "$rec")
+    # every port both ways: games use udp and tcp on the same number, and
+    # the guest listens on the number the host hands it
+    fwd=$(${pkgs.jq}/bin/jq -r '[.ports[] | "hostfwd=udp::\(.port)-:\(.port)", "hostfwd=tcp::\(.port)-:\(.port)"] | join(",")' "$rec")
     rm -f "$d"/qmp "$d"/status
     export DD_INSTANCE_DIR="$d"
     export NIX_DISK_IMAGE="$d"/disk.qcow2
@@ -70,56 +71,16 @@ in
   # restarts - and a reboot brings back every server whose record says it
   # should be up (the manager's job).
   options.dd.games = {
+    enable = lib.mkEnableOption "game servers members start for themselves";
     catalogue = lib.mkOption {
-      type = lib.types.attrsOf (
-        lib.types.submodule {
-          options = {
-            name = lib.mkOption { type = lib.types.str; };
-            description = lib.mkOption {
-              type = lib.types.str;
-              default = "";
-            };
-            appId = lib.mkOption {
-              type = lib.types.nullOr lib.types.int;
-              default = null;
-              description = "steam app id of the dedicated server, installed anonymously with steamcmd; null: nothing to install, `exec` is a program that already exists in the guest";
-            };
-            exec = lib.mkOption {
-              type = lib.types.str;
-              description = "the server program: relative to the app's directory for a steam app, else a path";
-            };
-            args = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-            };
-            ports = lib.mkOption {
-              type = lib.types.listOf (
-                lib.types.submodule {
-                  options = {
-                    proto = lib.mkOption { type = lib.types.enum [ "udp" "tcp" ]; };
-                    guest = lib.mkOption { type = lib.types.port; };
-                  };
-                }
-              );
-              description = "what the server listens on inside the guest; the box gives each a port of its own";
-            };
-            saves = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-              description = "paths under the game user's home that hold the world: kept as files in the instance's directory";
-            };
-            memory = lib.mkOption {
-              type = lib.types.int;
-              description = "MiB of memory for the guest";
-            };
-            cores = lib.mkOption {
-              type = lib.types.int;
-              default = 2;
-            };
-          };
-        }
-      );
-      default = { };
+      type = lib.types.path;
+      default = ../games/catalogue.json;
+      description = "every game that can run: the pelican eggs, resolved by games/resolve.py";
+    };
+    covers = lib.mkOption {
+      type = lib.types.path;
+      default = ../games/covers;
+      description = "the games' covers, by steam app id, fetched once by games/resolve.py";
     };
     perMember = lib.mkOption {
       type = lib.types.int;
@@ -146,15 +107,9 @@ in
       default = true;
       description = "run the manager and its page (a test of the template alone turns it off)";
     };
-    catalogueFile = lib.mkOption {
-      type = lib.types.path;
-      readOnly = true;
-      default = catalogue;
-      description = "the catalogue as json, for the manager";
-    };
   };
 
-  config = lib.mkIf (cfg.catalogue != { }) {
+  config = lib.mkIf cfg.enable {
     dd.box.plaintext = [ "games (servers members start; their worlds)" ];
 
     # fixed ids: the guest's game user has the same, so a 9p share needs no
@@ -192,7 +147,8 @@ in
       path = [ pkgs.systemd ];
       environment = {
         DD_GAMES_DIR = dir;
-        DD_GAMES_CATALOGUE = catalogue;
+        DD_GAMES_CATALOGUE = cfg.catalogue;
+        DD_GAMES_COVERS = cfg.covers;
         DD_GAMES_BIND = "127.0.0.1:${toString port}";
         DD_GAMES_PORT_BASE = toString cfg.portBase;
         DD_GAMES_PER_MEMBER = toString cfg.perMember;

@@ -22,45 +22,94 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+/// One game the catalogue knows: a pelican egg, resolved (games/resolve.py).
+/// The guest does what the egg's daemon would: install with steamcmd, fill
+/// the startup line from the settings, rewrite the files it names, watch
+/// for the ready line.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
+    pub id: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    #[serde(rename = "appId")]
-    pub app_id: Option<u64>,
-    pub exec: String,
+    /// the dedicated server's steam app
+    pub app: u64,
+    /// the game's own steam app: what the cover is of
     #[serde(default)]
-    pub args: Vec<String>,
-    pub ports: Vec<GamePort>,
+    pub game: Option<u64>,
     #[serde(default)]
-    pub saves: Vec<String>,
-    /// MiB
-    pub memory: u64,
-    #[serde(default = "two")]
-    pub cores: u32,
+    pub cover: bool,
+    #[serde(default)]
+    pub wine: bool,
+    pub startup: String,
+    #[serde(default)]
+    pub ready: Option<String>,
+    #[serde(default = "ctrl_c")]
+    pub stop: String,
+    #[serde(default)]
+    pub files: serde_json::Value,
+    pub install: String,
+    #[serde(default)]
+    pub settings: Vec<Setting>,
+    /// variables that are ports: each gets one from the pool
+    #[serde(default)]
+    pub ports: Vec<String>,
+    #[serde(default)]
+    pub port_defaults: BTreeMap<String, String>,
 }
-fn two() -> u32 {
-    2
+fn ctrl_c() -> String {
+    "^C".into()
+}
+
+impl Game {
+    /// MiB: nothing in an egg says; wine servers and the big builders want more
+    pub fn memory(&self) -> u64 {
+        if self.wine { 8192 } else { 6144 }
+    }
+    pub fn cores(&self) -> u32 {
+        4
+    }
+    /// what a person fills in: our few by our names, then the egg's own
+    pub fn visible_settings(&self) -> impl Iterator<Item = &Setting> {
+        self.settings.iter().filter(|s| s.editable)
+    }
+}
+
+/// One thing a person may set, by the egg's variable and our label for it
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Setting {
+    pub var: String,
+    pub label: String,
+    #[serde(default)]
+    pub default: String,
+    #[serde(default = "text")]
+    pub kind: String,
+    #[serde(default)]
+    pub help: String,
+    #[serde(default)]
+    pub editable: bool,
+    /// our short name for a common one: name, password, players, world
+    #[serde(default)]
+    pub ours: Option<String>,
+    #[serde(default)]
+    pub choices: Option<Vec<String>>,
+}
+fn text() -> String {
+    "text".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct GamePort {
-    pub proto: String,
-    pub guest: u16,
+pub struct Catalogue {
+    pub games: Vec<Game>,
 }
 
+/// a port from the pool, forwarded both ways: game ports are udp and tcp
+/// alike more often than not, and the guest listens on the same number
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Port {
-    pub proto: String,
-    pub host: u16,
-    pub guest: u16,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Steam {
-    #[serde(rename = "appId")]
-    pub app_id: u64,
+    /// the egg's variable it fills (SERVER_PORT, QUERY_PORT, ...)
+    pub var: String,
+    pub port: u16,
 }
 
 /// One server: what the guest needs to be it (the runner and the guest read
@@ -72,14 +121,25 @@ pub struct Instance {
     pub owner: String,
     pub memory: u64,
     pub cores: u32,
-    pub exec: String,
-    pub args: Vec<String>,
     pub ports: Vec<Port>,
-    pub saves: Vec<String>,
-    pub steam: Option<Steam>,
+    /// the egg's variables as this server has them: settings and ports
+    pub env: BTreeMap<String, String>,
+    /// the recipe, so the guest needs nothing but this file
+    pub recipe: Recipe,
     /// "running" or "stopped": what a reboot restores
     pub desired: String,
     pub created: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Recipe {
+    pub app: u64,
+    pub wine: bool,
+    pub startup: String,
+    pub ready: Option<String>,
+    pub stop: String,
+    pub files: serde_json::Value,
+    pub install: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +215,8 @@ pub struct Config {
     pub per_member: usize,
     /// MiB every running guest together may have
     pub memory_budget: u64,
+    /// the box's cpus: a guest gets no more
+    pub cores: u32,
     /// the address players type, shown with the port
     pub address: String,
     pub home: String,
@@ -229,6 +291,16 @@ impl Manager {
         Ok(())
     }
 
+    /// the game's own output, as the guest appends it beside the record
+    pub fn log_tail(&self, id: &str, lines: usize) -> String {
+        let Ok(text) = std::fs::read_to_string(self.instance_dir(id).join("game.log")) else {
+            return String::new();
+        };
+        let all: Vec<&str> = text.lines().collect();
+        let from = all.len().saturating_sub(lines);
+        all[from..].join("\n")
+    }
+
     pub fn state(&self, i: &Instance) -> State {
         let (active, failed) = self.units.state(&i.id);
         if failed {
@@ -253,7 +325,12 @@ impl Manager {
 
     /// A new server of `game` for `owner`, started. Refused past the
     /// member's share or the box's memory.
-    pub fn create(&self, owner: &str, game: &str) -> Result<Instance> {
+    pub fn create(
+        &self,
+        owner: &str,
+        game: &str,
+        settings: &BTreeMap<String, String>,
+    ) -> Result<Instance> {
         let _g = self.lock.lock().unwrap();
         let spec = self
             .cfg
@@ -271,21 +348,47 @@ impl Manager {
                 if mine_up == 1 { "" } else { "s" }
             );
         }
-        self.room_for(&all, spec.memory)?;
+        self.room_for(&all, spec.memory().min(self.cfg.memory_budget))?;
 
         let used: HashSet<u16> = all
             .iter()
-            .flat_map(|i| i.ports.iter().map(|p| p.host))
+            .flat_map(|i| i.ports.iter().map(|p| p.port))
             .collect();
         let mut free = (self.cfg.port_base..self.cfg.port_base.saturating_add(self.cfg.port_count))
             .filter(|p| !used.contains(p));
         let mut ports = Vec::new();
-        for p in &spec.ports {
+        for var in &spec.ports {
             ports.push(Port {
-                proto: p.proto.clone(),
-                host: free.next().context("this box has no game ports left")?,
-                guest: p.guest,
+                var: var.clone(),
+                port: free.next().context("this box has no game ports left")?,
             });
+        }
+
+        // the egg's variables: its defaults, then what the person set where
+        // they may, then the ports
+        let mut env: BTreeMap<String, String> = spec
+            .settings
+            .iter()
+            .map(|s| (s.var.clone(), s.default.clone()))
+            .collect();
+        for s in spec.visible_settings() {
+            if let Some(v) = settings.get(&s.var) {
+                let v = v.trim();
+                if !v.is_empty() {
+                    if let Some(c) = &s.choices
+                        && !c.iter().any(|x| x == v)
+                    {
+                        bail!("{}: not one of the choices", s.label);
+                    }
+                    if s.kind == "number" && v.parse::<f64>().is_err() {
+                        bail!("{}: not a number", s.label);
+                    }
+                    env.insert(s.var.clone(), v.to_string());
+                }
+            }
+        }
+        for p in &ports {
+            env.insert(p.var.clone(), p.port.to_string());
         }
 
         let taken: HashSet<String> = all.iter().map(|i| i.id.clone()).collect();
@@ -300,17 +403,27 @@ impl Manager {
             .find(|s| !taken.contains(s) && valid_id(s))
             .context("no id")?;
 
+        // no more than the box has: the budget bounds memory, the cpu count
+        // bounds cores (qemu warns past it, kvm crawls)
+        let memory = spec.memory().min(self.cfg.memory_budget);
+        let cores = spec.cores().min(self.cfg.cores.max(1));
         let i = Instance {
             id,
             game: game.to_string(),
             owner: owner.to_string(),
-            memory: spec.memory,
-            cores: spec.cores,
-            exec: spec.exec.clone(),
-            args: spec.args.clone(),
+            memory,
+            cores,
             ports,
-            saves: spec.saves.clone(),
-            steam: spec.app_id.map(|app_id| Steam { app_id }),
+            env,
+            recipe: Recipe {
+                app: spec.app,
+                wine: spec.wine,
+                startup: spec.startup.clone(),
+                ready: spec.ready.clone(),
+                stop: spec.stop.clone(),
+                files: spec.files.clone(),
+                install: spec.install.clone(),
+            },
             desired: "running".into(),
             created: now(),
         };
@@ -425,24 +538,52 @@ mod tests {
         catalogue.insert(
             "valheim".to_string(),
             Game {
+                id: "valheim".into(),
                 name: "Valheim".into(),
                 description: String::new(),
-                app_id: Some(896660),
-                exec: "valheim_server.x86_64".into(),
-                args: vec!["-port".into(), "2456".into()],
-                ports: vec![
-                    GamePort {
-                        proto: "udp".into(),
-                        guest: 2456,
+                app: 896660,
+                game: Some(892970),
+                cover: true,
+                wine: false,
+                startup: "./valheim_server.x86_64 -name \"{{SERVER_NAME}}\" -port {{SERVER_PORT}} -password \"{{PASSWORD}}\"".into(),
+                ready: Some("Game server connected".into()),
+                stop: "^C".into(),
+                files: serde_json::json!({}),
+                install: "steamcmd".into(),
+                settings: vec![
+                    Setting {
+                        var: "SERVER_NAME".into(),
+                        label: "Server name".into(),
+                        default: "My Server".into(),
+                        kind: "text".into(),
+                        help: String::new(),
+                        editable: true,
+                        ours: Some("name".into()),
+                        choices: None,
                     },
-                    GamePort {
-                        proto: "udp".into(),
-                        guest: 2457,
+                    Setting {
+                        var: "PASSWORD".into(),
+                        label: "Password".into(),
+                        default: "secret".into(),
+                        kind: "text".into(),
+                        help: String::new(),
+                        editable: true,
+                        ours: Some("password".into()),
+                        choices: None,
+                    },
+                    Setting {
+                        var: "SRCDS_APPID".into(),
+                        label: "App".into(),
+                        default: "896660".into(),
+                        kind: "text".into(),
+                        help: String::new(),
+                        editable: false,
+                        ours: None,
+                        choices: None,
                     },
                 ],
-                saves: vec![".config/unity3d/IronGate/Valheim".into()],
-                memory: 4096,
-                cores: 2,
+                ports: vec!["SERVER_PORT".into(), "QUERY_PORT".into()],
+                port_defaults: BTreeMap::new(),
             },
         );
         let fake = Arc::new(Fake::default());
@@ -454,6 +595,7 @@ mod tests {
                 port_count: 4,
                 per_member,
                 memory_budget: budget,
+                cores: 8,
                 address: "box.example".into(),
                 home: "https://home.example/".into(),
             },
@@ -466,17 +608,24 @@ mod tests {
     #[test]
     fn a_member_starts_stops_and_deletes_their_own_server() {
         let (m, fake) = manager(1, 16384);
-        let i = m.create("tom", "valheim").unwrap();
+        let mut set = BTreeMap::new();
+        set.insert("SERVER_NAME".to_string(), "Tom's".to_string());
+        set.insert("SRCDS_APPID".to_string(), "1".to_string());
+        let i = m.create("tom", "valheim", &set).unwrap();
         assert_eq!(i.id, "valheim1");
-        assert_eq!(i.ports[0].host, 27000);
-        assert_eq!(i.ports[1].host, 27001);
-        assert_eq!(i.steam, Some(Steam { app_id: 896660 }));
+        assert_eq!(i.ports[0].port, 27000);
+        assert_eq!(i.ports[1].port, 27001);
+        assert_eq!(i.recipe.app, 896660);
+        assert_eq!(i.env["SERVER_NAME"], "Tom's");
+        assert_eq!(i.env["PASSWORD"], "secret", "the egg's default");
+        assert_eq!(i.env["SRCDS_APPID"], "896660", "not a person's to set");
+        assert_eq!(i.env["SERVER_PORT"], i.ports[0].port.to_string());
         assert!(fake.up.lock().unwrap().contains("valheim1"));
         // the record is what the runner and the guest read
         assert_eq!(m.instance("valheim1").unwrap(), i);
 
         // one at a time, and not someone else's
-        assert!(m.create("tom", "valheim").is_err());
+        assert!(m.create("tom", "valheim", &BTreeMap::new()).is_err());
         assert!(m.stop("eve", "valheim1").is_err());
         assert!(m.delete("tom", "valheim1").is_err(), "running: stop first");
 
@@ -485,14 +634,14 @@ mod tests {
         assert_eq!(m.state(&m.instance("valheim1").unwrap()), State::Stopped);
         m.delete("tom", "valheim1").unwrap();
         assert!(m.instance("valheim1").is_none());
-        assert!(m.create("tom", "nope").is_err());
+        assert!(m.create("tom", "nope", &BTreeMap::new()).is_err());
     }
 
     #[test]
     fn a_reboot_brings_back_what_should_be_up_and_only_that() {
         let (m, fake) = manager(2, 16384);
-        let a = m.create("tom", "valheim").unwrap();
-        let b = m.create("tom", "valheim").unwrap();
+        let a = m.create("tom", "valheim", &BTreeMap::new()).unwrap();
+        let b = m.create("tom", "valheim", &BTreeMap::new()).unwrap();
         m.stop("tom", &b.id).unwrap();
         // the box goes down: nothing is up, the records remain
         fake.up.lock().unwrap().clear();
@@ -504,15 +653,21 @@ mod tests {
 
     #[test]
     fn the_box_has_so_much_memory_and_so_many_ports() {
-        let (m, _) = manager(5, 8192);
-        m.create("a", "valheim").unwrap();
-        m.create("b", "valheim").unwrap();
-        let e = m.create("c", "valheim").unwrap_err().to_string();
+        let (m, _) = manager(5, 12288);
+        m.create("a", "valheim", &BTreeMap::new()).unwrap();
+        m.create("b", "valheim", &BTreeMap::new()).unwrap();
+        let e = m
+            .create("c", "valheim", &BTreeMap::new())
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("full"), "{e}");
         let (m, _) = manager(5, 1 << 20);
-        m.create("a", "valheim").unwrap();
-        m.create("b", "valheim").unwrap();
-        let e = m.create("c", "valheim").unwrap_err().to_string();
+        m.create("a", "valheim", &BTreeMap::new()).unwrap();
+        m.create("b", "valheim", &BTreeMap::new()).unwrap();
+        let e = m
+            .create("c", "valheim", &BTreeMap::new())
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("ports"), "{e}");
     }
 }

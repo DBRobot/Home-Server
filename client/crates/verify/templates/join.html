@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Create your account{% endblock %}
+{% block main %}
+<main class="auth">
+  <div class="card">
+    <h1>Create your account</h1>
+    <p class="lead">Pick a name and make a passkey. The passkey is the account: it stays on your device and follows you to your other devices the way passkeys do. No password, and nothing here can sign as you.</p>
+    <label for="u">Name</label>
+    <input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="lowercase letters, digits, - _ .">
+    <label for="c">Invite code <span class="opt">(if someone gave you one)</span></label>
+    <input id="c" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxxx-xxxxx">
+    <button id="go">Create passkey</button>
+    <div id="msg"></div>
+    <p class="note">Already have one? <a href="/_dd/login">Sign in</a>. Just looking? <a href="/_dd/demo">View the demo</a>.</p>
+  </div>
+</main>
+<script type="module" src="/_dd/static/join.js"></script>
+{% endblock %}

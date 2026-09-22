@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ s.name }} server{% endblock %}
+
+{% block main %}
+<p><a href="/">← Games</a></p>
+
+<div class="panel"><div class="open">
+  {% if let Some(game) = s.game %}{% include "cover.html" %}{% else %}<div class="blank"></div>{% endif %}
+  <div class="body"{% if busy %} data-live="{{ s.state }}"{% endif %}>
+    <h2>{{ s.name }}</h2>
+    <p class="desc"><span id="st" class="state {{ s.state }}">{{ s.label }}</span> · {{ s.who }}</p>
+    {% for p in ports %}
+    <div><span class="addr">{{ address }}:{{ p.port }}</span> <span class="spec">{{ p.label }}</span></div>
+    {% endfor %}
+    {% if !settings.is_empty() %}<p class="spec">{{ settings }}</p>{% endif %}
+    {% if mine && !demo %}
+    <div class="row">
+      {% if idle %}
+      <form method="post" action="/start/{{ s.id }}"><button>Start</button></form>
+      <form method="post" action="/delete/{{ s.id }}" onsubmit="return confirm('Delete this server and its world?')"><button class="quiet">Delete, with its world</button></form>
+      {% else %}
+      <form method="post" action="/stop/{{ s.id }}"><button class="quiet">Stop</button></form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div></div>
+
+<section style="margin-top:28px">
+  <h2>Log</h2>
+  <pre id="log" class="log">{% if log.is_empty() %}nothing yet{% else %}{{ log }}{% endif %}</pre>
+</section>
+{% endblock %}

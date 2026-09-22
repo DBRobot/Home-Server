@@ -1,0 +1,11 @@
+{# one server in the rows above the library #}
+<li>
+  <a class="server" href="/server/{{ s.id }}">
+    {% if let Some(game) = s.game %}{% include "cover.html" %}{% else %}<div class="blank"></div>{% endif %}
+    <div>
+      <h3>{{ s.name }}</h3>
+      <p><span class="state {{ s.state }}">{{ s.label }}</span> · {{ s.who }}</p>
+      {% if let Some(a) = s.address %}<span class="addr">{{ a }}</span>{% endif %}
+    </div>
+  </a>
+</li>

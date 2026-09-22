@@ -1,0 +1,16 @@
+{# one setting, by our label for it #}
+<label>
+  {{ f.label }}{% if !f.help.is_empty() %} <small>{{ f.help }}</small>{% endif %}
+  {% if let Some(choices) = f.choices %}
+  <select name="{{ f.var }}">
+    {% for c in choices %}<option value="{{ c }}"{% if *c == f.default %} selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select>
+  {% else if f.kind == "bool" %}
+  <select name="{{ f.var }}">
+    <option value="1"{% if f.default == "1" %} selected{% endif %}>yes</option>
+    <option value="0"{% if f.default != "1" %} selected{% endif %}>no</option>
+  </select>
+  {% else %}
+  <input type="{% if f.kind == "number" %}number{% else if f.kind == "password" %}password{% else %}text{% endif %}" name="{{ f.var }}" value="{{ f.default }}"{% if f.kind == "password" %} autocomplete="new-password"{% endif %}>
+  {% endif %}
+</label>

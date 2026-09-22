@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block bar %}{% include "me.html" %}{% endblock %}
+{% block main %}
+<main class="auth">
+  <div class="card" data-user="{{ user }}">
+    <h1>Your account is made</h1>
+    <p class="lead">Nothing here is open to you yet. Whoever runs this network adds people to it; once they have added you, this page fills in with what you can use.</p>
+    <label for="c">Have a code from them?</label>
+    <input id="c" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxxx-xxxxx">
+    <button id="go">Use code</button>
+    <div id="msg"></div>
+  </div>
+</main>
+<script type="module" src="/_dd/static/redeem.js"></script>
+{% endblock %}

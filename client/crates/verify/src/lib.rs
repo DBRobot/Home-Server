@@ -847,6 +847,16 @@ async fn demo(State(app): State<Arc<App>>) -> Response {
     r
 }
 
+/// The pages' own stylesheet and scripts (pages::static_file).
+async fn static_file(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+    match pages::static_file(&file) {
+        Some((body, ty)) => {
+            ([("content-type", ty), ("cache-control", "no-cache")], body).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 /// The browser-side Rust, as wasm-bindgen laid it out: a .js and a .wasm.
 async fn web_file(
     State(app): State<Arc<App>>,
@@ -873,8 +883,11 @@ async fn web_file(
 async fn photos_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
-        // the demo has no passkey and no account: back to the tiles
-        Some(user) if user == pages::DEMO_USER => Redirect::to("/_dd/home").into_response(),
+        // the demo has no passkey: the page gets its password from the config
+        Some(user) if user == pages::DEMO_USER => match &app.photos {
+            Some(p) if p.demo_password.is_some() => Html(pages::photos(&user)).into_response(),
+            _ => Redirect::to("/_dd/home").into_response(),
+        },
         Some(user) if app.member(&user) && app.photos.is_some() => {
             Html(pages::photos(&user)).into_response()
         }
@@ -1135,6 +1148,7 @@ pub async fn start(
         .route("/_dd/redeem/sign", post(join_sign))
         .route("/_dd/demo", get(demo))
         .route("/_dd/web/{file}", get(web_file))
+        .route("/_dd/static/{file}", get(static_file))
         .route("/_dd/photos", get(photos_page))
         .route("/_dd/photos/config", post(photos_config))
         .route("/_dd/enrol/start", post(enrol_start))

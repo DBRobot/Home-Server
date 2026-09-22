@@ -58,7 +58,15 @@
       packages.${system} =
         let
           craneLib = crane.mkLib pkgs;
-          src = craneLib.cleanCargoSource ./client;
+          # cargo sources, plus the pages' templates, stylesheets, scripts
+          # and icons the crates include at build time
+          src = pkgs.lib.cleanSourceWith {
+            src = ./client;
+            filter =
+              path: type:
+              (craneLib.filterCargoSources path type)
+              || builtins.match ".*/(templates|web)(/.*)?" path != null;
+          };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
           wasmToolchain = (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.minimal.override {
