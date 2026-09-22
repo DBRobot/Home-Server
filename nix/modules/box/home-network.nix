@@ -1,9 +1,8 @@
 # The house network: a box on the router by cable when it has one, by wifi
-# when it does not, and by the laptop's link only if both are gone. Three
-# NetworkManager profiles, ordered by route metric, so the best path that
-# is up carries the default route and the others wait. Every box gets a
-# fixed address on the house network (the router's reservation matches),
-# since the port forward names it.
+# when it does not. Two NetworkManager profiles, ordered by route metric, so
+# the best path that is up carries the default route and the other waits.
+# Every box gets a fixed address on the house network (the router's
+# reservation matches), since the port forward names it.
 {
   config,
   lib,
@@ -33,7 +32,7 @@ in
     wired = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "the cabled interface to the router, if any (interface-name)";
+      description = "the cabled adapter to the router, by mac address (an interface name would encode the usb port)";
     };
     wifi = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -51,10 +50,10 @@ in
             connection = {
               id = "house-wired";
               type = "ethernet";
-              interface-name = cfg.wired;
               autoconnect = true;
               autoconnect-priority = 100;
             };
+            ethernet.mac-address = cfg.wired;
             ipv4 = {
               method = "manual";
               address1 = cfg.address;
@@ -77,6 +76,9 @@ in
             wifi = {
               ssid = cfg.ssid;
               mode = "infrastructure";
+              # the card's own address, not a random one per connection:
+              # the router's reservation names it
+              cloned-mac-address = "permanent";
             };
             wifi-security = {
               key-mgmt = "wpa-psk";
@@ -95,5 +97,17 @@ in
         };
     };
     networking.networkmanager.wifi.powersave = false;
+    # a profile that leaves the config leaves the box: ensureProfiles only
+    # writes, so without this an old profile stays active until a reboot
+    systemd.services.NetworkManager-ensure-profiles.preStart =
+      let
+        keep = lib.concatMapStringsSep " " (n: "-not -name ${lib.escapeShellArg "${n}.nmconnection"}") (
+          lib.attrNames config.networking.networkmanager.ensureProfiles.profiles
+        );
+      in
+      ''
+        mkdir -p /run/NetworkManager/system-connections
+        find /run/NetworkManager/system-connections -name '*.nmconnection' ${keep} -delete
+      '';
   };
 }
