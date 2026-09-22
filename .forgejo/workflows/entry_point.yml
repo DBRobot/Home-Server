@@ -7,10 +7,10 @@
 # that did.
 name: entry_point
 
+# once per change: a pull request runs it, and main is only ever a
+# fast-forward of a branch it already ran on, so a push to main runs nothing
 on:
   pull_request:
-  push:
-    branches: [main]
 
 jobs:
   files_modified:
@@ -25,8 +25,9 @@ jobs:
           fetch-depth: 0 # the diff against the base needs history
 
       # Allowlists, not denylists: a new directory should not silently cost
-      # a system build until someone remembers to exclude it. A push to main
-      # builds everything regardless, so a wrong list here is caught there.
+      # a system build until someone remembers to exclude it. A wrong list
+      # here is caught by the boxes, which build the whole system from main
+      # at every release and roll back what does not come up.
       - name: what changed?
         id: detect
         run: |
