@@ -171,6 +171,7 @@
           thanos = vm "thanos";
           members-runner = vm "members-runner";
           games = vm "games";
+          forge = vm "forge";
           placement = import ./nix/tests/placement.nix args;
           boxes = import ./nix/tests/boxes.nix args;
         };
