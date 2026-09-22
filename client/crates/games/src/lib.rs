@@ -142,6 +142,51 @@ pub struct Recipe {
     pub install: String,
 }
 
+/// A world kept apart from its server: what the game wrote, and the
+/// settings it ran with, under the owner's name
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct World {
+    pub name: String,
+    pub game: String,
+    pub owner: String,
+    pub env: BTreeMap<String, String>,
+    pub kept: u64,
+    pub files: usize,
+}
+
+fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() && !p.is_symlink() {
+                stack.push(p);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    for p in walk(from) {
+        let rel = p.strip_prefix(from).unwrap_or(&p);
+        let dest = to.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if p.is_file() {
+            std::fs::copy(&p, &dest)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Stopped,
@@ -364,9 +409,27 @@ impl Manager {
             .filter(|p| !used.contains(p));
         let mut ports = Vec::new();
         for var in &spec.ports {
+            // a port the game insists on (it tells clients that number) is
+            // that number or nothing; the rest come from the pool
+            let port = match spec
+                .port_defaults
+                .get(var)
+                .and_then(|d| d.parse::<u16>().ok())
+            {
+                Some(fixed) => {
+                    if used.contains(&fixed) {
+                        bail!(
+                            "{} needs port {fixed} and another server here has it; one of this game per box",
+                            spec.name
+                        );
+                    }
+                    fixed
+                }
+                None => free.next().context("this box has no game ports left")?,
+            };
             ports.push(Port {
                 var: var.clone(),
-                port: free.next().context("this box has no game ports left")?,
+                port,
             });
         }
 
@@ -531,6 +594,106 @@ impl Manager {
             "stop it first; deleting removes the world with it"
         );
         std::fs::remove_dir_all(self.instance_dir(&i.id))?;
+        Ok(())
+    }
+
+    fn worlds_dir(&self) -> PathBuf {
+        self.cfg.dir.join("worlds")
+    }
+
+    /// A world is everything the game wrote after its install: saves,
+    /// its config, whatever it keeps, whichever game it is. Kept under the
+    /// owner's name; the game files, which steam can give again, go.
+    pub fn keep_world(&self, owner: &str, id: &str) -> Result<String> {
+        let i = self.owned(owner, id)?;
+        anyhow::ensure!(!self.up(&i), "stop it first");
+        let server = self.instance_dir(&i.id).join("server");
+        let marker = server.join(".installed");
+        let since = std::fs::metadata(&marker)
+            .and_then(|m| m.modified())
+            .context("this server was never installed; nothing to keep")?;
+        let name = format!("{}-{}", i.game, now());
+        let dest = self.worlds_dir().join(owner).join(&name);
+        std::fs::create_dir_all(&dest)?;
+        let mut files = 0usize;
+        for entry in walk(&server) {
+            let rel = entry.strip_prefix(&server).unwrap_or(&entry);
+            let top = rel
+                .components()
+                .next()
+                .map(|c| c.as_os_str().to_string_lossy().to_string());
+            // steam's own dir and the install marker are not the world
+            if matches!(
+                top.as_deref(),
+                Some("steamcmd") | Some(".steam") | Some(".installed")
+            ) {
+                continue;
+            }
+            let Ok(meta) = std::fs::metadata(&entry) else {
+                continue;
+            };
+            if meta.is_file() && meta.modified().map(|m| m > since).unwrap_or(false) {
+                let to = dest.join(rel);
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&entry, &to)?;
+                files += 1;
+            }
+        }
+        let meta = World {
+            name: name.clone(),
+            game: i.game.clone(),
+            owner: owner.to_string(),
+            env: i.env.clone(),
+            kept: now(),
+            files,
+        };
+        std::fs::write(dest.join("world.json"), serde_json::to_vec_pretty(&meta)?)?;
+        std::fs::remove_dir_all(self.instance_dir(&i.id))?;
+        Ok(name)
+    }
+
+    /// The worlds one person has kept
+    pub fn worlds(&self, owner: &str) -> Vec<World> {
+        let mut out = Vec::new();
+        let Ok(rd) = std::fs::read_dir(self.worlds_dir().join(owner)) else {
+            return out;
+        };
+        for e in rd.flatten() {
+            if let Ok(b) = std::fs::read(e.path().join("world.json"))
+                && let Ok(w) = serde_json::from_slice::<World>(&b)
+            {
+                out.push(w);
+            }
+        }
+        out.sort_by_key(|w| std::cmp::Reverse(w.kept));
+        out
+    }
+
+    /// A new server of the world's game, with the world's settings, and
+    /// the world's files put back once the game is installed (the guest
+    /// copies /instance/world over the install before it starts).
+    pub fn restore_world(&self, owner: &str, name: &str) -> Result<Instance> {
+        let src = self.worlds_dir().join(owner).join(name);
+        let w: World = serde_json::from_slice(&std::fs::read(src.join("world.json"))?)
+            .context("no such world")?;
+        anyhow::ensure!(w.owner == owner, "not yours");
+        let settings: BTreeMap<String, String> = w.env.clone();
+        let i = self.create(owner, &w.game, &settings)?;
+        let dest = self.instance_dir(&i.id).join("world");
+        copy_tree(&src, &dest)?;
+        let _ = std::fs::remove_file(dest.join("world.json"));
+        std::fs::remove_dir_all(&src)?;
+        Ok(i)
+    }
+
+    pub fn delete_world(&self, owner: &str, name: &str) -> Result<()> {
+        let src = self.worlds_dir().join(owner).join(name);
+        let w: World = serde_json::from_slice(&std::fs::read(src.join("world.json"))?)
+            .context("no such world")?;
+        anyhow::ensure!(w.owner == owner, "not yours");
+        std::fs::remove_dir_all(&src)?;
         Ok(())
     }
 
@@ -710,6 +873,44 @@ mod tests {
         assert_eq!(i.env["SRCDS_APPID"], "896660", "not a person's to set");
         assert!(fake.up.lock().unwrap().contains(&i.id), "back up after");
         assert!(m.configure("ann", &i.id, &set).is_err(), "not hers");
+    }
+
+    #[test]
+    fn a_world_outlives_its_server_and_starts_a_new_one() {
+        let (m, fake) = manager(1, 16384);
+        let i = m.create("tom", "valheim", &BTreeMap::new()).unwrap();
+        let server = m.instance_dir(&i.id).join("server");
+        std::fs::create_dir_all(server.join("steamcmd")).unwrap();
+        std::fs::write(server.join(".installed"), "1").unwrap();
+        std::fs::write(server.join("game.bin"), "install").unwrap();
+        std::fs::write(server.join("steamcmd/steam.bin"), "tool").unwrap();
+        // the marker is older than what the game writes after
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::open(server.join(".installed"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::File::open(server.join("game.bin"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::create_dir_all(server.join("saves")).unwrap();
+        std::fs::write(server.join("saves/world.db"), "the world").unwrap();
+        assert!(m.keep_world("tom", &i.id).is_err(), "not while up");
+        m.stop("tom", &i.id).unwrap();
+        let name = m.keep_world("tom", &i.id).unwrap();
+        assert!(m.instance(&i.id).is_none(), "the server is gone");
+        let worlds = m.worlds("tom");
+        assert_eq!(worlds.len(), 1);
+        assert_eq!(worlds[0].files, 1, "only what the game wrote");
+        assert!(m.worlds("ann").is_empty());
+        let j = m.restore_world("tom", &name).unwrap();
+        assert!(fake.up.lock().unwrap().contains(&j.id));
+        assert_eq!(
+            std::fs::read_to_string(m.instance_dir(&j.id).join("world/saves/world.db")).unwrap(),
+            "the world"
+        );
+        assert!(m.worlds("tom").is_empty(), "handed over");
     }
 
     #[test]

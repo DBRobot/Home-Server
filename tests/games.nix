@@ -116,6 +116,16 @@
     box.wait_until_fails("curl -sf -m 3 http://127.0.0.1:27015/", timeout=120)
     box.wait_until_succeeds("systemctl show -p ActiveState dd-game@probe1.service | grep -q inactive", timeout=120)
     assert "Result=success" in box.succeed("systemctl show -p Result dd-game@probe1.service")
+    # the world outlives the server: kept, then a new server starts with it
+    assert box.succeed(f"{m}/keep/probe1").strip() == "303"
+    box.fail(f"test -e {d}")
+    name = box.succeed("ls /var/lib/dd-games/worlds/tom").strip()
+    assert "hello" in box.succeed(f"cat /var/lib/dd-games/worlds/tom/{name}/world/world.txt")
+    assert box.succeed(f"{m}/worlds/{name}/start").strip() == "303"
+    box.wait_until_succeeds("curl -sf -m 5 http://127.0.0.1:27015/world.txt | grep -q hello", timeout=600)
+    box.succeed("test -e /var/lib/dd-games/instances/probe1/server/world/world.txt")
+    assert box.succeed(f"{m}/stop/probe1").strip() == "303"
+    box.wait_until_succeeds("systemctl show -p ActiveState dd-game@probe1.service | grep -q inactive", timeout=120)
     assert box.succeed(f"{m}/delete/probe1").strip() == "303"
     box.fail(f"test -e {d}")
   '';

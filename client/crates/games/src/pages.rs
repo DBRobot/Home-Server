@@ -3,7 +3,7 @@
 
 use askama::Template;
 
-use crate::{Game, Instance, Manager, Setting, State};
+use crate::{Game, Instance, Manager, Setting, State, World};
 
 pub fn state_name(st: State) -> &'static str {
     match st {
@@ -75,6 +75,16 @@ pub struct Library<'a> {
     pub others: Vec<ServerView<'a>>,
     pub games: Vec<&'a Game>,
     pub open: Option<OpenView<'a>>,
+    /// this person's kept worlds, newest first
+    pub worlds: Vec<WorldView>,
+}
+
+pub struct WorldView {
+    pub name: String,
+    pub game_name: String,
+    pub cover: Option<String>,
+    pub when: String,
+    pub files: usize,
 }
 
 /// The library, with one game open over it when `open` says so.
@@ -120,9 +130,38 @@ pub fn library(
             .filter(|g| ql.is_empty() || g.name.to_lowercase().contains(&ql))
             .collect(),
         open,
+        worlds: m
+            .worlds(user)
+            .into_iter()
+            .map(|w: World| {
+                let g = m.cfg.catalogue.get(&w.game);
+                WorldView {
+                    name: w.name.clone(),
+                    game_name: g.map(|g| g.name.clone()).unwrap_or(w.game.clone()),
+                    cover: g.filter(|g| g.cover).map(|g| g.id.clone()),
+                    when: ago(w.kept),
+                    files: w.files,
+                }
+            })
+            .collect(),
     }
     .render()
     .unwrap_or_default()
+}
+
+fn ago(t: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(t);
+    let d = now.saturating_sub(t);
+    if d < 3600 {
+        format!("{} min ago", d / 60)
+    } else if d < 86400 {
+        format!("{} h ago", d / 3600)
+    } else {
+        format!("{} days ago", d / 86400)
+    }
 }
 
 pub struct PortView {

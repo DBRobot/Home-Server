@@ -23,6 +23,9 @@ OURS = {
 }
 # not ours by name, but relabelled and defaulted off: a restart should be quick
 RELABEL = {"AUTO_UPDATE": ("Update on start", "0")}
+# games that tell their clients a port of their own and ignore -Port for it:
+# the server port must be that number, host and guest alike
+FIXED_PORTS = {"satisfactory": {"SERVER_PORT": "7777"}}
 HIDE = {"SRCDS_APPID", "SRCDS_BETAID", "SRCDS_BETAPASS", "VALIDATE",
         "LD_LIBRARY_PATH", "CONSOLE_FILTER", "STEAM_USER", "STEAM_PASS", "STEAM_AUTH",
         "WINETRICKS_RUN", "WINDOWS_INSTALL", "INSTALL_FLAGS", "ADDITIONAL_ARGS"}
@@ -117,7 +120,8 @@ for p in sorted(glob.glob(os.path.join(eggs_dir, "**", "egg-*.json"), recursive=
         "files": files or {}, "install": d["scripts"]["installation"]["script"],
         "settings": settings,
         "ports": sorted({k for k in vars_ if PORTS.search(k)} | {"SERVER_PORT"}),
-        "port_defaults": {k: vars_[k]["default_value"] for k in vars_ if PORTS.search(k)},
+        "port_defaults": {**{k: vars_[k]["default_value"] for k in vars_ if PORTS.search(k)},
+                          **FIXED_PORTS.get(name.lower(), {})},
     })
 # one entry per game: prefer the linux one over the wine one, the plain over the mod
 seen = {}

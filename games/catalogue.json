@@ -8188,7 +8188,8 @@
     "SERVER_PORT"
    ],
    "port_defaults": {
-    "RELIABLE_PORT": "8888"
+    "RELIABLE_PORT": "8888",
+    "SERVER_PORT": "7777"
    }
   },
   {

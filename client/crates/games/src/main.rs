@@ -187,6 +187,41 @@ async fn configure(
     back(&format!("/server/{id}"), a.m.configure(&u, &id, &settings))
 }
 
+async fn keep(State(a): State<Arc<App>>, h: HeaderMap, Path(id): Path<String>) -> Response {
+    let Some(u) = user(&h) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match a.m.keep_world(&u, &id) {
+        Ok(_) => Redirect::to("/").into_response(),
+        Err(e) => back(&format!("/server/{id}"), Err(e)),
+    }
+}
+
+async fn restore_world(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+    Path(name): Path<String>,
+) -> Response {
+    let Some(u) = user(&h) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match a.m.restore_world(&u, &name) {
+        Ok(i) => Redirect::to(&format!("/server/{}", i.id)).into_response(),
+        Err(e) => back("/", Err(e)),
+    }
+}
+
+async fn delete_world(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+    Path(name): Path<String>,
+) -> Response {
+    let Some(u) = user(&h) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    back("/", a.m.delete_world(&u, &name))
+}
+
 macro_rules! act {
     ($name:ident, $call:ident, $to:expr) => {
         async fn $name(
@@ -246,6 +281,9 @@ async fn main() -> Result<()> {
         .route("/configure/{id}", post(configure))
         .route("/stop/{id}", post(stop))
         .route("/delete/{id}", post(delete))
+        .route("/keep/{id}", post(keep))
+        .route("/worlds/{name}/start", post(restore_world))
+        .route("/worlds/{name}/delete", post(delete_world))
         .with_state(app);
     let bind = env_or("DD_GAMES_BIND", "127.0.0.1:4182");
     let listener = tokio::net::TcpListener::bind(&bind).await?;

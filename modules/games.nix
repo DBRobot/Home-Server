@@ -57,7 +57,12 @@ let
     [ -S "$d"/qmp ] || exit 0
     printf '%s\n' '{"execute":"qmp_capabilities"}' '{"execute":"system_powerdown"}' \
       | ${pkgs.socat}/bin/socat - UNIX-CONNECT:"$d"/qmp >/dev/null 2>&1 || true
-    for i in $(seq 1 80); do kill -0 "$MAINPID" 2>/dev/null || exit 0; sleep 1; done
+    # the guest gets a minute to shut the game down and power off; then
+    # qemu is told to quit, which is the same as pulling the plug
+    for i in $(seq 1 60); do kill -0 "$MAINPID" 2>/dev/null || exit 0; sleep 1; done
+    printf '%s\n' '{"execute":"qmp_capabilities"}' '{"execute":"quit"}' \
+      | ${pkgs.socat}/bin/socat - UNIX-CONNECT:"$d"/qmp >/dev/null 2>&1 || true
+    for i in $(seq 1 15); do kill -0 "$MAINPID" 2>/dev/null || exit 0; sleep 1; done
   '';
 in
 {

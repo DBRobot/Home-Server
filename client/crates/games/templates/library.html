@@ -17,6 +17,29 @@
 </section>
 {% endif %}
 
+{% if !worlds.is_empty() %}
+<section>
+  <h2>Your saved worlds</h2>
+  <ul class="servers">
+    {% for w in worlds %}
+    <li>
+      <div class="server">
+        {% if let Some(c) = w.cover %}<img src="/cover/{{ c }}" alt="" loading="lazy">{% else %}<div class="blank"></div>{% endif %}
+        <div>
+          <h3>{{ w.game_name }}</h3>
+          <p>kept {{ w.when }} · {{ w.files }} files</p>
+          <div class="row" style="margin-top:8px">
+            <form method="post" action="/worlds/{{ w.name }}/start"><button>Start a server with it</button></form>
+            <form method="post" action="/worlds/{{ w.name }}/delete" onsubmit="return confirm('Delete this saved world? There is no undo.')"><button class="quiet">Delete</button></form>
+          </div>
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 {% if !others.is_empty() %}
 <section>
   <h2>Also up here</h2>
