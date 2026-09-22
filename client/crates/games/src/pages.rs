@@ -135,6 +135,8 @@ pub struct PortView {
 pub struct Server<'a> {
     pub user: &'a str,
     pub demo: bool,
+    /// the settings a person may change, with this server's values
+    pub fields: Vec<Setting>,
     pub home: &'a str,
     pub s: ServerView<'a>,
     pub address: &'a str,
@@ -159,9 +161,23 @@ pub fn server(m: &Manager, user: &str, i: &Instance) -> String {
                 .join(" · ")
         })
         .unwrap_or_default();
+    let fields = g
+        .map(|g| {
+            g.visible_settings()
+                .map(|s| {
+                    let mut f = s.clone();
+                    if let Some(v) = i.env.get(&s.var) {
+                        f.default = v.clone();
+                    }
+                    f
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Server {
         user,
         demo: user == "demo",
+        fields,
         home: &m.cfg.home,
         s: ServerView::new(m, i, user),
         address: &m.cfg.address,
