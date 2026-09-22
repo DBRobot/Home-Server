@@ -27,6 +27,22 @@
     if (first) first.focus();
   }
 
+  // copy buttons beside the address and port
+  for (const b of document.querySelectorAll('[data-copy]')) {
+    b.addEventListener('click', async () => {
+      const input = b.parentElement.querySelector('input');
+      try {
+        await navigator.clipboard.writeText(input.value);
+      } catch (e) {
+        input.select();
+        document.execCommand('copy');
+      }
+      const was = b.textContent;
+      b.textContent = 'Copied';
+      setTimeout(() => { b.textContent = was; }, 1200);
+    });
+  }
+
   // a server's page: while it installs or starts, ask for its state and
   // swap in what changed instead of reloading the whole page
   const live = document.querySelector('[data-live]');

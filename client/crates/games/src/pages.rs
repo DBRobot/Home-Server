@@ -140,7 +140,9 @@ pub struct Server<'a> {
     pub home: &'a str,
     pub s: ServerView<'a>,
     pub address: &'a str,
-    pub ports: Vec<PortView>,
+    /// the port a player types: SERVER_PORT, else the first
+    pub main_port: Option<PortView>,
+    pub other_ports: Vec<PortView>,
     pub settings: String,
     pub mine: bool,
     pub idle: bool,
@@ -181,14 +183,31 @@ pub fn server(m: &Manager, user: &str, i: &Instance) -> String {
         home: &m.cfg.home,
         s: ServerView::new(m, i, user),
         address: &m.cfg.address,
-        ports: i
+        main_port: i
             .ports
             .iter()
+            .find(|p| p.var == "SERVER_PORT")
+            .or(i.ports.first())
             .map(|p| PortView {
                 port: p.port,
-                label: p.var.replace("_PORT", "").replace('_', " ").to_lowercase(),
-            })
-            .collect(),
+                label: String::new(),
+            }),
+        other_ports: {
+            let main = i
+                .ports
+                .iter()
+                .find(|p| p.var == "SERVER_PORT")
+                .or(i.ports.first())
+                .map(|p| p.var.clone());
+            i.ports
+                .iter()
+                .filter(|p| Some(&p.var) != main.as_ref())
+                .map(|p| PortView {
+                    port: p.port,
+                    label: p.var.replace("_PORT", "").replace('_', " ").to_lowercase(),
+                })
+                .collect()
+        },
         settings,
         mine: i.owner == user,
         idle: matches!(st, State::Stopped | State::Failed),

@@ -544,6 +544,32 @@ button:focus-visible {
   margin-top: 8px;
 }
 
+/* the address and port a player types, each with a copy */
+.join {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+.join label { margin: 0; }
+.copy {
+  display: flex;
+  gap: 6px;
+  margin-top: 5px;
+}
+.copy input {
+  width: auto;
+  min-width: 120px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  background: var(--bg-2);
+  border-color: transparent;
+}
+.copy button {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 /* the game's own words */
 pre.log {
   margin: 0;

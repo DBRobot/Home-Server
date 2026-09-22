@@ -43,11 +43,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This is to auto update the server on start.\r\n\r\nOptions are 0 or 1\r\nDefault is 1",
-     "editable": false
+     "editable": true
     },
     {
      "var": "LD_LIBRARY_PATH",
@@ -118,11 +118,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[STEAM] Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Should Auto Update",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SERVER_NAME",
@@ -205,11 +205,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -299,11 +299,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This is to enable auto-updating for servers on restart/re-install.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "BATTLE_EYE",
@@ -429,11 +429,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "This is to enable auto-updating for servers.\r\n\r\nDefault is 0. Set to 1 to update",
-     "editable": false
+     "editable": true
     },
     {
      "var": "BATTLE_EYE",
@@ -550,11 +550,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server or mod updates on startup, and updates if necessary.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "DISABLE_THIRD",
@@ -751,11 +751,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "autoupdate Server on start or restart. 1 = on; 0 = off",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINDOWS_INSTALL",
@@ -917,11 +917,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Disabling or enabling automated updates on boot",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -1000,11 +1000,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server updates on startup, and updates if necessary. (1 Enable | 0 Disable)",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINDOWS_INSTALL",
@@ -1180,11 +1180,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "1 = on; 0 = off",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -1239,11 +1239,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "1 = on; 0 = off",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -1279,11 +1279,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Server will check for updates on every restart. Use 0 to disable.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SERVER_NAME",
@@ -1373,11 +1373,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -1432,11 +1432,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Steam Auto-Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Disable or enable the auto-updates. By default, it's recommended that you leave this on, otherwise you may not be able to join your server if it is outdated.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "STEAM_PASS",
@@ -1514,11 +1514,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
-     "kind": "text",
+     "label": "Update on start",
+     "default": "0",
+     "kind": "bool",
      "help": "1 = on; 0 = off",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -1557,11 +1557,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WORLD_NAME",
@@ -1677,11 +1677,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Enable automatic updates on boot",
-     "editable": false
+     "editable": true
     },
     {
      "var": "DISPLAY_WIDTH",
@@ -1730,11 +1730,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This is to enable / disable auto-updating your server on restart.\r\n\r\nBy default this is set to enabled.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "RCON_ENABLED",
@@ -1857,11 +1857,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This is to enable / disable auto-updating your server on restart.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "STEAM_TOKEN",
@@ -1925,11 +1925,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -2018,11 +2018,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "Auto update on restart",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -2050,11 +2050,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "Auto update on restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "HLDS_GAME",
@@ -2173,11 +2173,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Updates server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -2302,11 +2302,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto Update the server on start",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -2388,11 +2388,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "This is to enable auto-updating for servers.\r\n\r\nDefault is 0. Set to 1 to update",
-     "editable": false
+     "editable": true
     },
     {
      "var": "GAME_MODE",
@@ -2534,11 +2534,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[SERVER] Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WEBSRVURL",
@@ -2756,9 +2756,9 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
+     "label": "Update on start",
      "default": "0",
-     "kind": "text",
+     "kind": "bool",
      "help": "",
      "editable": false
     },
@@ -2826,11 +2826,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[SERVER] Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Enable automatic updates on boot",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRV_NAME",
@@ -2902,11 +2902,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -2989,11 +2989,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -3118,11 +3118,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[SERVER] Auto update the server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINDOWS_INSTALL",
@@ -3242,11 +3242,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update server software",
-     "editable": false
+     "editable": true
     },
     {
      "var": "RCON_PASSWORD",
@@ -3298,11 +3298,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server updates on startup, and updates if necessary. (1 ON | 0 OFF)",
-     "editable": false
+     "editable": true
     },
     {
      "var": "MAX_PLAYERS",
@@ -3580,11 +3580,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Enable automatic updates on boot",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -4055,11 +4055,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "AUTO_UPDATE",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Disabling or enabling automated updates on boot.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4153,11 +4153,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4238,11 +4238,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on start",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4376,11 +4376,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4430,11 +4430,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4479,11 +4479,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4615,11 +4615,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Updates gamefiles when reinstalling. Otherwise the server is freshly installed and you will loose your savegames.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -4677,11 +4677,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto Update a server on start",
-     "editable": false
+     "editable": true
     },
     {
      "var": "GAME_NAME",
@@ -4787,11 +4787,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto-update the game each time server is started, enter value 0 to disable.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -4892,11 +4892,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto-update server on start.\r\n\r\nSet 0 to disable, default is 1.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -4945,11 +4945,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on restart.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINEDEBUG",
@@ -5036,11 +5036,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "MAP_NAME",
@@ -5201,11 +5201,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Steam Auto Update",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "Enable or disable auto-update on startup. 0 to disable and 1 to enable.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -5290,11 +5290,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -5370,11 +5370,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on start",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SERVER_NAME",
@@ -5533,11 +5533,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -5562,11 +5562,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Updates server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINDOWS_INSTALL",
@@ -5663,11 +5663,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINEDEBUG",
@@ -5833,11 +5833,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto Update The server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SERVER_NAME",
@@ -5916,11 +5916,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update Server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This flag will auto update the server on restart. (default is 1) \r\n\r\nSet to 1 to update\r\nSet to 0 to no update",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -6003,11 +6003,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Autop update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -6101,11 +6101,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on start.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "MAX_PLAYERS",
@@ -6230,11 +6230,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This is to enable auto-updating for servers.\r\n\r\nDefault is 0. Set to 1 to update",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -6451,11 +6451,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update server on startup.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINEARCH",
@@ -6580,11 +6580,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto-update the game each time server is started, enter value 0 to disable.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "hostname",
@@ -6767,11 +6767,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Steam Auto Update",
+     "label": "Update on start",
      "default": "0",
-     "kind": "text",
+     "kind": "bool",
      "help": "Enable or disable auto-update on startup. 0 to disable and 1 to enable.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -6880,11 +6880,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "MAP",
@@ -6982,11 +6982,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -7063,11 +7063,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -7289,11 +7289,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Update the server on start/restart",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -7387,11 +7387,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -7483,11 +7483,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server updates on startup, and updates if necessary. (1 Enable | 0 Disable)",
-     "editable": false
+     "editable": true
     },
     {
      "var": "OWNER_ID",
@@ -8112,11 +8112,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server updates on startup, and updates if necessary. (1 Enable | 0 Disable)",
-     "editable": false
+     "editable": true
     },
     {
      "var": "NUM_AUTOSAVES",
@@ -8243,11 +8243,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on restart",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -8281,11 +8281,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Check for updates on server boot",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WORLDNAME",
@@ -8426,11 +8426,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
-     "kind": "text",
+     "label": "Update on start",
+     "default": "0",
+     "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -8581,11 +8581,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -8697,11 +8697,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on start",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SERVER_NAME",
@@ -8950,11 +8950,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[Advanced] Update Black Mesa Dedicated Server",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "Checks for any Black Mesa dedicated server updates on startup, and updates if necessary. This is off by default, because an update of the Black Mesa server will typically require an update of SourceCoop as well (which requires re-installing the server). An update of SourceCoop may also require an update of Metamod and SourceMod (see these settings for more info). Note: Clients that have updated may not be able to join an outdated server. (1 Enable | 0 Disable)",
-     "editable": false
+     "editable": true
     },
     {
      "var": "VERSION",
@@ -9155,11 +9155,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "EXPERIMENTAL_ENABLED",
@@ -9598,11 +9598,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update Server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "This is to auto-update the game server.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WORKSHOP",
@@ -9731,11 +9731,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -9867,11 +9867,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -9923,7 +9923,7 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "AUTO_UPDATE",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "This will auto-update SteamCMD on boot.\r\n0 is disabled, 1 is enabled.",
@@ -10197,11 +10197,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SNM_DAYS_UNTIL_RESET",
@@ -10439,11 +10439,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup.",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -10487,11 +10487,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto Update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "MAX_PLAYERS",
@@ -10677,11 +10677,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "0 disables auto-update on each server startup, while 1 enables it.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINEDEBUG",
@@ -10885,11 +10885,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[SERVER] Auto Update",
+     "label": "Update on start",
      "default": "0",
      "kind": "bool",
      "help": "Autoupdate your Server on start/restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -11071,11 +11071,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update on restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_BETAID",
@@ -11203,11 +11203,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "[STEAM] Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on startup",
-     "editable": false
+     "editable": true
     }
    ],
    "ports": [
@@ -11232,11 +11232,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto-update server",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Enable / disable auto-updating the server on restart.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINDOWS_INSTALL",
@@ -11348,11 +11348,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Automatically update the server on startup",
-     "editable": false
+     "editable": true
     },
     {
      "var": "GAME_MAP",
@@ -11478,11 +11478,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update on restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SRCDS_APPID",
@@ -11538,11 +11538,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server updates on startup, and updates if necessary.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "VR_PRESET",
@@ -11866,11 +11866,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Automatic Updates",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Quickly checks for any server updates on startup, and updates if necessary.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "GAME_SETTINGS_PRESET",
@@ -12136,11 +12136,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Enable automatic updates.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "BACKUP_COUNT",
@@ -12280,11 +12280,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "BACKUP_COUNT",
@@ -12440,11 +12440,11 @@
    "settings": [
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "",
-     "editable": false
+     "editable": true
     },
     {
      "var": "BACKUP_COUNT",
@@ -12639,11 +12639,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update the server on start",
-     "editable": false
+     "editable": true
     },
     {
      "var": "MAX_PLAYERS",
@@ -12741,11 +12741,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Automatically update on start.",
-     "editable": false
+     "editable": true
     },
     {
      "var": "WINDOWS_INSTALL",
@@ -12814,11 +12814,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto update on restart",
-     "editable": false
+     "editable": true
     },
     {
      "var": "ADMINPWD",
@@ -12971,11 +12971,11 @@
     },
     {
      "var": "AUTO_UPDATE",
-     "label": "Auto Update",
-     "default": "1",
+     "label": "Update on start",
+     "default": "0",
      "kind": "bool",
      "help": "Auto Update a server on start",
-     "editable": false
+     "editable": true
     },
     {
      "var": "SERVER_NAME",
