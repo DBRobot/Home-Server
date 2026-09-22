@@ -1,0 +1,30 @@
+# A VM test is two files: <name>.nix says which boxes and what the script
+# needs to know; <name>.py is the scenario. The Python gets one name, `nix`,
+# a dict of the values the Nix side computed (store paths, box names), so
+# nothing from Nix is interpolated into it and the file reads as Python.
+{ pkgs, lib }:
+name: test:
+let
+  script = ../tests/${name}.py;
+  body = builtins.readFile script;
+  withEnv = env: "nix = ${builtins.toJSON env}\n" + body;
+  testScript =
+    if !(test ? scriptEnv) then
+      body
+    # a scriptEnv that needs the nodes is given them by the driver, which
+    # passes a function only the arguments it names
+    else if builtins.isFunction test.scriptEnv then
+      ({ nodes, ... }: withEnv (test.scriptEnv { inherit nodes; }))
+    else
+      withEnv test.scriptEnv;
+in
+pkgs.testers.runNixOSTest (
+  (builtins.removeAttrs test [ "scriptEnv" ])
+  // lib.optionalAttrs (builtins.pathExists script) { inherit testScript; }
+  // {
+    # every box gets the script helper the real boxes get (flake.nix)
+    node.specialArgs = (test.node.specialArgs or { }) // {
+      ddScript = import ./script.nix { inherit lib; };
+    };
+  }
+)

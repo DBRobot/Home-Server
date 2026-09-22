@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Deploy one box from one git ref, the safe way, every time:
+#
+#   scripts/deploy node1            # main
+#   scripts/deploy node1 forgejo    # a branch
+#
+# 1. build the ref here, from git, never from the working tree
+# 2. copy what the box lacks over the wire (no internet needed on the box)
+# 3. arm a rollback that fires in 15 minutes unless disarmed
+# 4. switch on the box: set the system profile to the copied closure and
+#    run its switch, detached from the ssh session
+# 5. refuse to call it done unless the box now runs exactly what was built
+#
+# Every mis-deploy so far was one of these steps done by hand and skipped.
+set -euo pipefail
+
+host=${1:?host}
+ref=${2:-main}
+case "$host" in
+  node1) addr=admin@10.10.10.2 ;;
+  node2) addr=admin@10.10.10.135 ;;
+  *) echo "unknown host $host" >&2; exit 1 ;;
+esac
+repo=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
+
+if ! git -C "$repo" rev-parse --verify -q "refs/heads/$ref" >/dev/null; then
+  echo "no local branch $ref" >&2; exit 1
+fi
+rev=$(git -C "$repo" rev-parse "refs/heads/$ref")
+if [ "$(git -C "$repo" rev-parse "refs/remotes/forge/$ref" 2>/dev/null || true)" != "$rev" ]; then
+  echo "local $ref ($rev) is not what the forge has - push it first" >&2; exit 1
+fi
+
+echo "== build $host from $ref ($rev)"
+out=$(nix build --no-link --print-out-paths "git+file://$repo?ref=$ref#nixosConfigurations.$host.config.system.build.toplevel")
+echo "   $out"
+
+echo "== copy what $host lacks"
+missing=$(nix-store -qR "$out" | ssh "$addr" 'xargs -n1 sh -c "test -e \$0 || echo \$0"')
+if [ -n "$missing" ]; then
+  echo "   $(echo "$missing" | wc -l) paths"
+  nix-store --export $missing | zstd -T0 | ssh "$addr" 'zstd -d | sudo nix-store --import >/dev/null'
+else
+  echo "   nothing"
+fi
+
+echo "== arm rollback (15 min)"
+ssh "$addr" 'sudo systemctl stop deploy-rollback-guard.timer deploy-rollback-guard.service 2>/dev/null; sudo systemd-run --quiet --unit=deploy-rollback-guard --on-active=15m --setenv=PATH=/run/current-system/sw/bin:/run/wrappers/bin nixos-rebuild --rollback switch'
+
+echo "== switch"
+# the closure is here already; set the profile and switch, detached from
+# this ssh session (the switch may drop it, and a switch tied to a dead
+# pipe died half-way and left node1 with its services stopped). Its
+# journal says what went wrong, if anything.
+ssh "$addr" "sudo nix-env -p /nix/var/nix/profiles/system --set $out && sudo systemd-run --quiet --unit=deploy-$$ --wait $out/bin/switch-to-configuration switch; sudo journalctl -u deploy-$$ --no-pager -o cat | grep -iE 'error|fail' | head -5; sudo systemctl reset-failed deploy-$$.service 2>/dev/null" || true
+
+now=$(ssh "$addr" readlink /run/current-system)
+if [ "$now" != "$out" ]; then
+  echo "!! $host runs $now, not what was built. Rollback stays armed." >&2
+  exit 1
+fi
+# the transient service only exists once the timer has fired, so stopping
+# it "fails" on every successful deploy; that must not be the exit code
+ssh "$addr" 'sudo systemctl stop deploy-rollback-guard.timer deploy-rollback-guard.service 2>/dev/null; true'
+echo "== $host runs $out; rollback disarmed"

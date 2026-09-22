@@ -1,4 +1,4 @@
-# Everything in client/: formatted, lint-clean, and the tests pass - the
+# Everything in box/ and client/: formatted, lint-clean, and the tests pass - the
 # end-to-end ones included, which run boxes in-process and try to break them.
 # Called from entry_point.yml; not triggered on its own. The toolchain is the
 # flake's dev shell, the same one a person gets from `nix develop`.
@@ -27,9 +27,9 @@ jobs:
       # an explicit cd: the runner does not honour a workflow-level
       # working-directory default inside a called workflow
       - name: fmt
-        run: cd client && nix develop -c cargo fmt --check
+        run: nix develop -c cargo fmt --check
       - name: clippy
-        run: cd client && nix develop -c cargo clippy --all-targets -- -D warnings
+        run: nix develop -c cargo clippy --all-targets -- -D warnings
 
   test:
     if: ${{ inputs.run }}
@@ -37,4 +37,4 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
       - name: test
-        run: cd client && nix develop -c cargo test
+        run: nix develop -c cargo test

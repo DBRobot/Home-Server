@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Stage this box in the layout, apply it once the others are in, then buckets and keys.
+set -u
+for i in $(seq 1 60); do garage status >/dev/null 2>&1 && break; sleep 2; done
+
+# this box's own role in the layout; the other boxes stage theirs.
+# apply fails while the layout has fewer boxes than copies, and that
+# is fine: the timer tries again once the other box has staged
+NODE=$(garage node id -q | cut -d@ -f1)
+# layout show prints ids cut to 16 hex
+if ! garage layout show 2>/dev/null | grep -q "^${NODE:0:16}"; then
+  garage layout assign -z $ZONE -c $CAPACITY "$NODE"
+fi
+# garage prints the version to apply; computing it ourselves gets
+# "Invalid new layout version". The other box's staged role reaches
+# this one by gossip a few seconds after it stages, so try for a
+# while rather than leave it to the next timer run
+for i in $(seq 1 6); do
+  VER=$(garage layout show 2>/dev/null | grep -oE -- "--version [0-9]+" | grep -oE "[0-9]+" | head -1)
+  [ -n "$VER" ] || break
+  garage layout apply --version "$VER" 2>/dev/null && break
+  sleep 5
+done
+# The other box may have applied the layout a moment ago; it reaches
+# this one by gossip. Give that half a minute before deciding there
+# is no layout, or the buckets and keys below wait for the timer
+for i in $(seq 1 6); do
+  garage layout show 2>/dev/null | grep -q "Current cluster layout version: [1-9]" && break
+  sleep 5
+done
+# no layout yet: nothing below can be stored, the timer comes back
+if ! garage layout show 2>/dev/null | grep -q "Current cluster layout version: [1-9]"; then
+  echo "layout not applied yet: waiting for the other box"
+  exit 0
+fi
+# applied is not ready: until every box has synced the new layout
+# the ring on this one drops writes ("read/writes will be lost"),
+# and a key imported then is simply gone. Wait for the cluster to
+# settle before the buckets and keys below
+for i in $(seq 1 90); do
+  garage layout history 2>/dev/null | grep -q "stable state" && break
+  sleep 2
+done
+
+# what the roles add: buckets and keys (dd.garage.setup), appended by garage.nix

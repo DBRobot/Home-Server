@@ -6,10 +6,17 @@ committed encrypted rather than kept out of tree.
 
 ## Layout
 
-    flake.nix          entry point; `nixosConfigurations.node1`
-    hosts/             per-machine configuration
-    modules/           one file per service; hosts import what they run
-    client/            the dd cli: signup, sso, photos, encrypted archives
+    flake.nix          entry point; `nixosConfigurations.<box>` from fleet/boxes.json
+    fleet/             what the fleet is: the boxes, the members
+    nix/               what a box is
+      modules/         NixOS modules, grouped by concern (box, gate, forge, games, ...)
+      roles/           what a box runs, by role; a box lists its roles in fleet/
+      hosts/           per-machine hardware
+      tests/           VM tests: boxes booted and driven
+    box/               Rust that runs on boxes: the agent, the gate, the games manager
+    client/            Rust a person runs: the dd cli, its libraries, the browser wasm
+    data/              the games catalogue and covers
+    scripts/           deploy, install-box, restore-box
     secrets/           sops-encrypted values (safe to publish)
 
 ## Deploying

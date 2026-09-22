@@ -60,12 +60,29 @@
           craneLib = crane.mkLib pkgs;
           # cargo sources, plus the pages' templates, stylesheets, scripts
           # and icons the crates include at build time
+          # only the rust: the workspace files and the box/ and client/
+          # trees, so a change under nix/ or data/ is not a rust rebuild
           src = pkgs.lib.cleanSourceWith {
-            src = ./client;
+            src = ./.;
             filter =
               path: type:
-              (craneLib.filterCargoSources path type)
-              || builtins.match ".*/(templates|web)(/.*)?" path != null;
+              let
+                rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+                inRust = builtins.match "(box|client)(/.*)?" rel != null;
+                top = builtins.elem rel [
+                  "Cargo.toml"
+                  "Cargo.lock"
+                ];
+              in
+              top
+              || (
+                inRust
+                && (
+                  type == "directory"
+                  || craneLib.filterCargoSources path type
+                  || builtins.match ".*/(templates|web)/.*" rel != null
+                )
+              );
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
@@ -144,18 +161,18 @@
             inherit pkgs self;
             lib = nixpkgs.lib;
           };
-          vm = path: pkgs.testers.runNixOSTest (import path args);
+          vm = name: (import ./nix/lib/vm-test.nix { inherit pkgs; lib = nixpkgs.lib; }) name (import ./nix/tests/${name}.nix args);
         in
         {
-          directory = vm ./tests/directory.nix;
-          metrics = vm ./tests/metrics.nix;
-          backup = vm ./tests/backup.nix;
-          release = vm ./tests/release.nix;
-          thanos = vm ./tests/thanos.nix;
-          members-runner = vm ./tests/members-runner.nix;
-          games = vm ./tests/games.nix;
-          placement = import ./tests/placement.nix args;
-          boxes = import ./tests/boxes.nix args;
+          directory = vm "directory";
+          metrics = vm "metrics";
+          backup = vm "backup";
+          release = vm "release";
+          thanos = vm "thanos";
+          members-runner = vm "members-runner";
+          games = vm "games";
+          placement = import ./nix/tests/placement.nix args;
+          boxes = import ./nix/tests/boxes.nix args;
         };
 
       # One box per entry in fleet/boxes.json: its hardware file plus its
@@ -175,7 +192,7 @@
           # a role that declares secrets imports roles/_sops.nix; the sops
           # module has to be present for it. Roles are files; look inside.
           needsSops =
-            roles: builtins.any (r: lib.hasInfix "_sops.nix" (builtins.readFile ./roles/${r}.nix)) roles;
+            roles: builtins.any (r: lib.hasInfix "_sops.nix" (builtins.readFile ./nix/roles/${r}.nix)) roles;
           storage = lib.filterAttrs (_: b: builtins.elem "storage" b.roles) boxes;
           # the garage cluster: every storage box, each told about the others
           # whose ids are known (a box's id exists once it has started once)
@@ -214,9 +231,13 @@
           mkBox =
             name: box:
             lib.nixosSystem {
-              specialArgs = { inherit self; };
+              specialArgs = {
+                inherit self;
+                # a unit's script from a file beside its module (nix/lib/script.nix)
+                ddScript = import ./nix/lib/script.nix { lib = nixpkgs.lib; };
+              };
               modules = [
-                ./hosts/${name}/hardware.nix
+                ./nix/hosts/${name}/hardware.nix
                 {
                   networking.hostName = name;
                   dd.box.tailnet = box.tailnet;
@@ -225,14 +246,14 @@
                   dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);
                 }
               ]
-              ++ map (r: ./roles/${r}.nix) box.roles
+              ++ map (r: ./nix/roles/${r}.nix) box.roles
               ++ lib.optional (builtins.elem "storage" box.roles) (garageOf name box)
               ++ [
                 (backupEndpoint name box)
                 (cacheOf name box)
               ]
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
-              ++ lib.optional (builtins.pathExists ./hosts/${name}/disko.nix) disko.nixosModules.disko
+              ++ lib.optional (builtins.pathExists ./nix/hosts/${name}/disko.nix) disko.nixosModules.disko
               ++ lib.optional (builtins.elem "observe" box.roles) {
                 dd.grafana.boxes = lib.mapAttrs (
                   n: b: if n == name then "http://127.0.0.1:9090" else "http://${b.tailnet}:9090"
