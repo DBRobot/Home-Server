@@ -81,20 +81,31 @@
     config.sops.templates."garage-metrics-key.env".path
     config.sops.templates."garage-cache-key.env".path
   ];
-  dd.garage.setup = ''
-    garage bucket create backups-${config.networking.hostName} 2>/dev/null || true
-    garage key import "$GARAGE_BACKUP_KEY_ID" "$GARAGE_BACKUP_KEY_SECRET" --yes -n backup-${config.networking.hostName} 2>/dev/null || true
-    garage bucket allow --read --write --owner backups-${config.networking.hostName} --key "$GARAGE_BACKUP_KEY_ID" 2>/dev/null || true
-
+  dd.garage.buckets = {
+    "backups-${config.networking.hostName}" = {
+      key = {
+        name = "backup-${config.networking.hostName}";
+        envPrefix = "GARAGE_BACKUP_KEY";
+      };
+      allow = [
+        "read"
+        "write"
+        "owner"
+      ];
+    };
     # the metrics bucket: every box writes its own blocks; one bucket, since
     # garage scopes keys by bucket and the compactor rewrites across boxes
-    garage bucket create metrics 2>/dev/null || true
-    garage key import "$GARAGE_METRICS_KEY_ID" "$GARAGE_METRICS_KEY_SECRET" --yes -n metrics-${config.networking.hostName} 2>/dev/null || true
-    garage bucket allow --read --write metrics --key "$GARAGE_METRICS_KEY_ID" 2>/dev/null || true
-
+    metrics.key = {
+      name = "metrics-${config.networking.hostName}";
+      envPrefix = "GARAGE_METRICS_KEY";
+    };
     # the nix cache: this box reads; only the laptop's cache-writer writes
-    garage bucket create nix-cache 2>/dev/null || true
-    garage key import "$GARAGE_CACHE_KEY_ID" "$GARAGE_CACHE_KEY_SECRET" --yes -n cache-${config.networking.hostName} 2>/dev/null || true
-    garage bucket allow --read nix-cache --key "$GARAGE_CACHE_KEY_ID" 2>/dev/null || true
-  '';
+    nix-cache = {
+      key = {
+        name = "cache-${config.networking.hostName}";
+        envPrefix = "GARAGE_CACHE_KEY";
+      };
+      allow = [ "read" ];
+    };
+  };
 }
