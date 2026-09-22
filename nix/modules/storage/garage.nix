@@ -56,10 +56,52 @@ in
       default = [ ];
       description = "Files with key ids and secrets the setup snippets below read.";
     };
-    setup = lib.mkOption {
-      type = lib.types.lines;
-      default = "";
-      description = "Shell run after the layout converges: the buckets and keys a role wants. Must be safe to re-run.";
+    buckets = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            key = lib.mkOption {
+              type = lib.types.nullOr (
+                lib.types.submodule {
+                  options = {
+                    name = lib.mkOption {
+                      type = lib.types.str;
+                      description = "the key's name in garage";
+                    };
+                    envPrefix = lib.mkOption {
+                      type = lib.types.str;
+                      description = "the key's id and secret come from <prefix>_ID and <prefix>_SECRET in one of setupEnvFiles";
+                    };
+                  };
+                }
+              );
+              default = null;
+              description = "a key imported and given the bucket; null: a bucket with no key of its own";
+            };
+            allow = lib.mkOption {
+              type = lib.types.listOf (
+                lib.types.enum [
+                  "read"
+                  "write"
+                  "owner"
+                ]
+              );
+              default = [
+                "read"
+                "write"
+              ];
+              description = "what the key may do with the bucket";
+            };
+            cors = lib.mkOption {
+              type = lib.types.nullOr lib.types.attrs;
+              default = null;
+              description = "an S3 CORS configuration to put on the bucket, as the API takes it; null: none";
+            };
+          };
+        }
+      );
+      default = { };
+      description = "The buckets a role wants, made after the layout converges; safe to re-run. The key's material is never here: it is read from setupEnvFiles.";
     };
   };
 
@@ -148,14 +190,37 @@ in
         Type = "oneshot";
         EnvironmentFile = [ cfg.envFile ] ++ cfg.setupEnvFiles;
       };
-      # the roles' setup is shell, not a value: it follows the script
+      # the buckets and keys, from data: one block per bucket
       script =
         ddScript ./garage-setup.sh {
           CAPACITY = cfg.capacity;
           ZONE = cfg.zone;
         }
         + "\n"
-        + cfg.setup;
+        + lib.concatStrings (
+          lib.mapAttrsToList (
+            name: b:
+            let
+              q = lib.escapeShellArg name;
+              allow = lib.concatMapStringsSep " " (a: "--${a}") (lib.unique b.allow);
+              id = if b.key == null then "" else "\"$" + b.key.envPrefix + "_ID\"";
+              secret = if b.key == null then "" else "\"$" + b.key.envPrefix + "_SECRET\"";
+            in
+            ''
+              garage bucket create ${q} 2>/dev/null || true
+            ''
+            + lib.optionalString (b.key != null) ''
+              garage key import ${id} ${secret} --yes -n ${lib.escapeShellArg b.key.name} 2>/dev/null || true
+              garage bucket allow ${allow} ${q} --key ${id} 2>/dev/null || true
+            ''
+            + lib.optionalString (b.cors != null && b.key != null) ''
+              # garage has no cli for cors: an s3 api call with the bucket's key
+              AWS_ACCESS_KEY_ID=${id} AWS_SECRET_ACCESS_KEY=${secret} AWS_DEFAULT_REGION=us-east-1 \
+                aws --endpoint-url http://127.0.0.1:3900 s3api put-bucket-cors --bucket ${q} \
+                --cors-configuration ${lib.escapeShellArg (builtins.toJSON b.cors)} || true
+            ''
+          ) cfg.buckets
+        );
     };
     systemd.timers.garage-setup = {
       wantedBy = [ "timers.target" ];

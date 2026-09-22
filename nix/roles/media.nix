@@ -54,13 +54,19 @@
     GARAGE_MEDIA_KEY_SECRET=''${config.sops.placeholder.garage-media-key-secret}
   '';
   dd.garage.setupEnvFiles = [ config.sops.templates."garage-media-key.env".path ];
-  dd.garage.setup = ''
-    # No CORS here: nothing browser-facing touches it, rclone is a
-    # server-side client.
-    garage bucket create media 2>/dev/null || true
-    garage key import "$GARAGE_MEDIA_KEY_ID" "$GARAGE_MEDIA_KEY_SECRET" --yes -n media 2>/dev/null || true
-    garage bucket allow --read --write --owner media --key "$GARAGE_MEDIA_KEY_ID" 2>/dev/null || true
-  '';
+  # No CORS here: nothing browser-facing touches it, rclone is a
+  # server-side client.
+  dd.garage.buckets.media = {
+    key = {
+      name = "media";
+      envPrefix = "GARAGE_MEDIA_KEY";
+    };
+    allow = [
+      "read"
+      "write"
+      "owner"
+    ];
+  };
 
   # read only through the rclone template, so root-only is fine
   sops.secrets = {

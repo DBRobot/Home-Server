@@ -41,11 +41,10 @@ let
           GARAGE_METRICS_KEY_SECRET=${(key name).secret}
         '')
       ];
-      setup = ''
-        garage bucket create metrics 2>/dev/null || true
-        garage key import "$GARAGE_METRICS_KEY_ID" "$GARAGE_METRICS_KEY_SECRET" --yes -n metrics-${name} 2>/dev/null || true
-        garage bucket allow --read --write metrics --key "$GARAGE_METRICS_KEY_ID" 2>/dev/null || true
-      '';
+      buckets.metrics.key = {
+        name = "metrics-${name}";
+        envPrefix = "GARAGE_METRICS_KEY";
+      };
     };
     dd.thanos.objstoreFile = toString (objstore name);
     environment.systemPackages = [ pkgs.curl ];

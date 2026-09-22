@@ -27,11 +27,17 @@ let
           GARAGE_BACKUP_KEY_SECRET=${(key name).secret}
         '')
       ];
-      setup = ''
-        garage bucket create backups-${name} 2>/dev/null || true
-        garage key import "$GARAGE_BACKUP_KEY_ID" "$GARAGE_BACKUP_KEY_SECRET" --yes -n backup-${name} 2>/dev/null || true
-        garage bucket allow --read --write --owner backups-${name} --key "$GARAGE_BACKUP_KEY_ID" 2>/dev/null || true
-      '';
+      buckets."backups-${name}" = {
+        key = {
+          name = "backup-${name}";
+          envPrefix = "GARAGE_BACKUP_KEY";
+        };
+        allow = [
+          "read"
+          "write"
+          "owner"
+        ];
+      };
     };
     dd.backup = {
       paths = [ "/srv/state" ];

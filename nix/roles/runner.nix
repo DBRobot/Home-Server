@@ -30,8 +30,9 @@
       aws_secret_access_key = ${config.sops.placeholder.cache-key-secret}
     '';
   };
-  dd.garage.setup = ''
-    # a runner writes the cache it reads
-    garage bucket allow --write nix-cache --key "$GARAGE_CACHE_KEY_ID" 2>/dev/null || true
-  '';
+  # a runner writes the cache it reads: the storage role's key, more rights
+  dd.garage.buckets.nix-cache.allow = [
+    "read"
+    "write"
+  ];
 }
