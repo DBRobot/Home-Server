@@ -112,6 +112,9 @@ pub struct Photos {
     pub api: String,
     pub email_suffix: String,
     pub code: String,
+    /// the demo account's password: a member's comes from their passkey,
+    /// the demo has none, so the box holds one. None: no demo photos.
+    pub demo_password: Option<String>,
 }
 
 /// fleet/members.json: ids let in, ids shut out. The file is either a bare
@@ -888,19 +891,25 @@ async fn photos_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Respo
     let Some(user) = app.sessions.user(cookie) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !app.member(&user) || user == pages::DEMO_USER {
+    if !app.member(&user) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let Some(p) = &app.photos else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    Json(serde_json::json!({
+    let mut cfg = serde_json::json!({
         "api": p.api,
         "email": format!("{user}{}", p.email_suffix),
         "rpId": app.domain,
         "code": p.code,
-    }))
-    .into_response()
+    });
+    if user == pages::DEMO_USER {
+        let Some(pw) = &p.demo_password else {
+            return StatusCode::FORBIDDEN.into_response();
+        };
+        cfg["password"] = serde_json::Value::String(pw.clone());
+    }
+    Json(cfg).into_response()
 }
 
 async fn logout(State(app): State<Arc<App>>) -> Response {

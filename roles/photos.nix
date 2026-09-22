@@ -13,6 +13,8 @@
       key = "ente-ott";
       owner = "dd-verify";
     };
+    # the demo's ente password: it has no passkey to make one from
+    ente-demo-password.owner = "dd-verify";
     garage-key-id.owner = "ente";
     garage-key-secret.owner = "ente";
     ente-key-encryption.owner = "ente";
@@ -25,6 +27,7 @@
     api = "https://api.${config.dd.domain}";
     emailSuffix = "@users.${config.dd.domain}";
     codeFile = config.sops.secrets.ente-ott-verify.path;
+    demoPasswordFile = config.sops.secrets.ente-demo-password.path;
   };
   dd.home.services = [
     {
@@ -32,8 +35,9 @@
       # the passkey opens it: the page makes or opens the ente account in
       # the browser and hands ente's app the session
       url = "https://photos.${config.dd.domain}/_dd/photos";
-      # nothing for the demo until it has an ente account of its own with
-      # a zero quota (ente has no demo mode; a quota is its read-only)
+      # the demo has an ente account of its own with a zero quota: ente has
+      # no demo mode, a quota is its read-only
+      demo = "read";
       description = "Your photos and videos, backed up from your phone. Encrypted with a key only your passkey makes.";
       icon = "photos";
       color = "#d9822b";

@@ -94,6 +94,11 @@ in
             type = lib.types.str;
             description = "file holding that code, readable by the verifier";
           };
+          demoPasswordFile = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "file holding the demo account's ente password; null: no photos in the demo";
+          };
         };
       }
     );
@@ -139,6 +144,9 @@ in
         VERIFY_PHOTOS_API = cfg.photos.api;
         VERIFY_PHOTOS_SUFFIX = cfg.photos.emailSuffix;
         VERIFY_PHOTOS_CODE_FILE = cfg.photos.codeFile;
+      }
+      // lib.optionalAttrs (full && cfg.photos != null && cfg.photos.demoPasswordFile != null) {
+        VERIFY_PHOTOS_DEMO_FILE = cfg.photos.demoPasswordFile;
       }
       // lib.optionalAttrs (cfg.releasePublicKey != null) {
         VERIFY_RELEASE_PUB = cfg.releasePublicKey;

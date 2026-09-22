@@ -285,6 +285,8 @@ async function go(){const m=document.getElementById('msg');m.textContent='…';t
 const code=document.getElementById('c').value.trim();if(!code)throw new Error('type the code');
 await checkInvite(code);
 const user=document.querySelector('.card').dataset.user;
+let password;
+if(cfg.password){password=cfg.password;}else{
 const e=await fetch('/_dd/directory/'+encodeURIComponent(user));if(!e.ok)throw new Error('no entry');
 const root=(await e.json()).entry.root;
 const r=await fetch('/_dd/redeem/start',{method:'POST',headers:{'x-dd-grant':btoa(JSON.stringify(await claim(code,root)))}});
@@ -341,7 +343,7 @@ const salt=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder()
 const a=await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rpId:cfg.rpId,allowCredentials:allow,userVerification:'preferred',extensions:{prf:{eval:{first:salt}}}}});
 const prf=a.getClientExtensionResults().prf;const secret=prf&&prf.results&&prf.results.first;
 if(!secret)throw new Error('this passkey cannot make the photos key on this browser; try your phone');
-const password=u8b64(secret);
+password=u8b64(secret);}
 await init();
 m.textContent='Opening your photos…';
 let s;
