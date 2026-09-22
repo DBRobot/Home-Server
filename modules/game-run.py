@@ -7,7 +7,7 @@ The record is /instance/instance.json (dd-games writes it); the game's
 own output goes to /instance/game.log (systemd appends it); its status to
 /instance/status.
 """
-import json, os, re, shlex, signal, subprocess, sys, time
+import json, os, re, shlex, shutil, signal, subprocess, sys, time
 
 REC = "/instance/instance.json"
 HOME = os.environ.get("HOME", "/var/lib/game")
@@ -219,6 +219,21 @@ def run():
     say("stopped" if rc == 0 else "failed: exit %d" % rc)
     sys.exit(rc)
 
+def restore_world():
+    """a kept world, handed over with the record: its files over the install"""
+    src = "/instance/world"
+    if not os.path.isdir(src): return
+    n = 0
+    for root, dirs, files in os.walk(src):
+        for f in files:
+            p = os.path.join(root, f); rel = os.path.relpath(p, src)
+            dest = os.path.join(SERVER, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(p, dest); n += 1
+    shutil.rmtree(src)
+    print("== world restored: %d files" % n, flush=True)
+
 install()
+restore_world()
 rewrite_files()
 run()
