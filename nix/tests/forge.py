@@ -3,6 +3,9 @@
 box.wait_for_unit("forgejo.service")
 box.wait_for_open_port(3000)
 box.wait_for_unit("forgejo-admin.service")
+# with no repository yet, protection has nothing to do and says so
+box.wait_for_unit("forgejo-protection.service")
+box.succeed("journalctl -u forgejo-protection | grep -q 'nothing to protect'")
 
 # the repository is the one thing the forge does not make for itself (it is
 # pushed to); here it is made through the api, then the protection applies
