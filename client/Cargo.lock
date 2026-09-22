@@ -1528,7 +1528,6 @@ dependencies = [
 name = "dd-web"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "ente-accounts",
  "ente-core",
  "getrandom 0.4.3",
