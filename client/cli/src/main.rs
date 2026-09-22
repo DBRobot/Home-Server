@@ -273,6 +273,11 @@ enum BoxCmd {
         #[arg(long)]
         private: bool,
     },
+    /// Can this box be the front door? Asks the box what the world sees it
+    /// as and what its router says its outside address is: the same, and a
+    /// port forward will work; different, and the line is behind carrier
+    /// nat, where no forward can reach it and the plan is a relay instead.
+    Public { name: String },
 }
 
 #[derive(Subcommand)]
@@ -735,6 +740,58 @@ async fn main() -> Result<()> {
             MemberCmd::List => member::list(&repo, &directories).await?,
         },
         Command::Box { cmd, repo } => match cmd {
+            BoxCmd::Public { name } => {
+                let path = std::path::Path::new(&repo).join("fleet/boxes.json");
+                let boxes: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+                let b = boxes.get(&name).with_context(|| format!("no box {name}"))?;
+                let addr = b["tailnet"]
+                    .as_str()
+                    .context("box has no tailnet address")?;
+                // on the box: what the world sees, and what the router thinks
+                let probe = concat!(
+                    "seen=$(curl -fsS -4 --max-time 10 https://api.ipify.org || echo none); ",
+                    "gw=$(ip -4 route show default | awk '{print $3; exit}'); ",
+                    "local=$(ip -4 -o addr show $(ip -4 route show default | awk '{print $5; exit}') | awk '{print $4; exit}'); ",
+                    "echo \"seen=$seen gw=$gw local=$local\""
+                );
+                let out = std::process::Command::new("ssh")
+                    .args(["-o", "BatchMode=yes", &format!("admin@{addr}"), probe])
+                    .output()
+                    .context("ssh to the box")?;
+                anyhow::ensure!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let text = String::from_utf8_lossy(&out.stdout);
+                println!("{name}: {}", text.trim());
+                let seen = text
+                    .split_whitespace()
+                    .find_map(|kv| kv.strip_prefix("seen="))
+                    .unwrap_or("none");
+                let private = |ip: &str| {
+                    ip.starts_with("10.")
+                        || ip.starts_with("192.168.")
+                        || ip.starts_with("100.")
+                        || (ip.starts_with("172.")
+                            && ip
+                                .split('.')
+                                .nth(1)
+                                .and_then(|o| o.parse::<u8>().ok())
+                                .is_some_and(|o| (16..=31).contains(&o)))
+                };
+                if seen == "none" {
+                    println!("the box cannot reach the internet: nothing to decide yet");
+                } else if private(seen) {
+                    println!(
+                        "the world sees a private address: carrier nat. No port forward will reach this box; the front door needs a relay."
+                    );
+                } else {
+                    println!(
+                        "the world sees {seen}. If the router's WAN page shows the same address, forward tcp 80 and 443 to this box and set dd.public.enable; if it shows a 100.64.x.x or 10.x address, that is carrier nat and the front door needs a relay."
+                    );
+                }
+            }
             BoxCmd::List { private } => {
                 let path = std::path::Path::new(&repo).join("fleet/boxes.json");
                 let boxes: serde_json::Value = serde_json::from_slice(

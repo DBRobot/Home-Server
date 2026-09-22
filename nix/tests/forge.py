@@ -1,10 +1,18 @@
 # The forge test: it comes up, its admin exists, main is protected by every ci job.
 
 box.wait_for_unit("forgejo.service")
-box.wait_for_open_port(3000)
-box.wait_for_unit("forgejo-admin.service")
+box.wait_for_open_port(nix["port"])
+# the setup units are oneshots: a unit that has not run yet also says
+# Result=success, so wait for one that has finished a run
+def done(unit):
+    box.wait_until_succeeds(
+        "[ -n \"$(systemctl show -p ExecMainExitTimestamp --value %s)\" ] && systemctl show -p Result --value %s | grep -qx success" % (unit, unit),
+        timeout=180,
+    )
+
+done("forgejo-admin.service")
 # with no repository yet, protection has nothing to do and says so
-box.wait_for_unit("forgejo-protection.service")
+done("forgejo-protection.service")
 box.succeed("journalctl -u forgejo-protection | grep -q 'nothing to protect'")
 
 # the repository is the one thing the forge does not make for itself (it is
@@ -12,20 +20,20 @@ box.succeed("journalctl -u forgejo-protection | grep -q 'nothing to protect'")
 box.succeed(
     "curl -sf -X POST -H 'X-WEBAUTH-USER: %s' -H 'content-type: application/json' "
     "-d '{\"name\":\"Home-Server\",\"default_branch\":\"main\",\"auto_init\":true}' "
-    "http://127.0.0.1:3000/api/v1/user/repos >/dev/null" % nix["admin"]
+    "http://127.0.0.1:%d/api/v1/user/repos >/dev/null" % (nix["admin"], nix["port"])
 )
 box.succeed("systemctl restart forgejo-protection.service")
-box.wait_for_unit("forgejo-protection.service")
+done("forgejo-protection.service")
 
 # the admin, by the name the role gave (this is what the quoting bug broke)
-users = box.succeed("curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:3000/api/v1/admin/users" % nix["admin"])
+users = box.succeed("curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/admin/users" % (nix["admin"], nix["port"]))
 assert nix["admin"] in users, users
 box.succeed("forgejo admin user list --admin | grep -qw %s" % nix["admin"])
 
 # main is protected, and by the whole suite
 prot = box.succeed(
-    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:3000/api/v1/repos/%s/Home-Server/branch_protections/main"
-    % (nix["admin"], nix["admin"])
+    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/repos/%s/Home-Server/branch_protections/main"
+    % (nix["admin"], nix["port"], nix["admin"])
 )
 import json
 p = json.loads(prot)

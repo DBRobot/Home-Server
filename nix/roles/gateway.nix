@@ -1,11 +1,20 @@
-{ config, ... }:
+{ config, lib, ... }:
 {
   # A box with a public name: certificates, nginx, the browser login and the
   # per-box issuer for jellyfin. The verifier's full role lives here.
   imports = [
     ./_sops.nix
     ../modules/gate/acme.nix
+    ../modules/gate/public.nix
   ];
+  # the front door on the open internet: off until the house has a line and
+  # a forward for 80 and 443 to this box (dd box public). Off, the name
+  # points at this box's tailnet address, kept so by the same unit.
+  dd.public = {
+    enable = false;
+    duckdnsDomain = lib.head (lib.splitString "." config.dd.domain);
+    tokenFile = config.sops.templates."duckdns.env".path;
+  };
   dd.verify.role = "full";
   services.tailscale.permitCertUid = "nginx"; # so nginx can fetch *.ts.net certs without root
 

@@ -30,5 +30,6 @@
   };
   scriptEnv = {
     admin = "tester";
+    port = 3001;
   };
 }
