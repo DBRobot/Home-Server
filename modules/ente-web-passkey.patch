@@ -1,0 +1,48 @@
+diff --git a/apps/photos/src/pages/gallery.tsx b/apps/photos/src/pages/gallery.tsx
+index cdcdfce..80c444b 100644
+--- a/apps/photos/src/pages/gallery.tsx
++++ b/apps/photos/src/pages/gallery.tsx
+@@ -886,7 +886,7 @@ const Page: React.FC = () => {
+                 }
+                 if (!(await masterKeyFromSession())) {
+                     clearSessionStorage();
+-                    router.push("/credentials");
++                    window.location.replace("/_dd/photos");
+                     return;
+                 }
+ 
+diff --git a/apps/photos/src/pages/index.tsx b/apps/photos/src/pages/index.tsx
+index ff53198..0c47138 100644
+--- a/apps/photos/src/pages/index.tsx
++++ b/apps/photos/src/pages/index.tsx
+@@ -1,7 +1,6 @@
+ import { Box, Stack, Typography, styled } from "@mui/material";
+ import { LoginContents } from "ente-accounts/components/LoginContents";
+ import { SignUpContents } from "ente-accounts/components/SignUpContents";
+-import { savedPartialLocalUser } from "ente-accounts/services/accounts-db";
+ import { CenteredFill, CenteredRow } from "ente-base/components/containers";
+ import { EnteLogo } from "ente-base/components/EnteLogo";
+ import { ActivityIndicator } from "ente-base/components/mui/ActivityIndicator";
+@@ -110,8 +109,9 @@ const Page: React.FC = () => {
+             await updateSessionFromElectronSafeStorageIfNeeded();
+             if ((await masterKeyFromSession()) && (await savedAuthToken())) {
+                 await router.push("/gallery");
+-            } else if (savedPartialLocalUser()?.email) {
+-                await router.push("/verify");
++            } else {
++                window.location.replace("/_dd/photos");
++                return;
+             }
+             if (!(await canAccessIndexedDB())) {
+                 showMiniDialog({
+diff --git a/apps/photos/src/services/logout.ts b/apps/photos/src/services/logout.ts
+index b45d5eb..5faf159 100644
+--- a/apps/photos/src/services/logout.ts
++++ b/apps/photos/src/services/logout.ts
+@@ -152,5 +152,5 @@ export const photosLogout = async () => {
+     // Do a full reload to discard any in-flight requests that might still
+     // remain.
+ 
+-    window.location.replace("/");
++    window.location.replace("/_dd/photos");
+ };

@@ -81,6 +81,11 @@
       "com.sun:auto-snapshot" = "true";
     };
 
+    "tank/games" = {
+      # members' game servers: each one's record, saves and guest disk
+      mountpoint = "/var/lib/dd-games";
+    };
+
     "tank/models" = {
       # the template's pool root has no mountpoint, so a dataset needs its own
       mountpoint = "/tank/models";

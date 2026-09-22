@@ -115,6 +115,8 @@
           # runs on a server and has no business pulling in the keyring/dbus
           # stack that the cli needs.
           verify = crate "verify" "-p verify";
+          # the manager behind the Games tile (modules/games.nix)
+          games = crate "dd-games" "-p games";
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
@@ -143,6 +145,7 @@
           release = vm ./tests/release.nix;
           thanos = vm ./tests/thanos.nix;
           members-runner = vm ./tests/members-runner.nix;
+          games = vm ./tests/games.nix;
           placement = import ./tests/placement.nix args;
           boxes = import ./tests/boxes.nix args;
         };
@@ -208,6 +211,7 @@
                 ./hosts/${name}/hardware.nix
                 {
                   networking.hostName = name;
+                  dd.box.tailnet = box.tailnet;
                   dd.box.site = box.siteId;
                   dd.box.region = box.regionId;
                   dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);

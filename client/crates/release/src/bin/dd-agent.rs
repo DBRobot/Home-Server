@@ -202,9 +202,15 @@ fn disarm() -> Result<String> {
 
 /// The box is a box: nothing failed, ssh answers, the verifier answers.
 fn probe(args: &Args) -> Result<()> {
-    let failed = sh("systemctl", &["--failed", "--no-legend", "--plain"])?;
-    if !failed.trim().is_empty() {
-        bail!("failed units: {}", failed.trim());
+    // a member's game that crashed is that game's trouble, not a release's:
+    // it must never make a box refuse or undo one
+    let failed: Vec<String> = sh("systemctl", &["--failed", "--no-legend", "--plain"])?
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("dd-game@"))
+        .map(str::to_string)
+        .collect();
+    if !failed.is_empty() {
+        bail!("failed units: {}", failed.join(" ").trim());
     }
     let ssh = sh("systemctl", &["is-active", "sshd.service"])?;
     if ssh.trim() != "active" {

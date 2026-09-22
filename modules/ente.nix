@@ -54,6 +54,10 @@ in
           rev = "photos-v1.3.36";
           hash = "sha256-o75r8LFgG3BT3IIPiD9x6gY3fRDoxJ3ZTBPAYr3hLWI=";
         };
+        # every way out of the app that would show ente's own sign-in or
+        # sign-up goes to the passkey page instead: the app is reached only
+        # through it
+        patches = (o.patches or [ ]) ++ [ ./ente-web-passkey.patch ];
       });
     })
   ];

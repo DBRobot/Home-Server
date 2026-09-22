@@ -1,0 +1,17 @@
+[package]
+name = "games"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Game servers a member starts for themselves: the manager behind the Games tile"
+
+[[bin]]
+name = "dd-games"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
