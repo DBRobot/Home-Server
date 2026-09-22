@@ -29,6 +29,10 @@
     codeFile = config.sops.secrets.ente-ott-verify.path;
     demoPasswordFile = config.sops.secrets.ente-demo-password.path;
   };
+  # museum's id for the owner's photo account; the forge's admin is named
+  # the same way in forge.nix
+  dd.photos.admin = 1580559962386438;
+
   dd.home.services = [
     {
       name = "Photos";

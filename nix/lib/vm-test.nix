@@ -2,7 +2,12 @@
 # needs to know; <name>.py is the scenario. The Python gets one name, `nix`,
 # a dict of the values the Nix side computed (store paths, box names), so
 # nothing from Nix is interpolated into it and the file reads as Python.
-{ pkgs, lib }:
+{
+  pkgs,
+  lib,
+  vmTests ? [ ],
+  boxNames ? [ ],
+}:
 name: test:
 let
   script = ../tests/${name}.py;
@@ -24,6 +29,7 @@ pkgs.testers.runNixOSTest (
   // {
     # every box gets the script helper the real boxes get (flake.nix)
     node.specialArgs = (test.node.specialArgs or { }) // {
+      inherit vmTests boxNames;
       ddScript = import ./script.nix { inherit lib; };
     };
   }

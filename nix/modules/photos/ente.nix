@@ -30,6 +30,12 @@ let
   };
 in
 {
+  options.dd.photos.admin = lib.mkOption {
+    type = lib.types.int;
+    description = "museum's id for the fleet's owner: the one account that may call museum's admin api. Museum numbers accounts itself, so this is read off after the owner's account is made (dd status shows it).";
+  };
+
+  config = {
   # One fixed ente, whatever nixpkgs moves to: the photos page hands ente's
   # web app a session in the shape this version reads, and museum takes
   # our verification code the way this version does. Bumping is a decision
@@ -97,9 +103,8 @@ in
         # is <name>@users.<domain>, made by the photos page with this code
         # instead of a mail nobody would receive. Museum honours it because
         # the nixos module runs it as ENVIRONMENT=local.
-        # who may call museum's admin api: the first account made here
-        # (without this museum guesses the same, by lowest id)
-        internal.admins = [ 1580559962386438 ];
+        # who may call museum's admin api (dd photos-demo sets the demo's quota)
+        internal.admins = [ config.dd.photos.admin ];
         internal.hardcoded-ott = {
           local-domain-suffix = "@users.${base}";
           local-domain-value._secret = config.sops.secrets.ente-ott.path;
@@ -135,4 +140,5 @@ in
         };
       };
     };
+  };
 }

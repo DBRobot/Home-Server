@@ -182,6 +182,22 @@ enum Command {
         #[arg(long, default_value = DEFAULT_IMAGES, global = true)]
         repo: String,
     },
+    /// The demo's photo account: made with the fleet's code and the
+    /// password the boxes hold for it, then given a quota of nothing, which
+    /// is ente's read-only. Once per fleet; safe to run again.
+    PhotosDemo {
+        #[arg(long, default_value = DEFAULT_ENTE)]
+        ente_origin: String,
+        /// the demo's address: demo@users.<domain>
+        #[arg(long)]
+        email: String,
+        /// the fleet's verification code (secrets: ente-ott)
+        #[arg(long)]
+        code: String,
+        /// the demo's password (secrets: ente-demo-password)
+        #[arg(long)]
+        password: String,
+    },
     /// What is cached on this machine.
     Status,
     /// Forget the stored ente keys and device key on this machine.
@@ -257,6 +273,11 @@ enum BoxCmd {
         #[arg(long)]
         private: bool,
     },
+    /// Can this box be the front door? Asks the box what the world sees it
+    /// as and what its router says its outside address is: the same, and a
+    /// port forward will work; different, and the line is behind carrier
+    /// nat, where no forward can reach it and the plan is a relay instead.
+    Public { name: String },
 }
 
 #[derive(Subcommand)]
@@ -719,6 +740,58 @@ async fn main() -> Result<()> {
             MemberCmd::List => member::list(&repo, &directories).await?,
         },
         Command::Box { cmd, repo } => match cmd {
+            BoxCmd::Public { name } => {
+                let path = std::path::Path::new(&repo).join("fleet/boxes.json");
+                let boxes: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+                let b = boxes.get(&name).with_context(|| format!("no box {name}"))?;
+                let addr = b["tailnet"]
+                    .as_str()
+                    .context("box has no tailnet address")?;
+                // on the box: what the world sees, and what the router thinks
+                let probe = concat!(
+                    "seen=$(curl -fsS -4 --max-time 10 https://api.ipify.org || echo none); ",
+                    "gw=$(ip -4 route show default | awk '{print $3; exit}'); ",
+                    "local=$(ip -4 -o addr show $(ip -4 route show default | awk '{print $5; exit}') | awk '{print $4; exit}'); ",
+                    "echo \"seen=$seen gw=$gw local=$local\""
+                );
+                let out = std::process::Command::new("ssh")
+                    .args(["-o", "BatchMode=yes", &format!("admin@{addr}"), probe])
+                    .output()
+                    .context("ssh to the box")?;
+                anyhow::ensure!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let text = String::from_utf8_lossy(&out.stdout);
+                println!("{name}: {}", text.trim());
+                let seen = text
+                    .split_whitespace()
+                    .find_map(|kv| kv.strip_prefix("seen="))
+                    .unwrap_or("none");
+                let private = |ip: &str| {
+                    ip.starts_with("10.")
+                        || ip.starts_with("192.168.")
+                        || ip.starts_with("100.")
+                        || (ip.starts_with("172.")
+                            && ip
+                                .split('.')
+                                .nth(1)
+                                .and_then(|o| o.parse::<u8>().ok())
+                                .is_some_and(|o| (16..=31).contains(&o)))
+                };
+                if seen == "none" {
+                    println!("the box cannot reach the internet: nothing to decide yet");
+                } else if private(seen) {
+                    println!(
+                        "the world sees a private address: carrier nat. No port forward will reach this box; the front door needs a relay."
+                    );
+                } else {
+                    println!(
+                        "the world sees {seen}. If the router's WAN page shows the same address, forward tcp 80 and 443 to this box and set dd.public.enable; if it shows a 100.64.x.x or 10.x address, that is carrier nat and the front door needs a relay."
+                    );
+                }
+            }
             BoxCmd::List { private } => {
                 let path = std::path::Path::new(&repo).join("fleet/boxes.json");
                 let boxes: serde_json::Value = serde_json::from_slice(
@@ -1098,6 +1171,117 @@ async fn main() -> Result<()> {
                 }
                 None => println!("ente:   locked - run `dd unlock --email you@example.com`"),
             }
+        }
+
+        Command::PhotosDemo {
+            ente_origin,
+            email,
+            code,
+            password,
+        } => {
+            let client = ente::client(&ente_origin)?;
+            // the terminal's prompts, but the fleet's code answered for it
+            struct Code(String, ui::Term);
+            impl ente::AuthFlowUi for Code {
+                fn read_email_otp(
+                    &mut self,
+                    _: &str,
+                    _: ente::OtpPurpose,
+                    _: bool,
+                ) -> ente::Result<String> {
+                    Ok(self.0.clone())
+                }
+                fn read_totp_code(&mut self, p: ente::TotpPurpose) -> ente::Result<String> {
+                    self.1.read_totp_code(p)
+                }
+                fn report_retryable_error(&mut self, m: &str) -> ente::Result<()> {
+                    self.1.report_retryable_error(m)
+                }
+                fn choose_second_factor(
+                    &mut self,
+                    m: &[ente::SecondFactorMethod],
+                ) -> ente::Result<ente::SecondFactorMethod> {
+                    self.1.choose_second_factor(m)
+                }
+                fn present_passkey_verification(&mut self, u: &str) -> ente::Result<()> {
+                    self.1.present_passkey_verification(u)
+                }
+                fn wait_for_passkey_verification(&mut self) -> ente::Result<()> {
+                    self.1.wait_for_passkey_verification()
+                }
+                fn present_totp_secret(&mut self, s: &str, q: &str) -> ente::Result<()> {
+                    self.1.present_totp_secret(s, q)
+                }
+            }
+            let mut ui = Code(code.clone(), ui::Term);
+            // the account: made, or signed into if it already is
+            let user_id = {
+                let mut flow = ente::AuthFlow::new(&client, &mut ui);
+                let login = flow
+                    .login(ente::LoginParams {
+                        email: email.clone(),
+                        password: Zeroizing::new(password.clone()),
+                    })
+                    .await;
+                match login {
+                    Ok(a) => {
+                        eprintln!("demo account exists (user {})", a.user_id);
+                        a.user_id
+                    }
+                    Err(_) => {
+                        client.send_otp(&email, "signup").await?;
+                        let a = flow
+                            .create_account_with_otp(
+                                ente::CreateAccountParams {
+                                    email: email.clone(),
+                                    password: Zeroizing::new(password.clone()),
+                                    source: None,
+                                },
+                                &code,
+                            )
+                            .await?;
+                        eprintln!("demo account made (user {})", a.user_id);
+                        a.user_id
+                    }
+                }
+            };
+            // the quota, with this machine's ente session: the admin's. The
+            // api refuses a literal zero (a required field), so one byte,
+            // which fits no photo.
+            let raw = keys
+                .get("ente")?
+                .context("this machine holds no ente session: `dd unlock` as the admin first")?;
+            let admin = Vault::from_json(&raw)?;
+            // the vault keeps the token standard-base64; museum reads it url-safe
+            let token = {
+                use base64::Engine as _;
+                let bytes = base64::engine::general_purpose::STANDARD.decode(&admin.token)?;
+                base64::engine::general_purpose::URL_SAFE.encode(bytes)
+            };
+            let body = serde_json::json!({
+                "userID": user_id,
+                "storage": 1,
+                "transactionID": "dd-demo",
+                "productID": "free",
+                "expiryTime": 4102444800000000i64,
+                "paymentProvider": "",
+            });
+            let r = reqwest::Client::new()
+                .put(format!(
+                    "{}/admin/user/subscription",
+                    ente_origin.trim_end_matches('/')
+                ))
+                .header("X-Auth-Token", &token)
+                .json(&body)
+                .send()
+                .await?;
+            anyhow::ensure!(
+                r.status().is_success(),
+                "museum refused the quota: {} {}",
+                r.status(),
+                r.text().await.unwrap_or_default()
+            );
+            println!("demo photo account ready: {email}, quota 1 byte (read-only)");
         }
 
         Command::Lock { forget_identity } => {

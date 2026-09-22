@@ -9,7 +9,7 @@ let
   cfg = config.dd.verify;
   full = cfg.role == "full";
   base = config.dd.domain;
-  port = 4181;
+  port = config.dd.verify.port;
   user = "dd-verify";
 in
 {
@@ -17,6 +17,25 @@ in
   # login. A box that runs nothing else can still hold the directory: the
   # signed entries are self-authenticating, so a copy on a stranger's box is
   # worth exactly as much as the one here and costs that box no secret.
+  options.dd.verify.port = lib.mkOption {
+    type = lib.types.port;
+    default = 4181;
+    description = "where the verifier listens on the box";
+  };
+  options.dd.verify.hosts = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    default = [
+      "files"
+      "llm"
+      "grafana"
+      "jellyfin"
+      "git"
+      "home"
+      "photos"
+      "games"
+    ];
+    description = "the subdomains the gate stands in front of; every one gets the sign-in redirect and the auth subrequest";
+  };
   options.dd.verify.role = lib.mkOption {
     type = lib.types.enum [
       "full"
@@ -261,16 +280,7 @@ in
               };
             };
           })
-          [
-            "files"
-            "llm"
-            "grafana"
-            "jellyfin"
-            "git"
-            "home"
-            "photos"
-            "games"
-          ]
+          cfg.hosts
         ))
         # the front door itself: home.<domain> is the verifier's page and
         # nothing else. The bare domain cannot carry it (the certificate is
