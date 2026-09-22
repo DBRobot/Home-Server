@@ -128,6 +128,8 @@ pub async fn ente_create(
     code: &str,
 ) -> std::result::Result<String, JsValue> {
     let client = client(origin).map_err(js)?;
+    // museum takes the code only once it has opened one for the address
+    client.send_otp(email, "signup").await.map_err(js)?;
     let mut ui = NoUi;
     let mut flow = AuthFlow::new(&client, &mut ui);
     let account = flow
