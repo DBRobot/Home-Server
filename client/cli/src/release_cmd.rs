@@ -165,8 +165,23 @@ fn publish(
         built.insert(name.clone(), release::BoxRelease { path, nar_hash });
     }
 
+    // The counter only ever goes up. A current release that cannot be
+    // fetched is not "none yet" if the releases branch has history: the
+    // forge was just unreachable, and a release 1 on top of a 37 would be
+    // ignored by every box and a lie in the history.
+    let has_history = std::process::Command::new("git")
+        .args(["ls-remote", "--exit-code", "--heads", "forge", "releases"])
+        .current_dir(&root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
     let counter = match fetch(url)? {
         Some(current) => current.payload.counter + 1,
+        None if has_history => {
+            bail!(
+                "no current release could be read, yet the releases branch exists: the forge is not answering; not starting over at 1"
+            )
+        }
         None => 1,
     };
     let signed = release::sign(
