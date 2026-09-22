@@ -5,6 +5,7 @@
 # program is a big closed binary, often modded; it gets a kernel of its own,
 # a disk of its own, and the network qemu gives it, and nothing of the box.
 {
+  config,
   pkgs,
   lib,
   modulesPath,
@@ -12,6 +13,14 @@
 }:
 {
   imports = [ "${modulesPath}/virtualisation/qemu-vm.nix" ];
+
+  options.dd.gameGuest.wine = lib.mkOption {
+    type = lib.types.bool;
+    default = true;
+    description = "wine in the guest, for the windows servers among the eggs";
+  };
+
+  config = {
   system.stateVersion = "26.05";
 
   virtualisation = {
@@ -37,9 +46,6 @@
   documentation.enable = false;
   services.getty.autologinUser = lib.mkForce null;
 
-  # what a record's exec may name besides a steam app (the test's stand-in)
-  environment.systemPackages = [ pkgs.python3 ];
-
   users.users.game = {
     isSystemUser = true;
     uid = 951;
@@ -48,6 +54,47 @@
     createHome = true;
   };
   users.groups.game.gid = 951;
+  # the eggs install into /mnt/server and run from /home/container: both
+  # are the instance's server directory on the share
+  systemd.tmpfiles.rules = [
+    "d /mnt 0755 root root -"
+    "L+ /mnt/server - - - - /instance/server"
+    "d /home 0755 root root -"
+    "L+ /home/container - - - - /instance/server"
+  ];
+
+  # what the eggs' install scripts and startup lines reach for
+  environment.systemPackages = with pkgs; [
+    python3
+    curl
+    wget
+    unzip
+    gnutar
+    gzip
+    xz
+    zstd
+    jq
+    git
+    git-lfs
+    file
+    which
+    procps
+    iproute2 # ss, for the runner's port watch
+  ]
+  ++ lib.optionals config.dd.gameGuest.wine (
+    with pkgs;
+    [
+      xorg.xorgserver # Xvfb, for the windows servers
+      xvfb-run
+      wineWowPackages.stable
+      winetricks
+      # the eggs say 'proton run x.exe'; wine is what proton is underneath
+      (writeShellScriptBin "proton" ''
+        [ "$1" = run ] && shift
+        exec wine "$@"
+      '')
+    ]
+  );
 
   systemd.services.game = {
     description = "The game this instance is";
@@ -57,10 +104,7 @@
     path = [
       pkgs.steamcmd
       pkgs.steam-run
-      pkgs.jq
-      pkgs.coreutils
       pkgs.bash
-      # what a record's exec may name as a bare command
       "/run/current-system/sw"
     ];
     serviceConfig = {
@@ -71,40 +115,19 @@
       # the game's own output, readable on the box beside the record
       StandardOutput = "append:/instance/game.log";
       StandardError = "inherit";
+      # the egg's stop command goes down the game's stdin; give it a minute
+      KillSignal = "SIGTERM";
+      TimeoutStopSec = 75;
     };
-    environment.HOME = "/var/lib/game";
+    environment = {
+      HOME = "/var/lib/game";
+      # steam-run wraps the game in steam's runtime, which is what the eggs'
+      # debian containers give it
+      STEAM_RUNTIME = "1";
+    };
     script = ''
-      cfg=/instance/instance.json
-      say() { echo "$1" > /instance/status; }
-      app=$(jq -r '.steam.appId // empty' "$cfg")
-      mkdir -p "$HOME/app"
-
-      # each save path the game declares is a directory on the instance's
-      # share, linked into place: saves are files on the box, not bytes in
-      # this disk image
-      i=0
-      jq -r '.saves[]?' "$cfg" | while read -r p; do
-        mkdir -p "/instance/saves/$i" "$(dirname "$HOME/$p")"
-        [ -L "$HOME/$p" ] || { rm -rf "''${HOME:?}/$p"; ln -s "/instance/saves/$i" "$HOME/$p"; }
-        i=$((i + 1))
-      done
-
-      if [ -n "$app" ]; then
-        say updating
-        steamcmd +force_install_dir "$HOME/app" +login anonymous +app_update "$app" +quit
-      fi
-      say running
-      exe=$(jq -r .exec "$cfg")
-      mapfile -t args < <(jq -r '.args[]?' "$cfg")
-      if [ -n "$app" ]; then
-        cd "$HOME/app"
-        exec steam-run "./$exe" "''${args[@]}"
-      else
-        exec "$exe" "''${args[@]}"
-      fi
+      exec steam-run ${pkgs.python3}/bin/python3 ${./game-run.py}
     '';
   };
-
-  # the host asks for a clean stop over acpi; the game gets a minute
-  systemd.services.game.serviceConfig.TimeoutStopSec = 60;
+  };
 }

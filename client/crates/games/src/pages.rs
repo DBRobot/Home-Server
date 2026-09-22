@@ -1,129 +1,184 @@
-//! The Games page. Server-rendered, forms and links, no script: the same
-//! look as the home page it is reached from.
+//! The Games pages: what each template gets. The HTML is in templates/,
+//! the look in web/games.css, the little script in web/games.js.
 
-use crate::{Instance, Manager, State};
+use askama::Template;
 
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
+use crate::{Game, Instance, Manager, Setting, State};
 
-const CSS: &str = r##":root{color-scheme:light dark;--brand:#124e63;--brand-ink:#fff;--bg:#eef3f5;--bg-2:#e2eaee;--card:#fff;--ink:#142129;--ink-2:#5b6b74;--line:#d3dde2;--ok:#2f9e6f;--warn:#c4562d;
---shadow:0 1px 2px rgba(18,78,99,.06),0 10px 30px -14px rgba(18,78,99,.35);
---font:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--brand:#0d3a4a;--bg:#0b151b;--bg-2:#0f1d25;--card:#142430;--ink:#e7eef2;--ink-2:#93a5b0;--line:#223442;--shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.7)}}
-:root[data-theme="dark"]{--brand:#0d3a4a;--bg:#0b151b;--bg-2:#0f1d25;--card:#142430;--ink:#e7eef2;--ink-2:#93a5b0;--line:#223442;--shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px -14px rgba(0,0,0,.7)}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg-2) 0,var(--bg) 320px);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
-a{color:inherit}header{background:var(--brand);color:var(--brand-ink)}.bar{max-width:980px;margin:0 auto;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
-.brand{font-weight:600;font-size:17px;letter-spacing:-.01em;text-decoration:none}.me{font-size:14px}
-main{max-width:980px;margin:0 auto;padding-inline:24px;padding-block:40px 72px}h1{margin:0 0 20px;font-size:26px;font-weight:700;letter-spacing:-.02em}h2{margin:36px 0 14px;font-size:18px}
-.note{margin:0 0 22px;padding:12px 16px;border-radius:12px;background:var(--card);box-shadow:var(--shadow);border-left:4px solid var(--warn);font-size:14px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px;margin:0;padding:0;list-style:none}
-.card{display:flex;flex-direction:column;gap:10px;padding:20px;background:var(--card);border-radius:16px;box-shadow:var(--shadow)}
-.card h3{margin:0;font-size:17px}.card p{margin:0;color:var(--ink-2);font-size:14px}
-.addr{font-family:var(--mono);font-size:13.5px;background:var(--bg-2);padding:6px 10px;border-radius:8px;overflow-wrap:anywhere}
-.state{font-size:13px;font-weight:600}.state.running{color:var(--ok)}.state.failed{color:var(--warn)}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}form{margin:0}
-button{padding:8px 14px;font:inherit;font-weight:600;font-size:14px;border:0;border-radius:9px;cursor:pointer;color:var(--brand-ink);background:var(--brand)}
-button.quiet{background:var(--bg-2);color:var(--ink)}button:hover{filter:brightness(1.08)}button:focus-visible{outline:3px solid #7fb3c4;outline-offset:2px}
-.empty{color:var(--ink-2)}"##;
-
-fn server(m: &Manager, i: &Instance, mine: bool) -> String {
-    let st = m.state(i);
-    let game = m
-        .cfg
-        .catalogue
-        .get(&i.game)
-        .map(|g| g.name.as_str())
-        .unwrap_or(&i.game);
-    let class = match st {
-        State::Running => " running",
-        State::Failed => " failed",
-        _ => "",
-    };
-    let mut out = format!(
-        r#"<li class="card"><h3>{}</h3><p class="state{class}">{}</p>"#,
-        esc(game),
-        st.label()
-    );
-    if mine {
-        for p in &i.ports {
-            out.push_str(&format!(
-                r#"<div class="addr">{}:{} <span style="opacity:.6">{}</span></div>"#,
-                esc(&m.cfg.address),
-                p.host,
-                esc(&p.proto)
-            ));
-        }
-        out.push_str(r#"<div class="row">"#);
-        let id = esc(&i.id);
-        if st == State::Stopped || st == State::Failed {
-            out.push_str(&format!(
-                r#"<form method="post" action="/start/{id}"><button>Start</button></form><form method="post" action="/delete/{id}"><button class="quiet">Delete, with its world</button></form>"#
-            ));
-        } else {
-            out.push_str(&format!(
-                r#"<form method="post" action="/stop/{id}"><button class="quiet">Stop</button></form>"#
-            ));
-        }
-        out.push_str("</div>");
-    } else {
-        out.push_str(&format!("<p>{}'s</p>", esc(&i.owner)));
+pub fn state_name(st: State) -> &'static str {
+    match st {
+        State::Stopped => "stopped",
+        State::Starting => "starting",
+        State::Updating => "updating",
+        State::Running => "running",
+        State::Failed => "failed",
     }
-    out.push_str("</li>");
-    out
 }
 
-/// Everything on one page: what went wrong last (if anything), your
-/// servers, the games you can start, and who else has one up.
-pub fn index(m: &Manager, user: &str, notice: Option<&str>) -> String {
+/// a server as the pages show it
+pub struct ServerView<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub game: Option<&'a Game>,
+    pub state: &'static str,
+    pub label: &'static str,
+    pub who: String,
+    pub address: Option<String>,
+}
+
+impl<'a> ServerView<'a> {
+    fn new(m: &'a Manager, i: &'a Instance, user: &str) -> Self {
+        let st = m.state(i);
+        let game = m.cfg.catalogue.get(&i.game);
+        let port = i
+            .ports
+            .iter()
+            .find(|p| p.var == "SERVER_PORT")
+            .or(i.ports.first());
+        Self {
+            id: &i.id,
+            name: game.map(|g| g.name.as_str()).unwrap_or(&i.game),
+            game,
+            state: state_name(st),
+            label: st.label(),
+            who: if i.owner == user {
+                "yours".into()
+            } else {
+                format!("{}'s", i.owner)
+            },
+            address: port.map(|p| format!("{}:{}", m.cfg.address, p.port)),
+        }
+    }
+}
+
+/// a game opened over the library
+pub struct OpenView<'a> {
+    pub game: &'a Game,
+    pub back: String,
+    pub ours: Vec<&'a Setting>,
+    pub more: Vec<&'a Setting>,
+    pub memory_gb: u64,
+    pub cores: u32,
+}
+
+#[derive(Template)]
+#[template(path = "library.html")]
+pub struct Library<'a> {
+    pub user: &'a str,
+    /// the demo may look, not start
+    pub demo: bool,
+    pub home: &'a str,
+    pub q: &'a str,
+    pub count: usize,
+    pub notice: Option<&'a str>,
+    pub mine: Vec<ServerView<'a>>,
+    pub others: Vec<ServerView<'a>>,
+    pub games: Vec<&'a Game>,
+    pub open: Option<OpenView<'a>>,
+}
+
+/// The library, with one game open over it when `open` says so.
+pub fn library(
+    m: &Manager,
+    user: &str,
+    q: &str,
+    open: Option<&str>,
+    notice: Option<&str>,
+) -> String {
     let all = m.instances();
-    let mut out = format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Games</title><style>{CSS}</style></head><body>
-<header><div class="bar"><a class="brand" href="{}">Distributed Datacenter</a><span class="me">{}</span></div></header><main><h1>Games</h1>"#,
-        esc(&m.cfg.home),
-        esc(user)
-    );
-    if let Some(n) = notice {
-        out.push_str(&format!(r#"<p class="note">{}</p>"#, esc(n)));
-    }
-
-    out.push_str("<h2>Your servers</h2>");
-    let mine: Vec<&Instance> = all.iter().filter(|i| i.owner == user).collect();
-    if mine.is_empty() {
-        out.push_str(r#"<p class="empty">None yet. Pick a game below; it keeps running until you stop it, through updates and restarts of the machine it is on.</p>"#);
-    } else {
-        out.push_str(r#"<ul class="grid">"#);
-        for i in mine {
-            out.push_str(&server(m, i, true));
+    let ql = q.trim().to_lowercase();
+    let (mine, others): (Vec<&Instance>, Vec<&Instance>) =
+        all.iter().partition(|i| i.owner == user);
+    let open = open.and_then(|id| m.cfg.catalogue.get(id)).map(|g| {
+        let (ours, more) = g.visible_settings().partition(|s| s.ours.is_some());
+        OpenView {
+            game: g,
+            back: if q.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/?q={q}")
+            },
+            ours,
+            more,
+            memory_gb: g.memory() / 1024,
+            cores: g.cores(),
         }
-        out.push_str("</ul>");
+    });
+    Library {
+        user,
+        demo: user == "demo",
+        home: &m.cfg.home,
+        q,
+        count: m.cfg.catalogue.len(),
+        notice,
+        mine: mine.iter().map(|i| ServerView::new(m, i, user)).collect(),
+        others: others.iter().map(|i| ServerView::new(m, i, user)).collect(),
+        games: m
+            .cfg
+            .catalogue
+            .values()
+            .filter(|g| ql.is_empty() || g.name.to_lowercase().contains(&ql))
+            .collect(),
+        open,
     }
+    .render()
+    .unwrap_or_default()
+}
 
-    out.push_str(r#"<h2>Start one</h2><ul class="grid">"#);
-    for (id, g) in &m.cfg.catalogue {
-        out.push_str(&format!(
-            r#"<li class="card"><h3>{}</h3><p>{}</p><p>{} GB of memory, {} cores</p><div class="row"><form method="post" action="/create/{}"><button>Start a server</button></form></div></li>"#,
-            esc(&g.name),
-            esc(&g.description),
-            g.memory.div_ceil(1024),
-            g.cores,
-            esc(id)
-        ));
-    }
-    out.push_str("</ul>");
+pub struct PortView {
+    pub port: u16,
+    pub label: String,
+}
 
-    let others: Vec<&Instance> = all.iter().filter(|i| i.owner != user).collect();
-    if !others.is_empty() {
-        out.push_str(r#"<h2>Also up here</h2><ul class="grid">"#);
-        for i in others {
-            out.push_str(&server(m, i, false));
-        }
-        out.push_str("</ul>");
+#[derive(Template)]
+#[template(path = "server.html")]
+pub struct Server<'a> {
+    pub user: &'a str,
+    pub demo: bool,
+    pub home: &'a str,
+    pub s: ServerView<'a>,
+    pub address: &'a str,
+    pub ports: Vec<PortView>,
+    pub settings: String,
+    pub mine: bool,
+    pub idle: bool,
+    pub busy: bool,
+    pub log: String,
+}
+
+/// One server: what it is, where it is, what it says, and its controls.
+pub fn server(m: &Manager, user: &str, i: &Instance) -> String {
+    let st = m.state(i);
+    let g = m.cfg.catalogue.get(&i.game);
+    let settings = g
+        .map(|g| {
+            g.visible_settings()
+                .filter(|s| s.ours.is_some())
+                .filter_map(|s| i.env.get(&s.var).map(|v| format!("{}: {v}", s.label)))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        })
+        .unwrap_or_default();
+    Server {
+        user,
+        demo: user == "demo",
+        home: &m.cfg.home,
+        s: ServerView::new(m, i, user),
+        address: &m.cfg.address,
+        ports: i
+            .ports
+            .iter()
+            .map(|p| PortView {
+                port: p.port,
+                label: p.var.replace("_PORT", "").replace('_', " ").to_lowercase(),
+            })
+            .collect(),
+        settings,
+        mine: i.owner == user,
+        idle: matches!(st, State::Stopped | State::Failed),
+        busy: matches!(st, State::Starting | State::Updating),
+        log: m.log_tail(&i.id, 80),
     }
-    out.push_str("</main></body></html>");
-    out
+    .render()
+    .unwrap_or_default()
 }

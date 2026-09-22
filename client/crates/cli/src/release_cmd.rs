@@ -133,11 +133,7 @@ fn publish(
         .cloned()
         .collect();
 
-    // every box, from git, never from the working tree. The build itself
-    // runs wherever DD_BUILD_STORE says (a box: ssh-ng://admin@...), so
-    // the laptop signs what a box built and keeps no store of its own;
-    // unset, it builds here.
-    let store = std::env::var("DD_BUILD_STORE").ok();
+    // every box, from git, never from the working tree
     let mut built = BTreeMap::new();
     for name in &names {
         eprintln!("== build {name} from {ref} ({})", &rev[..12]);
@@ -145,21 +141,11 @@ fn publish(
             "git+file://{}?ref={ref}#nixosConfigurations.{name}.config.system.build.toplevel",
             root.display()
         );
-        let mut args = vec!["build", "--no-link", "--print-out-paths"];
-        if let Some(st) = &store {
-            args.extend(["--eval-store", "auto", "--store", st]);
-        }
-        args.push(&flake);
-        let path = sh("nix", &args)
+        let path = sh("nix", &["build", "--no-link", "--print-out-paths", &flake])
             .with_context(|| format!("building {name}"))?
             .trim()
             .to_owned();
-        let mut info_args = vec!["path-info", "--json"];
-        if let Some(st) = &store {
-            info_args.extend(["--store", st]);
-        }
-        info_args.push(&path);
-        let info = sh("nix", &info_args)?;
+        let info = sh("nix", &["path-info", "--json", &path])?;
         let nar_hash = release::nar_hash_from_path_info(&info, &path)?;
         eprintln!("   {path}");
         built.insert(name.clone(), release::BoxRelease { path, nar_hash });
@@ -203,9 +189,6 @@ fn publish(
     }
     let to = format!("{cache}&secret-key={}", key_file.display());
     let mut args = vec!["copy", "--to", to.as_str()];
-    if let Some(st) = &store {
-        args.extend(["--from", st.as_str()]);
-    }
     args.extend(signed.payload.boxes.values().map(|b| b.path.as_str()));
     let status = Command::new("nix")
         .args(&args)

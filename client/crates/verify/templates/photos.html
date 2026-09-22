@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Photos{% endblock %}
+{% block bar %}{% include "me.html" %}{% endblock %}
+{% block main %}
+<main class="auth">
+  <div class="card" data-user="{{ user }}">
+    <h1>Photos</h1>
+    <p class="lead">Unlocking with your passkey.</p>
+    <div id="msg">…</div>
+    <div id="link" hidden>
+      <p class="lead" style="margin-top:18px">No photo account for this passkey yet. Made one here before, with an email and a password? Sign in with it once and it becomes this passkey's. Otherwise start fresh.</p>
+      <label for="le">Email</label>
+      <input id="le" autocomplete="email" autocapitalize="none" spellcheck="false">
+      <label for="lp">Password</label>
+      <input id="lp" type="password" autocomplete="current-password">
+      <button id="adopt">Link that account</button>
+      <button id="fresh" class="quiet">Start fresh</button>
+    </div>
+    <p class="note">Your photos are encrypted with a key only your passkey can make. No box holds it; nobody here can look.</p>
+  </div>
+</main>
+<script type="module" src="/_dd/static/photos.js"></script>
+{% endblock %}

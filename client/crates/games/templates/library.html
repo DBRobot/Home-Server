@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block main %}
+<div class="top">
+  <h1>Games</h1>
+  <form class="search" method="get" action="/">
+    <input id="q" name="q" type="search" placeholder="Search {{ count }} games" value="{{ q }}" autocomplete="off">
+  </form>
+</div>
+
+{% if open.is_none() %}{% if let Some(n) = notice %}<p class="note">{{ n }}</p>{% endif %}{% endif %}
+
+{% if !mine.is_empty() %}
+<section>
+  <h2>Your servers</h2>
+  <ul class="servers">{% for s in mine %}{% include "server_card.html" %}{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if !others.is_empty() %}
+<section>
+  <h2>Also up here</h2>
+  <ul class="servers">{% for s in others %}{% include "server_card.html" %}{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section>
+  <ul class="grid">
+    {% for game in games %}
+    <li>
+      <a class="tile" href="/game/{{ game.id }}" data-n="{{ game.name|lower }}">
+        {% include "cover.html" %}
+        <div class="t">{{ game.name }}{% if game.wine %}<span class="tag">Wine</span>{% endif %}</div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  <p id="none" class="empty" hidden>No game by that name here.</p>
+</section>
+
+{% if let Some(o) = open %}
+{# the game, opened over the library #}
+<a class="veil" href="{{ o.back }}" aria-label="Close"></a>
+<dialog open data-back="{{ o.back }}">
+  <a class="close" href="{{ o.back }}" aria-label="Close">×</a>
+  <div class="open">
+    {% let game = o.game %}
+    {% include "cover.html" %}
+    <form method="post" action="/create/{{ o.game.id }}" id="start">
+      <div class="body">
+        <h2>{{ o.game.name }}{% if o.game.wine %}<span class="tag">Windows server, via Wine</span>{% endif %}</h2>
+        <p class="desc">{{ o.game.description }}</p>
+        {% if let Some(n) = notice %}<p class="note">{{ n }}</p>{% endif %}
+        <div class="fields">
+          {% for f in o.ours %}{% include "field.html" %}{% endfor %}
+          {% if !o.more.is_empty() %}
+          <details>
+            <summary>More settings</summary>
+            {% for f in o.more %}{% include "field.html" %}{% endfor %}
+          </details>
+          {% endif %}
+        </div>
+      </div>
+      <div class="actions">
+        {% if demo %}
+        <span class="spec">The demo can look, not start. Members start servers here.</span>
+        {% else %}
+        <button>Start a server</button>
+        {% endif %}
+        <span class="spec">{{ o.memory_gb }} GB of memory, {{ o.cores }} cores · installs from Steam on first start</span>
+      </div>
+    </form>
+  </div>
+</dialog>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,6 @@
+{# a game's cover, or its name on a wash where steam has none #}
+{% if game.cover %}
+<img src="/cover/{{ game.id }}" alt="" loading="lazy">
+{% else %}
+<div class="blank">{{ game.name }}</div>
+{% endif %}

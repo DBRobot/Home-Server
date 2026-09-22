@@ -1,14 +1,15 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
-    Router,
+    Form, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use games::{Config, Manager, Systemd, pages};
+use games::{Catalogue, Config, Manager, Systemd, pages};
 
 fn env(k: &str) -> Result<String> {
     std::env::var(k).with_context(|| format!("{k} is not set"))
@@ -24,21 +25,125 @@ fn user(h: &HeaderMap) -> Option<String> {
 }
 
 #[derive(serde::Deserialize)]
-struct Notice {
+struct IndexQuery {
     n: Option<String>,
+    q: Option<String>,
 }
 
-async fn index(State(m): State<Arc<Manager>>, h: HeaderMap, Query(q): Query<Notice>) -> Response {
+struct App {
+    m: Arc<Manager>,
+    covers: std::path::PathBuf,
+}
+
+async fn index(State(a): State<Arc<App>>, h: HeaderMap, Query(q): Query<IndexQuery>) -> Response {
     match user(&h) {
-        Some(u) => Html(pages::index(&m, &u, q.n.as_deref())).into_response(),
+        Some(u) => Html(pages::library(
+            &a.m,
+            &u,
+            q.q.as_deref().unwrap_or(""),
+            None,
+            q.n.as_deref(),
+        ))
+        .into_response(),
         None => StatusCode::UNAUTHORIZED.into_response(),
     }
 }
 
-/// Back to the page, with what went wrong on it if something did.
-fn back(r: Result<()>) -> Response {
+/// the library with one game open over it
+async fn game(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<IndexQuery>,
+) -> Response {
+    let Some(u) = user(&h) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !a.m.cfg.catalogue.contains_key(&id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Html(pages::library(
+        &a.m,
+        &u,
+        q.q.as_deref().unwrap_or(""),
+        Some(&id),
+        q.n.as_deref(),
+    ))
+    .into_response()
+}
+
+/// one server's own page: status, address, log, controls
+async fn server(State(a): State<Arc<App>>, h: HeaderMap, Path(id): Path<String>) -> Response {
+    let Some(u) = user(&h) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    match a.m.instance(&id) {
+        Some(i) => Html(pages::server(&a.m, &u, &i)).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// a server's state and log, for the page to refresh itself with
+async fn server_state(State(a): State<Arc<App>>, h: HeaderMap, Path(id): Path<String>) -> Response {
+    if user(&h).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let Some(i) = a.m.instance(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let st = a.m.state(&i);
+    axum::Json(serde_json::json!({
+        "state": pages::state_name(st),
+        "label": st.label(),
+        "log": a.m.log_tail(&id, 80),
+    }))
+    .into_response()
+}
+
+/// the stylesheet and the script, from the crate
+async fn static_file(Path(name): Path<String>) -> Response {
+    let (body, ty): (&str, &str) = match name.as_str() {
+        "games.css" => (include_str!("../web/games.css"), "text/css; charset=utf-8"),
+        "games.js" => (
+            include_str!("../web/games.js"),
+            "text/javascript; charset=utf-8",
+        ),
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, ty),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn cover(State(a): State<Arc<App>>, Path(id): Path<String>) -> Response {
+    let Some(g) = a.m.cfg.catalogue.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(game) = g.game.filter(|_| g.cover) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match std::fs::read(a.covers.join(format!("{game}.jpg"))) {
+        Ok(b) => (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::CACHE_CONTROL, "public, max-age=604800"),
+            ],
+            b,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Back to a page, with what went wrong on it if something did.
+fn back(to: &str, r: Result<()>) -> Response {
     match r {
-        Ok(()) => Redirect::to("/").into_response(),
+        Ok(()) => Redirect::to(to).into_response(),
         Err(e) => {
             let msg: String = format!("{e:#}")
                 .bytes()
@@ -49,40 +154,51 @@ fn back(r: Result<()>) -> Response {
                     _ => format!("%{b:02X}"),
                 })
                 .collect();
-            Redirect::to(&format!("/?n={msg}")).into_response()
+            let sep = if to.contains('?') { '&' } else { '?' };
+            Redirect::to(&format!("{to}{sep}n={msg}")).into_response()
         }
     }
 }
 
-async fn create(State(m): State<Arc<Manager>>, h: HeaderMap, Path(game): Path<String>) -> Response {
+async fn create(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+    Path(game): Path<String>,
+    Form(settings): Form<BTreeMap<String, String>>,
+) -> Response {
     let Some(u) = user(&h) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    back(m.create(&u, &game).map(|_| ()))
+    match a.m.create(&u, &game, &settings) {
+        Ok(i) => Redirect::to(&format!("/server/{}", i.id)).into_response(),
+        Err(e) => back(&format!("/game/{game}"), Err(e)),
+    }
 }
 
 macro_rules! act {
-    ($name:ident, $call:ident) => {
+    ($name:ident, $call:ident, $to:expr) => {
         async fn $name(
-            State(m): State<Arc<Manager>>,
+            State(a): State<Arc<App>>,
             h: HeaderMap,
             Path(id): Path<String>,
         ) -> Response {
             let Some(u) = user(&h) else {
                 return StatusCode::UNAUTHORIZED.into_response();
             };
-            back(m.$call(&u, &id))
+            let to = $to(&id);
+            back(&to, a.m.$call(&u, &id))
         }
     };
 }
-act!(start, start);
-act!(stop, stop);
-act!(delete, delete);
+act!(start, start, |id: &str| format!("/server/{id}"));
+act!(stop, stop, |id: &str| format!("/server/{id}"));
+act!(delete, delete, |_id: &str| "/".to_string());
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let catalogue = serde_json::from_slice(&std::fs::read(env("DD_GAMES_CATALOGUE")?)?)
+    let cat: Catalogue = serde_json::from_slice(&std::fs::read(env("DD_GAMES_CATALOGUE")?)?)
         .context("DD_GAMES_CATALOGUE")?;
+    let catalogue = cat.games.into_iter().map(|g| (g.id.clone(), g)).collect();
     let m = Manager::new(
         Config {
             dir: env_or("DD_GAMES_DIR", "/var/lib/dd-games").into(),
@@ -91,6 +207,9 @@ async fn main() -> Result<()> {
             port_count: env_or("DD_GAMES_PORT_COUNT", "200").parse()?,
             per_member: env_or("DD_GAMES_PER_MEMBER", "1").parse()?,
             memory_budget: env_or("DD_GAMES_MEMORY_MIB", "16384").parse()?,
+            cores: std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(2),
             address: env("DD_GAMES_ADDRESS")?,
             home: env_or("DD_GAMES_HOME", "/"),
         },
@@ -98,17 +217,26 @@ async fn main() -> Result<()> {
     )?;
     let back_up = m.restore();
     eprintln!("games: {back_up} server(s) brought back up");
-    let app = Router::new()
+    let app = Arc::new(App {
+        m,
+        covers: env_or("DD_GAMES_COVERS", "/var/lib/dd-games/covers").into(),
+    });
+    let router = Router::new()
         .route("/", get(index))
         .route("/health", get(|| async { "ok" }))
+        .route("/game/{id}", get(game))
+        .route("/cover/{id}", get(cover))
+        .route("/static/{name}", get(static_file))
+        .route("/server/{id}", get(server))
+        .route("/server/{id}/state", get(server_state))
         .route("/create/{game}", post(create))
         .route("/start/{id}", post(start))
         .route("/stop/{id}", post(stop))
         .route("/delete/{id}", post(delete))
-        .with_state(m);
+        .with_state(app);
     let bind = env_or("DD_GAMES_BIND", "127.0.0.1:4182");
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("games listening on {bind}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, router).await?;
     Ok(())
 }
