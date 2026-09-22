@@ -33,7 +33,7 @@ in
     wired = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "the cabled interface to the router, if any (interface-name)";
+      description = "the cabled adapter to the router, by mac address (an interface name would encode the usb port)";
     };
     wifi = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
@@ -51,10 +51,10 @@ in
             connection = {
               id = "house-wired";
               type = "ethernet";
-              interface-name = cfg.wired;
               autoconnect = true;
               autoconnect-priority = 100;
             };
+            ethernet.mac-address = cfg.wired;
             ipv4 = {
               method = "manual";
               address1 = cfg.address;
@@ -77,6 +77,9 @@ in
             wifi = {
               ssid = cfg.ssid;
               mode = "infrastructure";
+              # the card's own address, not a random one per connection:
+              # the router's reservation names it
+              cloned-mac-address = "permanent";
             };
             wifi-security = {
               key-mgmt = "wpa-psk";

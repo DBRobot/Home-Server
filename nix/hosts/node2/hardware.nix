@@ -16,8 +16,8 @@
     pskFile = config.sops.templates."wifi.env".path;
     address = "192.168.1.21/24";
     wifi = "wlp2s0";
-    # the usb ethernet adapter is the laptop's link today; a second cable
-    # to the router goes here when it exists (wired = "<iface>";)
+    # the ethernet adapter is on the switch, and the switch is on the router
+    wired = "00:E0:4C:3A:46:58";
   };
   sops.secrets.wifi-psk = { };
   sops.templates."wifi.env".content = "psk=${config.sops.placeholder.wifi-psk}\n";
@@ -32,25 +32,6 @@
     mountpoint = "/srv/garage";
     recordsize = "1M";
     "com.sun:auto-snapshot" = "false";
-  };
-  networking.networkmanager.ensureProfiles.profiles.direct-link = {
-    connection = {
-      id = "direct-link";
-      type = "ethernet";
-      autoconnect = true;
-      autoconnect-priority = -999;
-    };
-    ethernet.mac-address = "00:E0:4C:3A:46:58";
-    ipv4 = {
-      method = "manual";
-      address1 = "10.10.10.135/24";
-      # the laptop's link: the way in when the house network is down, and
-      # the worst route otherwise
-      gateway = "10.10.10.1";
-      route-metric = 900;
-      dns = "1.1.1.1;9.9.9.9;";
-    };
-    ipv6.method = "link-local";
   };
 
   # no suspend on close, on battery or not, no idle action, and the USB
