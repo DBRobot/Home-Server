@@ -307,7 +307,13 @@ impl Manager {
             return State::Failed;
         }
         if !active {
-            return State::Stopped;
+            // meant to be up and not yet: between states (a restart, the
+            // moment after a start), not stopped
+            return if i.desired == "running" {
+                State::Starting
+            } else {
+                State::Stopped
+            };
         }
         match std::fs::read_to_string(self.instance_dir(&i.id).join("status"))
             .unwrap_or_default()

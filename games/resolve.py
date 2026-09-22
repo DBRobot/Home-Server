@@ -21,7 +21,9 @@ OURS = {
     "WORLD": ("world", "World name"), "WORLD_NAME": ("world", "World name"),
     "MAP": ("world", "Map"), "SRCDS_MAP": ("world", "Map"),
 }
-HIDE = {"SRCDS_APPID", "SRCDS_BETAID", "SRCDS_BETAPASS", "AUTO_UPDATE", "VALIDATE",
+# not ours by name, but relabelled and defaulted off: a restart should be quick
+RELABEL = {"AUTO_UPDATE": ("Update on start", "0")}
+HIDE = {"SRCDS_APPID", "SRCDS_BETAID", "SRCDS_BETAPASS", "VALIDATE",
         "LD_LIBRARY_PATH", "CONSOLE_FILTER", "STEAM_USER", "STEAM_PASS", "STEAM_AUTH",
         "WINETRICKS_RUN", "WINDOWS_INSTALL", "INSTALL_FLAGS", "ADDITIONAL_ARGS"}
 PORTS = re.compile(r"PORT$|^PORT_|_PORT_")
@@ -84,6 +86,9 @@ for p in sorted(glob.glob(os.path.join(eggs_dir, "**", "egg-*.json"), recursive=
         entry = {"var": k, "label": v["name"], "default": v["default_value"], "kind": kind,
                  "help": v.get("description", ""), "editable": bool(v.get("user_editable")) and not hidden}
         if m: entry["choices"] = m.group(1).split(",")
+        if k in RELABEL:
+            entry["label"], entry["default"] = RELABEL[k]
+            entry["kind"] = "bool"
         if k in OURS:
             ours, label = OURS[k]
             # an egg's PASSWORD may be for telnet or rcon: keep the egg's label then

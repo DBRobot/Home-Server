@@ -10,15 +10,22 @@
   <div class="body"{% if busy %} data-live="{{ s.state }}"{% endif %}>
     <h2>{{ s.name }}</h2>
     <p class="desc"><span id="st" class="state {{ s.state }}">{{ s.label }}</span> · {{ s.who }}</p>
-    {% for p in ports %}
-    <div><span class="addr">{{ address }}:{{ p.port }}</span> <span class="spec">{{ p.label }}</span></div>
-    {% endfor %}
+    {# what a player types into the game: the address, and the one port #}
+    <div class="join">
+      <label>Address<span class="copy"><input type="text" readonly value="{{ address }}"><button type="button" class="quiet" data-copy>Copy</button></span></label>
+      {% if let Some(p) = main_port %}
+      <label>Port<span class="copy"><input type="text" readonly value="{{ p.port }}"><button type="button" class="quiet" data-copy>Copy</button></span></label>
+      {% endif %}
+    </div>
+    {% if !other_ports.is_empty() %}
+    <p class="spec">Also open: {% for p in other_ports %}{{ p.port }} ({{ p.label }}){% if !loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
     {% if !settings.is_empty() %}<p class="spec">{{ settings }}</p>{% endif %}
     {% if mine && !demo %}
     <div class="row">
       {% if idle %}
       <form method="post" action="/start/{{ s.id }}"><button>Start</button></form>
-      <form method="post" action="/delete/{{ s.id }}" onsubmit="return confirm('Delete this server and its world?')"><button class="quiet">Delete, with its world</button></form>
+      <form method="post" action="/delete/{{ s.id }}" onsubmit="return confirm('This deletes the server AND its save. There is no undo. Delete?')"><button class="quiet">Delete server and save</button></form>
       {% else %}
       <form method="post" action="/stop/{{ s.id }}"><button class="quiet">Stop</button></form>
       {% endif %}

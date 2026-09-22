@@ -38,7 +38,10 @@ def fill(template, extra=None):
 def install():
     """the egg's script, as it wrote it: /mnt/server is the install dir"""
     os.makedirs(SERVER, exist_ok=True)
-    if os.path.exists(os.path.join(SERVER, ".installed")) and env.get("AUTO_UPDATE", "1") in ("0", "false", ""):
+    # installed once, a server starts straight away: re-checking gigabytes
+    # against steam on every restart is minutes for nothing. A person turns
+    # "Update on start" on when they want the game's next version.
+    if os.path.exists(os.path.join(SERVER, ".installed")) and env.get("AUTO_UPDATE", "0") in ("0", "false", ""):
         return
     say("updating")
     # the eggs are edited on every platform: some carry windows line endings
