@@ -11,7 +11,7 @@
   # a forward for 80 and 443 to this box (dd box public). Off, the name
   # points at this box's tailnet address, kept so by the same unit.
   dd.public = {
-    enable = false;
+    enable = true;
     duckdnsDomain = lib.head (lib.splitString "." config.dd.domain);
     tokenFile = config.sops.templates."duckdns.env".path;
   };
