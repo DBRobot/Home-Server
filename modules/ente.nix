@@ -97,6 +97,9 @@ in
         # is <name>@users.<domain>, made by the photos page with this code
         # instead of a mail nobody would receive. Museum honours it because
         # the nixos module runs it as ENVIRONMENT=local.
+        # who may call museum's admin api: the first account made here
+        # (without this museum guesses the same, by lowest id)
+        internal.admins = [ 1580559962386438 ];
         internal.hardcoded-ott = {
           local-domain-suffix = "@users.${base}";
           local-domain-value._secret = config.sops.secrets.ente-ott.path;

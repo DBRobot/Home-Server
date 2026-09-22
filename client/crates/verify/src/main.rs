@@ -52,6 +52,10 @@ async fn main() -> Result<()> {
                 code: std::fs::read_to_string(env("VERIFY_PHOTOS_CODE_FILE")?)?
                     .trim()
                     .to_string(),
+                demo_password: match std::env::var("VERIFY_PHOTOS_DEMO_FILE") {
+                    Ok(f) => Some(std::fs::read_to_string(f)?.trim().to_string()),
+                    Err(_) => None,
+                },
             }),
             Err(_) => None,
         },
