@@ -44,7 +44,7 @@ in
       ];
       serviceConfig = {
         Type = "oneshot";
-        ExecStartPre = "+${pkgs.coreutils}/bin/install -d -m 0755 -o node-exporter -g node-exporter ${facts}";
+
         User = "node-exporter";
         Group = "node-exporter";
         StateDirectory = "dd-locate";

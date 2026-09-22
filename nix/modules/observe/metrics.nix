@@ -82,6 +82,9 @@ in
   # hourly and at boot, read by node_exporter's textfile collector. The
   # placement program will want the same facts signed by the host key;
   # that is a second output of this same script, later.
+  # where every box writes what it knows about itself (this and locate.nix)
+  systemd.tmpfiles.rules = [ "d ${facts} 0755 node-exporter node-exporter -" ];
+
   systemd.services.dd-facts = {
     description = "Publish this box's hardware facts as metrics";
     wantedBy = [ "multi-user.target" ];
@@ -96,7 +99,7 @@ in
     ];
     serviceConfig = {
       Type = "oneshot";
-      ExecStartPre = "+${pkgs.coreutils}/bin/install -d -m 0755 -o node-exporter -g node-exporter ${facts}";
+
       User = "node-exporter";
       Group = "node-exporter";
     };
