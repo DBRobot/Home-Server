@@ -36,6 +36,27 @@ in
   };
 
   config = {
+    # the tailnet's own view of the names. With the door open the name
+    # resolves to the public address for everyone, and a member's browser
+    # would knock on the public side of its own gateway and be refused for
+    # every host but the public ones. So a member asks the gateway instead:
+    # Tailscale's split DNS sends <base> to this box's tailnet address (the
+    # one setting in the admin console), and this answers every name under
+    # it with the tailnet address. Nothing else is answered or forwarded;
+    # the boxes themselves have the same answer in /etc/hosts (flake.nix).
+    services.dnsmasq = {
+      enable = true;
+      resolveLocalQueries = false;
+      settings = {
+        interface = "tailscale0";
+        except-interface = "lo";
+        bind-dynamic = true;
+        no-resolv = true;
+        no-hosts = true;
+        address = [ "/${base}/${config.dd.box.tailnet}" ];
+      };
+    };
+
     # the name follows the switch: the public address when on, the tailnet
     # address when off. Every ten minutes, and at every switch, so flipping
     # takes effect within the ttl.

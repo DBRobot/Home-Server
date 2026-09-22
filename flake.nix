@@ -245,6 +245,15 @@
             lib.optionalAttrs (!(builtins.elem "storage" box.roles)) {
               dd.backup.endpoint = "http://${(builtins.head (builtins.attrValues storage)).tailnet}:3900";
             };
+          # the gateway's names resolve to its tailnet address on every box,
+          # whatever the public name says: the door may be open to the
+          # internet, the fleet still talks to itself over the tailnet
+          gateway = lib.head (lib.attrNames (lib.filterAttrs (_: b: b.public) boxes));
+          namesOf = _: _: {
+            networking.hosts.${boxes.${gateway}.tailnet} = builtins.filter (n: n != "_") (
+              builtins.attrNames self.nixosConfigurations.${gateway}.config.services.nginx.virtualHosts
+            );
+          };
           mkBox =
             name: box:
             lib.nixosSystem {
@@ -269,6 +278,7 @@
               ++ [
                 (backupEndpoint name box)
                 (cacheOf name box)
+                (namesOf name box)
               ]
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
               ++ lib.optional (builtins.pathExists ./nix/hosts/${name}/disko.nix) disko.nixosModules.disko
