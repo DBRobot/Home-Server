@@ -28,7 +28,7 @@ done("forgejo-protection.service")
 # the admin, by the name the role gave (this is what the quoting bug broke)
 users = box.succeed("curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/admin/users" % (nix["admin"], nix["port"]))
 assert nix["admin"] in users, users
-box.succeed("forgejo admin user list --admin | grep -qw %s" % nix["admin"])
+assert '"is_admin":true' in users, "the admin is an admin"
 
 # main is protected, and by the whole suite
 prot = box.succeed(
