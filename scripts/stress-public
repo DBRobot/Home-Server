@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# The public face, attacked from wherever this runs: what a stranger on the
+# internet can do to the front door, and what they cannot. Every check says
+# PASS or FAIL; the script fails if any does. Run it from outside the
+# tailnet (a phone's hotspot, a vps) after every change to the public face.
+#
+#   scripts/stress-public [domain]
+set -u
+B=${1:-distributed-datacenter.duckdns.org}
+ip=$(dig +short home.$B A | tail -1)
+fails=0
+pass() { echo "PASS  $1"; }
+fail() { echo "FAIL  $1"; fails=$((fails + 1)); }
+code() { curl -s -o /dev/null -m "${3:-10}" -w '%{http_code}' "${@:4}" "$1"; }
+
+echo "== $B is $ip"
+
+# 1. only 80 and 443 answer; nothing else on the box is exposed
+if command -v nmap >/dev/null; then
+  open=$(nmap -Pn -p 1-65535 --min-rate 2000 -T4 "$ip" 2>/dev/null | awk '/^[0-9]+\/tcp +open/ {print $1}' | tr '\n' ' ')
+  [ "$open" = "80/tcp 443/tcp " ] && pass "open ports: $open" || fail "open ports: $open (want 80/tcp 443/tcp)"
+else
+  echo "skip  port scan (no nmap)"
+fi
+
+# 2. tls: a real certificate, modern protocols only
+tls=$(echo | openssl s_client -servername home.$B -connect $ip:443 2>/dev/null)
+echo "$tls" | grep -q 'Verify return code: 0' && pass "certificate verifies" || fail "certificate does not verify"
+echo | openssl s_client -tls1_1 -servername home.$B -connect $ip:443 2>&1 | grep -q 'alert\|no protocols\|wrong version' && pass "tls 1.1 refused" || fail "tls 1.1 accepted"
+[ "$(code http://home.$B/)" = 301 ] && pass "http redirects to https" || fail "http does not redirect"
+
+# 3. the public hosts answer; every other host shuts the door on an outsider
+for h in home accounts; do
+  c=$(code https://$h.$B/); [ "$c" = 200 ] || [ "$c" = 303 ] && pass "$h answers ($c)" || fail "$h: $c"
+done
+for h in photos files jellyfin llm git grafana games s3 api albums cast locker; do
+  c=$(code https://$h.$B/ 8 --resolve $h.$B:443:$ip)
+  [ "$c" = 000 ] && pass "$h shut (connection closed)" || fail "$h answered $c to an outsider"
+done
+
+# 4. the gate's own pages: sign-in and sign-up load, nothing behind them does
+[ "$(code https://home.$B/_dd/login)" = 200 ] && pass "sign-in page" || fail "sign-in page"
+[ "$(code https://home.$B/_dd/join)" = 200 ] && pass "sign-up page" || fail "sign-up page"
+[ "$(code https://home.$B/_dd/home)" = 302 ] && pass "home without a session redirects to sign-in" || fail "home without a session: $(code https://home.$B/_dd/home)"
+c=$(code https://home.$B/_dd/directory/david); [ "$c" = 200 ] && pass "directory entries are public (by design: they hold public keys)" || echo "note  directory/david: $c"
+
+# 5. the ceremonies rate-limit: a burst past 10 gets 429s
+n429=0; for i in $(seq 1 25); do [ "$(code https://home.$B/_dd/login/start 5 -X POST -H 'content-type: application/json' -d '{"username":"nobody"}')" = 429 ] && n429=$((n429+1)); done
+[ $n429 -ge 5 ] && pass "sign-in ceremony rate-limited ($n429/25 refused)" || fail "sign-in ceremony not rate-limited ($n429/25 refused)"
+
+# 6. a stranger cannot make themselves a member: sign-up gives an account
+#    with nothing, and a fake grant is refused
+r=$(curl -s -m 10 -X POST -H 'content-type: application/json' -d '{"username":"stranger-probe"}' https://home.$B/_dd/join/start)
+echo "$r" | grep -q '"publicKey"' && pass "sign-up hands out a ceremony (an account with nothing follows)" || fail "sign-up start: $r"
+c=$(code https://home.$B/_dd/redeem/start 10 -X POST -H 'x-dd-grant: bm9wZQ=='); [ "$c" = 400 ] || [ "$c" = 401 ] || [ "$c" = 403 ] && pass "a fake grant is refused ($c)" || fail "fake grant: $c"
+
+# 7. bodies and slow clients
+c=$(code https://home.$B/_dd/join/start 20 -X POST -H 'content-type: application/json' --data-binary @<(head -c 2000000 /dev/zero)); [ "$c" = 413 ] && pass "2 MB body refused (413)" || fail "2 MB body: $c"
+if command -v timeout >/dev/null; then
+  start=$(date +%s); (printf 'POST /_dd/join/start HTTP/1.1\r\nHost: home.%s\r\nContent-Length: 100\r\n\r\n' "$B"; sleep 40) | timeout 45 openssl s_client -quiet -servername home.$B -connect $ip:443 >/dev/null 2>&1; took=$(( $(date +%s) - start ))
+  [ $took -lt 30 ] && pass "slow body cut off after ${took}s" || fail "slow body held for ${took}s"
+fi
+
+# 8. the demo: works for a stranger, and cannot write
+jar=$(mktemp); curl -s -m 10 -c "$jar" -o /dev/null -L https://home.$B/_dd/demo
+[ "$(code https://home.$B/_dd/home 10 -b "$jar")" = 200 ] && pass "the demo signs in" || fail "the demo does not sign in"
+c=$(code https://games.$B/create/valheim 8 -b "$jar" -X POST --resolve games.$B:443:$ip); [ "$c" = 000 ] && pass "the demo cannot reach games from outside (tailnet-only)" || fail "demo reached games from outside: $c"
+rm -f "$jar"
+
+echo; [ $fails = 0 ] && echo "all passed" || echo "$fails FAILED"
+exit $fails

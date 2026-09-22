@@ -1,4 +1,4 @@
-{ ... }:
+{ config, ... }:
 {
   # What is true of this machine and no other. Everything it runs is a role
   # in fleet/boxes.json. hardware-configuration.nix is the output of
@@ -7,7 +7,20 @@
   imports = [
     ./hardware-configuration.nix
     ./disko.nix
+    ../../modules/box/home-network.nix
   ];
+
+  # the house network: this box's links and its reserved address
+  dd.home = {
+    ssid = "Zyxel05804";
+    pskFile = config.sops.templates."wifi.env".path;
+    address = "192.168.1.21/24";
+    wifi = "wlp2s0";
+    # the usb ethernet adapter is the laptop's link today; a second cable
+    # to the router goes here when it exists (wired = "<iface>";)
+  };
+  sops.secrets.wifi-psk = { };
+  sops.templates."wifi.env".content = "psk=${config.sops.placeholder.wifi-psk}\n";
 
   # root is on tank, so the pool imports at boot on its own
 
@@ -31,7 +44,10 @@
     ipv4 = {
       method = "manual";
       address1 = "10.10.10.135/24";
-      gateway = "10.10.10.1"; # NATed out the Legion's wifi
+      # the laptop's link: the way in when the house network is down, and
+      # the worst route otherwise
+      gateway = "10.10.10.1";
+      route-metric = 900;
       dns = "1.1.1.1;9.9.9.9;";
     };
     ipv6.method = "link-local";
