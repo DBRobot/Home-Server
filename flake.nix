@@ -30,6 +30,18 @@
       # here are x86_64-linux, so one system is enough for now.
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      # every vm test, by name: nix/tests/<name>.nix + .py. Also what the ci
+      # matrix runs and what main requires (nix/modules/forge/forgejo.nix)
+      vmTests = [
+        "directory"
+        "metrics"
+        "backup"
+        "release"
+        "thanos"
+        "members-runner"
+        "games"
+        "forge"
+      ];
     in
     {
       # `nix develop` drops you into a shell with the rust toolchain on PATH.
@@ -161,18 +173,22 @@
             inherit pkgs self;
             lib = nixpkgs.lib;
           };
-          vm = name: (import ./nix/lib/vm-test.nix { inherit pkgs; lib = nixpkgs.lib; }) name (import ./nix/tests/${name}.nix args);
+          vm =
+            name:
+            (import ./nix/lib/vm-test.nix {
+              inherit pkgs vmTests;
+              lib = nixpkgs.lib;
+              boxNames = builtins.attrNames (builtins.fromJSON (builtins.readFile ./fleet/boxes.json));
+            })
+              name
+              (import ./nix/tests/${name}.nix args);
         in
         {
-          directory = vm "directory";
-          metrics = vm "metrics";
-          backup = vm "backup";
-          release = vm "release";
-          thanos = vm "thanos";
-          members-runner = vm "members-runner";
-          games = vm "games";
-          forge = vm "forge";
+        }
+        // nixpkgs.lib.genAttrs vmTests vm
+        // {
           placement = import ./nix/tests/placement.nix args;
+          ci = import ./nix/tests/ci.nix (args // { inherit vmTests; });
           boxes = import ./nix/tests/boxes.nix args;
         };
 
@@ -233,7 +249,8 @@
             name: box:
             lib.nixosSystem {
               specialArgs = {
-                inherit self;
+                inherit self vmTests;
+                boxNames = builtins.attrNames boxes;
                 # a unit's script from a file beside its module (nix/lib/script.nix)
                 ddScript = import ./nix/lib/script.nix { lib = nixpkgs.lib; };
               };

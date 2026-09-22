@@ -1,5 +1,7 @@
 {
   ddScript,
+  vmTests,
+  boxNames,
   config,
   pkgs,
   lib,
@@ -158,9 +160,35 @@ in
         pkgs.jq
       ];
       serviceConfig.Type = "oneshot";
+      # the rule main is held to: every ci job, from the same lists the
+      # flake runs (vmTests, the boxes), so a new test is required the
+      # moment it exists
       script = ddScript ./forgejo-setup.sh {
         ADMIN = cfg.admin;
         PORT = toString port;
+        RULE = builtins.toJSON {
+          rule_name = "main";
+          branch_name = "main";
+          enable_push = true;
+          enable_push_whitelist = true;
+          push_whitelist_usernames = [ cfg.admin ];
+          enable_status_check = true;
+          status_check_contexts =
+            map (j: "entry_point / ${j} (pull_request)") (
+              [
+                "flake_check"
+                "build_client"
+              ]
+              ++ map (b: "build_host (${b})") boxNames
+              ++ [
+                "lint"
+                "test"
+              ]
+              ++ map (t: "vm_tests (${t})") vmTests
+            );
+          block_on_outdated_branch = false;
+          required_approvals = 0;
+        };
       };
     };
 
