@@ -409,9 +409,27 @@ impl Manager {
             .filter(|p| !used.contains(p));
         let mut ports = Vec::new();
         for var in &spec.ports {
+            // a port the game insists on (it tells clients that number) is
+            // that number or nothing; the rest come from the pool
+            let port = match spec
+                .port_defaults
+                .get(var)
+                .and_then(|d| d.parse::<u16>().ok())
+            {
+                Some(fixed) => {
+                    if used.contains(&fixed) {
+                        bail!(
+                            "{} needs port {fixed} and another server here has it; one of this game per box",
+                            spec.name
+                        );
+                    }
+                    fixed
+                }
+                None => free.next().context("this box has no game ports left")?,
+            };
             ports.push(Port {
                 var: var.clone(),
-                port: free.next().context("this box has no game ports left")?,
+                port,
             });
         }
 
