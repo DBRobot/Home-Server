@@ -1,9 +1,8 @@
 # The house network: a box on the router by cable when it has one, by wifi
-# when it does not, and by the laptop's link only if both are gone. Three
-# NetworkManager profiles, ordered by route metric, so the best path that
-# is up carries the default route and the others wait. Every box gets a
-# fixed address on the house network (the router's reservation matches),
-# since the port forward names it.
+# when it does not. Two NetworkManager profiles, ordered by route metric, so
+# the best path that is up carries the default route and the other waits.
+# Every box gets a fixed address on the house network (the router's
+# reservation matches), since the port forward names it.
 {
   config,
   lib,
@@ -98,5 +97,17 @@ in
         };
     };
     networking.networkmanager.wifi.powersave = false;
+    # a profile that leaves the config leaves the box: ensureProfiles only
+    # writes, so without this an old profile stays active until a reboot
+    systemd.services.NetworkManager-ensure-profiles.preStart =
+      let
+        keep = lib.concatMapStringsSep " " (n: "-not -name ${lib.escapeShellArg "${n}.nmconnection"}") (
+          lib.attrNames config.networking.networkmanager.ensureProfiles.profiles
+        );
+      in
+      ''
+        mkdir -p /run/NetworkManager/system-connections
+        find /run/NetworkManager/system-connections -name '*.nmconnection' ${keep} -delete
+      '';
   };
 }
