@@ -73,9 +73,11 @@
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
-          wasmToolchain = (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.minimal.override {
-            targets = [ "wasm32-unknown-unknown" ];
-          };
+          wasmToolchain =
+            (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.minimal.override
+              {
+                targets = [ "wasm32-unknown-unknown" ];
+              };
           craneWasm = craneLib.overrideToolchain wasmToolchain;
           wasmCommon = {
             inherit src;
@@ -105,13 +107,34 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
             doCheck = false;
           };
-          cargoArtifacts = craneLib.buildDepsOnly (common // { pname = "dd-deps"; version = "0.1.0"; });
-          crate = pname: cargoExtraArgs:
+          # the dependencies for the whole workspace: what the checks
+          # (fmt, clippy, tests) build on
+          cargoArtifacts = craneLib.buildDepsOnly (
+            common
+            // {
+              pname = "dd-deps";
+              version = "0.1.0";
+            }
+          );
+          # and one dependency build per binary, with that binary's own
+          # `-p`: cargo unifies features per package set, so a cache built
+          # for the whole workspace does not match `-p dd` and every run
+          # recompiled rustic and its friends only to throw them away
+          crate =
+            pname: cargoExtraArgs:
             craneLib.buildPackage (
               common
               // {
-                inherit pname cargoArtifacts cargoExtraArgs;
+                inherit pname cargoExtraArgs;
                 version = "0.1.0";
+                cargoArtifacts = craneLib.buildDepsOnly (
+                  common
+                  // {
+                    inherit cargoExtraArgs;
+                    pname = "${pname}-deps";
+                    version = "0.1.0";
+                  }
+                );
               }
             );
         in
@@ -140,7 +163,11 @@
           # and clippy in seconds, the tests once, all cached by content and
           # shared between the runner boxes through the bucket. ci builds
           # these instead of running cargo a second and third time.
-          fmt = craneLib.cargoFmt { inherit src; pname = "dd"; version = "0.1.0"; };
+          fmt = craneLib.cargoFmt {
+            inherit src;
+            pname = "dd";
+            version = "0.1.0";
+          };
           clippy = craneLib.cargoClippy (
             common
             // {
@@ -189,7 +216,11 @@
       # derivation, so a change to our code costs our code's compile, not
       # the three hundred crates under it. The tests ran already in ci's
       # rust job on this same source; no second run in here.
-      packages.${system} = builtins.removeAttrs rust [ "fmt" "clippy" "tests" ];
+      packages.${system} = builtins.removeAttrs rust [
+        "fmt"
+        "clippy"
+        "tests"
+      ];
 
       # Boxes booted as vms and driven through the failure cases, so the
       # modules the real hosts import are proven before a host sees them.
@@ -243,18 +274,16 @@
           storage = lib.filterAttrs (_: b: builtins.elem "storage" b.roles) boxes;
           # the garage cluster: every storage box, each told about the others
           # whose ids are known (a box's id exists once it has started once)
-          garageOf =
-            name: box:
-            {
-              dd.garage = {
-                zone = box.regionId;
-                inherit (box.garage) capacity dataDir;
-                publicAddr = "${box.tailnet}:3901";
-                peers = lib.mapAttrsToList (_: b: "${b.garage.id}@${b.tailnet}:3901") (
-                  lib.filterAttrs (n: b: n != name && b.garage ? id) storage
-                );
-              };
+          garageOf = name: box: {
+            dd.garage = {
+              zone = box.regionId;
+              inherit (box.garage) capacity dataDir;
+              publicAddr = "${box.tailnet}:3901";
+              peers = lib.mapAttrsToList (_: b: "${b.garage.id}@${b.tailnet}:3901") (
+                lib.filterAttrs (n: b: n != name && b.garage ? id) storage
+              );
             };
+          };
           # closures come from the nix-cache bucket in the garage cluster:
           # through the box's own garage, or a storage box's over the tailnet
           cacheOf =
