@@ -83,7 +83,9 @@ pub fn open_with(secret_ed25519: &ed25519_dalek::SigningKey, sealed_b64: &str) -
     scalar[31] &= 127;
     scalar[31] |= 64;
     let sk = crypto_box::SecretKey::from(scalar);
-    let sealed = B64.decode(sealed_b64).map_err(|e| Error::Key(e.to_string()))?;
+    let sealed = B64
+        .decode(sealed_b64)
+        .map_err(|e| Error::Key(e.to_string()))?;
     let opened = sk.unseal(&sealed).map_err(|_| Error::Sealed)?;
     let arr: [u8; 32] = opened[..]
         .try_into()
@@ -302,7 +304,10 @@ pub fn trash_prefix(id: &str) -> String {
 mod tests {
     use super::*;
 
-    fn entry(devices: &[&ed25519_dalek::SigningKey], root: &ed25519_dalek::SigningKey) -> identity::Entry {
+    fn entry(
+        devices: &[&ed25519_dalek::SigningKey],
+        root: &ed25519_dalek::SigningKey,
+    ) -> identity::Entry {
         identity::Entry {
             name: "amy".into(),
             root: identity::encode_public(&root.verifying_key()),
@@ -310,7 +315,9 @@ mod tests {
             devices: devices
                 .iter()
                 .map(|d| identity::Device {
-                    fingerprint: identity::fingerprint(&identity::encode_public(&d.verifying_key())),
+                    fingerprint: identity::fingerprint(&identity::encode_public(
+                        &d.verifying_key(),
+                    )),
                     public_key: identity::encode_public(&d.verifying_key()),
                     added: 1,
                 })
@@ -338,9 +345,18 @@ mod tests {
         };
         assert_eq!(lib.keys.len(), 2);
         let fp = identity::fingerprint(&identity::encode_public(&phone.verifying_key()));
-        assert_eq!(&open_library(&lib, Some((&fp, &phone)), None).unwrap()[..], &key[..]);
-        assert_eq!(&open_library(&lib, None, Some(&root)).unwrap()[..], &key[..]);
-        assert!(matches!(open_library(&lib, None, Some(&stranger)), Err(Error::Sealed)));
+        assert_eq!(
+            &open_library(&lib, Some((&fp, &phone)), None).unwrap()[..],
+            &key[..]
+        );
+        assert_eq!(
+            &open_library(&lib, None, Some(&root)).unwrap()[..],
+            &key[..]
+        );
+        assert!(matches!(
+            open_library(&lib, None, Some(&stranger)),
+            Err(Error::Sealed)
+        ));
     }
 
     #[test]
@@ -350,8 +366,14 @@ mod tests {
         let sealed = seal_chunk(&k, 0, plain).unwrap();
         assert_eq!(sealed.len(), sealed_len(plain.len()));
         assert_eq!(open_chunk(&k, 0, &sealed).unwrap(), plain);
-        assert!(open_chunk(&k, 1, &sealed).is_err(), "moved to another place");
-        assert!(open_chunk(&random_key(), 0, &sealed).is_err(), "another file's key");
+        assert!(
+            open_chunk(&k, 1, &sealed).is_err(),
+            "moved to another place"
+        );
+        assert!(
+            open_chunk(&random_key(), 0, &sealed).is_err(),
+            "another file's key"
+        );
     }
 
     #[test]
