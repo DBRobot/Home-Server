@@ -44,8 +44,8 @@ jobs:
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
-      - name: build dd, verify, agent, web
-        run: nix build --no-link .#dd .#verify .#agent .#web
+      - name: build dd, verify, agent, games, web
+        run: nix build --no-link .#dd .#verify .#agent .#games .#web
       - uses: ./.forgejo/actions/stop-run
         if: failure()
         with:
@@ -62,13 +62,13 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
       - name: build ${{ matrix.host }}
-        run: nix build --print-out-paths .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel | tee /tmp/toplevel
+        run: nix build --print-out-paths .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel | tee "$RUNNER_TEMP/toplevel"
       # what was built, as a status on the commit: `dd release publish`
       # reads it and signs that path instead of building again
       - name: record the path
         run: |
           curl -fsS -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H 'content-type: application/json' \
-            -d "{\"state\":\"success\",\"context\":\"build/${{ matrix.host }}\",\"description\":\"$(cat /tmp/toplevel)\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"state\":\"success\",\"context\":\"build/${{ matrix.host }}\",\"description\":\"$(cat "$RUNNER_TEMP/toplevel")\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha || github.sha }}"
       - uses: ./.forgejo/actions/stop-run
         if: failure()
