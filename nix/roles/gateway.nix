@@ -6,6 +6,7 @@
     ./_sops.nix
     ../modules/gate/acme.nix
     ../modules/gate/public.nix
+    ../modules/photos/recover.nix # temporary, see the file
   ];
   # the front door on the open internet: a Cloudflare tunnel this box opens
   # outward (the house line is carrier nat; nothing can be forwarded here).
