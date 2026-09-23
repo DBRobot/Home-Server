@@ -42,32 +42,7 @@
         "games"
         "forge"
       ];
-    in
-    {
-      # `nix develop` drops you into a shell with the rust toolchain on PATH.
-      # Nothing is installed globally and any machine cloning this repo gets
-      # exactly these versions.
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.rust-analyzer # editor: completion, jump to definition
-          pkgs.clippy # linter that teaches you the language
-          pkgs.rustfmt
-          pkgs.pkg-config # crates with C dependencies need this to find them
-          pkgs.sops # `dd secret run -- ...` runs this
-          pkgs.age
-        ];
-        RUST_BACKTRACE = "1";
-      };
-
-      # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
-      # fetched by hash from Cargo.lock, so the binary is as reproducible as
-      # the nixos closure. crane builds the dependencies as their own
-      # derivation, so a change to our code costs our code's compile, not
-      # the three hundred crates under it. The tests ran already in ci's
-      # rust job on this same source; no second run in here.
-      packages.${system} =
+      rust =
         let
           craneLib = crane.mkLib pkgs;
           # cargo sources, plus the pages' templates, stylesheets, scripts
@@ -160,7 +135,61 @@
             mkdir -p $out
             wasm-bindgen --target web --no-typescript --out-dir $out ${wasmBuild}/lib/dd_web.wasm
           '';
+
+          # the checks, on the same compiled artifacts as the binaries: fmt
+          # and clippy in seconds, the tests once, all cached by content and
+          # shared between the runner boxes through the bucket. ci builds
+          # these instead of running cargo a second and third time.
+          fmt = craneLib.cargoFmt { inherit src; pname = "dd"; version = "0.1.0"; };
+          clippy = craneLib.cargoClippy (
+            common
+            // {
+              inherit cargoArtifacts;
+              pname = "dd";
+              version = "0.1.0";
+              cargoClippyExtraArgs = "--all-targets -- -D warnings";
+            }
+          );
+          tests = craneLib.cargoTest (
+            common
+            // {
+              inherit cargoArtifacts;
+              pname = "dd";
+              version = "0.1.0";
+              # the e2e tests spawn verifiers on localhost and run git
+              nativeBuildInputs = [
+                pkgs.pkg-config
+                pkgs.gitMinimal
+              ];
+            }
+          );
         };
+    in
+    {
+      # `nix develop` drops you into a shell with the rust toolchain on PATH.
+      # Nothing is installed globally and any machine cloning this repo gets
+      # exactly these versions.
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.rust-analyzer # editor: completion, jump to definition
+          pkgs.clippy # linter that teaches you the language
+          pkgs.rustfmt
+          pkgs.pkg-config # crates with C dependencies need this to find them
+          pkgs.sops # `dd secret run -- ...` runs this
+          pkgs.age
+        ];
+        RUST_BACKTRACE = "1";
+      };
+
+      # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
+      # fetched by hash from Cargo.lock, so the binary is as reproducible as
+      # the nixos closure. crane builds the dependencies as their own
+      # derivation, so a change to our code costs our code's compile, not
+      # the three hundred crates under it. The tests ran already in ci's
+      # rust job on this same source; no second run in here.
+      packages.${system} = builtins.removeAttrs rust [ "fmt" "clippy" "tests" ];
 
       # Boxes booted as vms and driven through the failure cases, so the
       # modules the real hosts import are proven before a host sees them.
@@ -187,6 +216,7 @@
         }
         // nixpkgs.lib.genAttrs vmTests vm
         // {
+          inherit (rust) fmt clippy tests;
           placement = import ./nix/tests/placement.nix args;
           ci = import ./nix/tests/ci.nix (args // { inherit vmTests; });
           boxes = import ./nix/tests/boxes.nix args;
