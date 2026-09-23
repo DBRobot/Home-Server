@@ -187,7 +187,6 @@ in
             inherit (t)
               name
               url
-              description
               icon
               color
               demo
