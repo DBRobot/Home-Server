@@ -54,8 +54,10 @@ jobs:
   # Always called; each leaf skips itself when nothing relevant changed. A
   # skipped leaf still reports, which a required check needs - a skipped
   # caller would leave the leaves unreported and the merge blocked forever.
+  # the rust checks first: a formatting slip should cost a minute, not
+  # every box building and every vm booting
   nix_checks:
-    needs: files_modified
+    needs: [files_modified, rust_checks]
     uses: ./.forgejo/workflows/nix_checks.yml
     with:
       run: ${{ needs.files_modified.outputs.nix == 'true' }}

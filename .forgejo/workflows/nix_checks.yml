@@ -29,17 +29,27 @@ jobs:
       # the checks that are plain evaluation, no vm: seconds
       - name: placement and box list
         run: nix build --no-link .#checks.x86_64-linux.placement .#checks.x86_64-linux.boxes
+      - uses: ./.forgejo/actions/stop-run
+        if: failure()
+        with:
+          secret: ${{ secrets.DD_CI }}
 
-  # The programs every box and every vm test carry. Built once, first, and
-  # uploaded to the bucket; the jobs below then download them instead of
-  # each compiling the same rust workspace again on whichever box it lands.
+  # The programs every box and every vm test carry. Built once, after the
+  # cheap checks pass, and uploaded to the bucket; the jobs below then
+  # download them instead of each compiling the same rust workspace again
+  # on whichever box it lands.
   build_client:
     if: ${{ inputs.run }}
+    needs: flake_check
     runs-on: nix
     steps:
       - uses: https://github.com/actions/checkout@v4
       - name: build dd, verify, agent, web
         run: nix build --no-link .#dd .#verify .#agent .#web
+      - uses: ./.forgejo/actions/stop-run
+        if: failure()
+        with:
+          secret: ${{ secrets.DD_CI }}
 
   build_host:
     if: ${{ inputs.run }}
@@ -52,7 +62,18 @@ jobs:
     steps:
       - uses: https://github.com/actions/checkout@v4
       - name: build ${{ matrix.host }}
-        run: nix build --print-out-paths .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel
+        run: nix build --print-out-paths .#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel | tee /tmp/toplevel
+      # what was built, as a status on the commit: `dd release publish`
+      # reads it and signs that path instead of building again
+      - name: record the path
+        run: |
+          curl -fsS -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H 'content-type: application/json' \
+            -d "{\"state\":\"success\",\"context\":\"build/${{ matrix.host }}\",\"description\":\"$(cat /tmp/toplevel)\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: ./.forgejo/actions/stop-run
+        if: failure()
+        with:
+          secret: ${{ secrets.DD_CI }}
 
   # one job per test, so they spread over every runner box and run at once
   vm_tests:
@@ -67,3 +88,7 @@ jobs:
       - uses: https://github.com/actions/checkout@v4
       - name: ${{ matrix.test }}
         run: nix build --no-link .#checks.x86_64-linux.${{ matrix.test }}
+      - uses: ./.forgejo/actions/stop-run
+        if: failure()
+        with:
+          secret: ${{ secrets.DD_CI }}

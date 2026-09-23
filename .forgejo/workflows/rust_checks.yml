@@ -30,6 +30,10 @@ jobs:
         run: nix develop -c cargo fmt --check
       - name: clippy
         run: nix develop -c cargo clippy --all-targets -- -D warnings
+      - uses: ./.forgejo/actions/stop-run
+        if: failure()
+        with:
+          secret: ${{ secrets.DD_CI }}
 
   test:
     if: ${{ inputs.run }}
@@ -38,3 +42,7 @@ jobs:
       - uses: https://github.com/actions/checkout@v4
       - name: test
         run: nix develop -c cargo test
+      - uses: ./.forgejo/actions/stop-run
+        if: failure()
+        with:
+          secret: ${{ secrets.DD_CI }}

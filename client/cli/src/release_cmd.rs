@@ -134,13 +134,50 @@ fn publish(
         .cloned()
         .collect();
 
-    // every box, from git, never from the working tree. The build itself
-    // runs wherever DD_BUILD_STORE says (a box: ssh-ng://admin@...), so
-    // the laptop signs what a box built and keeps no store of its own;
-    // unset, it builds here.
-    let store = std::env::var("DD_BUILD_STORE").ok();
+    let (key_id, key_secret, signing_key) = cache_writer(&root)?;
+
+    // What CI built is what ships. build_host records each box's store path
+    // as a status on the commit it ran on; main is a merge of that commit
+    // with the same tree, so the paths are the same and already in the
+    // cache. Nothing to build, nothing to copy: read, check, sign.
     let mut built = BTreeMap::new();
-    for name in &names {
+    let mut from_ci = false;
+    if let Some(paths) = recorded_builds(&root, url, &rev, &names, keys)? {
+        let mut ok = true;
+        for (name, path) in &paths {
+            let info = Command::new("nix")
+                .args(["path-info", "--json", "--store", cache, path])
+                .env("AWS_ACCESS_KEY_ID", &key_id)
+                .env("AWS_SECRET_ACCESS_KEY", &key_secret)
+                .output()?;
+            if !info.status.success() {
+                eprintln!("   {name}: {path} is not in the cache; building instead");
+                ok = false;
+                break;
+            }
+            let nar_hash =
+                release::nar_hash_from_path_info(&String::from_utf8_lossy(&info.stdout), path)?;
+            eprintln!("== {name} as CI built it\n   {path}");
+            built.insert(
+                name.clone(),
+                release::BoxRelease {
+                    path: path.clone(),
+                    nar_hash,
+                },
+            );
+        }
+        from_ci = ok;
+        if !ok {
+            built.clear();
+        }
+    }
+
+    // otherwise every box, from git, never from the working tree. The
+    // build itself runs wherever DD_BUILD_STORE says (a box:
+    // ssh-ng://admin@...), so the laptop signs what a box built and keeps
+    // no store of its own; unset, it builds here.
+    let store = std::env::var("DD_BUILD_STORE").ok();
+    for name in names.iter().filter(|_| !from_ci) {
         eprintln!("== build {name} from {ref} ({})", &rev[..12]);
         let flake = format!(
             "git+file://{}?ref={ref}#nixosConfigurations.{name}.config.system.build.toplevel",
@@ -200,39 +237,9 @@ fn publish(
         return Ok(());
     }
 
-    eprintln!("== copy the closures to the cache");
-    let (key_id, key_secret, signing_key) = cache_writer(&root)?;
-    // the signing key in a file only for the length of the copy
-    let key_dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
-    let key_file = PathBuf::from(key_dir).join(format!("dd-cache-key-{}", std::process::id()));
-    {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&key_file)?;
-        f.write_all(signing_key.as_bytes())?;
+    if !from_ci {
+        copy_to_cache(cache, &store, &signed, &key_id, &key_secret, &signing_key)?;
     }
-    let to = format!("{cache}&secret-key={}", key_file.display());
-    let mut args = vec!["copy", "--to", to.as_str()];
-    if let Some(st) = &store {
-        args.extend(["--from", st.as_str()]);
-    }
-    args.extend(signed.payload.boxes.values().map(|b| b.path.as_str()));
-    let status = Command::new("nix")
-        .args(&args)
-        .env("AWS_ACCESS_KEY_ID", key_id)
-        .env("AWS_SECRET_ACCESS_KEY", key_secret)
-        .status();
-    let _ = std::fs::remove_file(&key_file);
-    ensure!(
-        status.context("running nix copy")?.success(),
-        "copying to the cache"
-    );
 
     eprintln!("== publish release {counter}");
     let wt = std::env::temp_dir().join(format!("dd-release-{}", std::process::id()));
@@ -339,6 +346,130 @@ fn status(repo: &str, url: &str) -> Result<()> {
         println!("  runs {running}");
     }
     Ok(())
+}
+
+/// The closures into the cache bucket, signed with the fleet's cache key.
+fn copy_to_cache(
+    cache: &str,
+    store: &Option<String>,
+    signed: &release::Signed,
+    key_id: &str,
+    key_secret: &str,
+    signing_key: &str,
+) -> Result<()> {
+    eprintln!("== copy the closures to the cache");
+    // the signing key in a file only for the length of the copy
+    let key_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
+    let key_file = PathBuf::from(key_dir).join(format!("dd-cache-key-{}", std::process::id()));
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&key_file)?;
+        f.write_all(signing_key.as_bytes())?;
+    }
+    let to = format!("{cache}&secret-key={}", key_file.display());
+    let mut args = vec!["copy", "--to", to.as_str()];
+    if let Some(st) = &store {
+        args.extend(["--from", st.as_str()]);
+    }
+    args.extend(signed.payload.boxes.values().map(|b| b.path.as_str()));
+    let status = Command::new("nix")
+        .args(&args)
+        .env("AWS_ACCESS_KEY_ID", key_id)
+        .env("AWS_SECRET_ACCESS_KEY", key_secret)
+        .status();
+    let _ = std::fs::remove_file(&key_file);
+    ensure!(
+        status.context("running nix copy")?.success(),
+        "copying to the cache"
+    );
+
+    Ok(())
+}
+
+/// The store paths CI recorded for this tree, if it recorded every box:
+/// `build/<box>` statuses on the commit or a parent with the same tree.
+fn recorded_builds(
+    root: &Path,
+    url: &str,
+    rev: &str,
+    names: &[String],
+    keys: &auth::Store,
+) -> Result<Option<BTreeMap<String, String>>> {
+    // https://forge/owner/repo/raw/... -> https://forge/api/v1/repos/owner/repo
+    let Some((repo_url, _)) = url.split_once("/raw/") else {
+        return Ok(None);
+    };
+    let Some(slash) = repo_url
+        .find("://")
+        .map(|i| i + 3)
+        .and_then(|i| repo_url[i..].find('/').map(|j| i + j))
+    else {
+        return Ok(None);
+    };
+    let api = format!(
+        "{}/api/v1/repos/{}",
+        &repo_url[..slash],
+        &repo_url[slash + 1..]
+    );
+    let tree = git(root, &["rev-parse", &format!("{rev}^{{tree}}")])?;
+    let token = match auth::device::load(keys)? {
+        Some(kp) => match keys.get(crate::USER)? {
+            Some(user) => auth::device::mint(&kp, &user, std::time::Duration::from_secs(600))?,
+            None => return Ok(None),
+        },
+        None => return Ok(None),
+    };
+    for cand in [rev.to_owned(), format!("{rev}^2"), format!("{rev}^1")] {
+        let Ok(sha) = git(root, &["rev-parse", "--verify", "--quiet", &cand]) else {
+            continue;
+        };
+        if git(root, &["rev-parse", &format!("{sha}^{{tree}}")])? != tree {
+            continue;
+        }
+        let out = Command::new("curl")
+            .args([
+                "-sf",
+                "-H",
+                &format!("Authorization: Bearer {token}"),
+                &format!("{api}/commits/{sha}/statuses?limit=50"),
+            ])
+            .output()?;
+        if !out.status.success() {
+            continue;
+        }
+        let statuses: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)?;
+        let mut paths = BTreeMap::new();
+        // newest first; the first success per context wins
+        for st in &statuses {
+            let (Some(ctx), Some(state), Some(desc)) = (
+                st["context"].as_str(),
+                st["status"].as_str(),
+                st["description"].as_str(),
+            ) else {
+                continue;
+            };
+            if state != "success" || !desc.starts_with("/nix/store/") {
+                continue;
+            }
+            if let Some(name) = ctx.strip_prefix("build/") {
+                paths
+                    .entry(name.to_owned())
+                    .or_insert_with(|| desc.to_owned());
+            }
+        }
+        if names.iter().all(|n| paths.contains_key(n)) {
+            paths.retain(|n, _| names.contains(n));
+            return Ok(Some(paths));
+        }
+    }
+    Ok(None)
 }
 
 /// The key that writes the cache bucket: in the private half of the fleet

@@ -11,6 +11,7 @@
       ../modules/forge/forgejo.nix
     ];
     dd.forgejo.admin = "tester";
+    dd.forgejo.ciSecretFile = pkgs.writeText "ci-secret" "test-ci-secret";
     # the forge's state dir is a dataset on a box; here a directory, and a
     # stand-in for the unit that would make it
     systemd.services.zfs-datasets = {

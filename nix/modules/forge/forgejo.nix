@@ -11,6 +11,7 @@ let
   base = config.dd.domain;
   host = "git.${base}";
   port = 3001; # 3000 is grafana
+  cancelPort = 3003;
   cfg = config.dd.forgejo;
 in
 {
@@ -20,6 +21,10 @@ in
   options.dd.forgejo.admin = lib.mkOption {
     type = lib.types.str;
     description = "Directory name of the person who administers this forge.";
+  };
+  options.dd.forgejo.ciSecretFile = lib.mkOption {
+    type = lib.types.path;
+    description = "the secret a ci job shows to stop its run (ci-cancel.py); the same value is the repo's DD_CI actions secret";
   };
 
   config = {
@@ -166,6 +171,7 @@ in
       script = ddScript ./forgejo-setup.sh {
         ADMIN = cfg.admin;
         PORT = toString port;
+        CI_SECRET_FILE = cfg.ciSecretFile;
         RULE = builtins.toJSON {
           rule_name = "main";
           branch_name = "main";
@@ -173,32 +179,54 @@ in
           enable_push_whitelist = true;
           push_whitelist_usernames = [ cfg.admin ];
           enable_status_check = true;
-          status_check_contexts =
-            map (j: "entry_point / ${j} (pull_request)") (
-              [
-                "flake_check"
-                "build_client"
-              ]
-              ++ map (b: "build_host (${b})") boxNames
-              ++ [
-                "lint"
-                "test"
-              ]
-              ++ map (t: "vm_tests (${t})") vmTests
-            );
+          status_check_contexts = map (j: "entry_point / ${j} (pull_request)") (
+            [
+              "flake_check"
+              "build_client"
+            ]
+            ++ map (b: "build_host (${b})") boxNames
+            ++ [
+              "lint"
+              "test"
+            ]
+            ++ map (t: "vm_tests (${t})") vmTests
+          );
           block_on_outdated_branch = false;
           required_approvals = 0;
         };
       };
     };
 
+    # a failing ci job stops the rest of its run: the job posts here with
+    # the ci secret and this cancels the run as the admin, the one thing
+    # the forge's api cannot do
+    systemd.services.dd-ci-cancel = {
+      description = "Cancel a ci run at a failing job's request";
+      after = [ "forgejo.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "simple";
+        DynamicUser = true;
+        LoadCredential = [ "secret:${cfg.ciSecretFile}" ];
+        ExecStart = "${pkgs.python3}/bin/python3 ${./ci-cancel.py}";
+        Restart = "on-failure";
+      };
+      environment = {
+        FORGE = "http://127.0.0.1:${toString port}";
+        ADMIN = cfg.admin;
+        REPO = "${cfg.admin}/Home-Server";
+        SECRET_FILE = "%d/secret";
+        LISTEN = toString cancelPort;
+      };
+    };
+
     services.nginx.appendHttpConfig = ''
-    map $auth_user $forge_user {
-      default $auth_user;
-      demo "";
-    }
-  '';
-  services.nginx.virtualHosts.${host} = {
+      map $auth_user $forge_user {
+        default $auth_user;
+        demo "";
+      }
+    '';
+    services.nginx.virtualHosts.${host} = {
       useACMEHost = base;
       forceSSL = true;
       locations."/" = {
@@ -215,6 +243,10 @@ in
           # forgejo shows private ones to no one it does not know.
           error_page 401 = @anonymous;
         '';
+      };
+      # the ci cancel route: the secret is the credential, not a session
+      locations."/_dd/ci/" = {
+        proxyPass = "http://127.0.0.1:${toString cancelPort}";
       };
       locations."@anonymous" = {
         proxyPass = "http://127.0.0.1:${toString port}";
