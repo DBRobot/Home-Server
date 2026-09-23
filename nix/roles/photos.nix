@@ -42,7 +42,6 @@
       # the demo has an ente account of its own with a zero quota: ente has
       # no demo mode, a quota is its read-only
       demo = "read";
-      description = "Your photos and videos, backed up from your phone. Encrypted with a key only your passkey makes.";
       icon = "photos";
       color = "#d9822b";
       rank = 10;

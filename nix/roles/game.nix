@@ -14,7 +14,6 @@
     {
       name = "Games";
       url = "https://games.${config.dd.domain}/";
-      description = "Start a server for you and your friends. It stays up.";
       icon = "games";
       color = "#7a4fb5";
       rank = 35;

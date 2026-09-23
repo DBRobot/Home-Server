@@ -66,7 +66,6 @@ in
         options = {
           name = lib.mkOption { type = lib.types.str; };
           url = lib.mkOption { type = lib.types.str; };
-          description = lib.mkOption { type = lib.types.str; };
           icon = lib.mkOption {
             type = lib.types.str;
             default = "";
@@ -188,14 +187,11 @@ in
             inherit (t)
               name
               url
-              description
               icon
               color
               demo
               ;
-          }) (
-            lib.sort (a: b: a.rank < b.rank) config.dd.home.services
-          )
+          }) (lib.sort (a: b: a.rank < b.rank) config.dd.home.services)
         );
         VERIFY_OIDC_REDIRECT = "https://jellyfin.${base}/sso/OID/r/dd";
       };
@@ -236,8 +232,7 @@ in
     services.nginx.virtualHosts = lib.mkIf full (
       lib.mkMerge [
         (builtins.listToAttrs (
-        map
-          (h: {
+          map (h: {
             name = "${h}.${base}";
             value.locations = {
               # No limit_req here. jellyfin fetches discovery and jwks from this
@@ -279,8 +274,7 @@ in
                 '';
               };
             };
-          })
-          cfg.hosts
+          }) cfg.hosts
         ))
         # the front door itself: home.<domain> is the verifier's page and
         # nothing else. The bare domain cannot carry it (the certificate is
