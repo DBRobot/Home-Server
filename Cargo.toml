@@ -4,6 +4,7 @@ members = [
   "box/release",
   "box/verify",
   "box/games",
+  "box/transcode",
   "box/archive",
   "client/cli",
   "client/identity",

@@ -41,6 +41,7 @@
         "members-runner"
         "games"
         "forge"
+        "transcode"
       ];
       rust =
         let
@@ -155,6 +156,7 @@
             agent = crateSrc "agent" [ "box/release" ];
             verify = crateSrc "verify" [ "box/verify" ];
             games = crateSrc "games" [ "box/games" ];
+            transcode = crateSrc "transcode" [ "box/transcode" ];
             web = crateSrc "web" [ "client/web" ];
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
@@ -191,6 +193,8 @@
             inherit src;
             strictDeps = true;
             nativeBuildInputs = [ pkgs.pkg-config ];
+            # the cli's mount (dd media) links libfuse
+            buildInputs = [ pkgs.fuse3 ];
             doCheck = false;
           };
           # the dependencies for the whole workspace: what the checks
@@ -243,6 +247,9 @@
           verify = crate "verify" sources.verify "-p verify";
           # the manager behind the Games tile (modules/games.nix)
           games = crate "dd-games" sources.games "-p games";
+          # one file, one viewer, in memory: the compute side of the
+          # encrypted libraries (modules/library/transcode.nix)
+          transcode = crate "dd-transcode" sources.transcode "-p transcode";
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
@@ -295,6 +302,7 @@
           pkgs.clippy # linter that teaches you the language
           pkgs.rustfmt
           pkgs.pkg-config # crates with C dependencies need this to find them
+          pkgs.fuse3 # the cli's mount
           pkgs.sops # `dd secret run -- ...` runs this
           pkgs.age
         ];

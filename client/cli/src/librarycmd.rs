@@ -22,7 +22,7 @@ pub enum LibraryCmd {
     List,
     /// What a library holds
     Ls { library: String },
-    /// A file into a library, under a name (default: the file's name)
+    /// A file into a library, under a name (default: the file's name); `-` reads stdin
     Put {
         library: String,
         file: PathBuf,
@@ -40,13 +40,13 @@ pub enum LibraryCmd {
 }
 
 /// what this machine can open a library with
-struct Opener {
+pub struct Opener {
     device: (String, ed25519_dalek::SigningKey),
     root: Option<ed25519_dalek::SigningKey>,
 }
 
 impl Opener {
-    fn load(keys: &auth::Store) -> Result<(Self, String, String)> {
+    pub fn load(keys: &auth::Store) -> Result<(Self, String, String)> {
         let kp = auth::device::load(keys)?.context("no device key here - `dd device show`")?;
         let user = keys
             .get(crate::USER)?
@@ -80,14 +80,14 @@ impl Opener {
 }
 
 /// the gate on the box, for one library
-struct Gate {
+pub struct Gate {
     base: String,
     token: String,
     http: reqwest::Client,
 }
 
 impl Gate {
-    fn new(files_base: &str, lib: &str, token: &str) -> Self {
+    pub fn new(files_base: &str, lib: &str, token: &str) -> Self {
         Gate {
             base: format!("{}/_dd/library/{lib}", files_base.trim_end_matches('/')),
             token: token.to_string(),
@@ -139,7 +139,7 @@ impl Gate {
         }
         Ok(ids)
     }
-    async fn fetch(&self, object: &str) -> Result<Vec<u8>> {
+    pub async fn fetch(&self, object: &str) -> Result<Vec<u8>> {
         let url = self.url(reqwest::Method::GET, object).await?;
         let r = self.http.get(url).send().await?;
         if !r.status().is_success() {
@@ -147,7 +147,7 @@ impl Gate {
         }
         Ok(r.bytes().await?.to_vec())
     }
-    async fn store(&self, object: &str, bytes: Vec<u8>) -> Result<()> {
+    pub async fn store(&self, object: &str, bytes: Vec<u8>) -> Result<()> {
         let url = self.url(reqwest::Method::PUT, object).await?;
         let r = self.http.put(url).body(bytes).send().await?;
         if !r.status().is_success() {
@@ -155,7 +155,7 @@ impl Gate {
         }
         Ok(())
     }
-    async fn records(&self, key: &library::Key) -> Result<Vec<Record>> {
+    pub async fn records(&self, key: &library::Key) -> Result<Vec<Record>> {
         let mut out = Vec::new();
         for id in self.record_ids().await? {
             let bytes = self.fetch(&library::record_object(&id)).await?;
@@ -167,7 +167,7 @@ impl Gate {
 
 /// every library this machine can open: the member's own, then those
 /// shared with them by anyone whose entry names them
-async fn openable(
+pub async fn openable(
     dirs: &[String],
     user: &str,
     opener: &Opener,
@@ -205,7 +205,7 @@ async fn openable(
     Ok(out)
 }
 
-fn files_base(dirs: &[String]) -> Result<String> {
+pub fn files_base(dirs: &[String]) -> Result<String> {
     // the gate is on the same host as the directory: https://files.<base>
     let d = dirs.first().context("no directory")?;
     Ok(d.trim_end_matches("/_dd/directory").to_string())
@@ -270,25 +270,46 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default()
             });
-            let data =
-                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+            if name.is_empty() {
+                bail!("a file from stdin needs a name: --as <name>");
+            }
+            // streamed a chunk at a time: a film does not fit in memory, and
+            // `-` lets a copy come in over a pipe (ssh box cat ...)
+            let mut src: Box<dyn std::io::Read> = if file.as_os_str() == "-" {
+                Box::new(std::io::stdin())
+            } else {
+                Box::new(
+                    std::fs::File::open(&file)
+                        .with_context(|| format!("opening {}", file.display()))?,
+                )
+            };
             let file_key = library::random_key();
             let id = library::random_id();
             let mut n = 0u64;
-            for chunk in data.chunks(library::CHUNK) {
+            let mut size = 0u64;
+            let mut buf = vec![0u8; library::CHUNK];
+            loop {
+                let got = read_full(&mut src, &mut buf)?;
+                if got == 0 && n > 0 {
+                    break;
+                }
                 gate.store(
                     &library::chunk_object(&id, n),
-                    library::seal_chunk(&file_key, n, chunk)?,
+                    library::seal_chunk(&file_key, n, &buf[..got])?,
                 )
                 .await?;
                 n += 1;
-                eprint!("\r{}: chunk {n}", name);
+                size += got as u64;
+                eprint!("\r{name}: chunk {n} ({} MiB)", size >> 20);
+                if got < library::CHUNK {
+                    break;
+                }
             }
             eprintln!();
             let rec = Record {
                 id: id.clone(),
                 name: name.clone(),
-                size: data.len() as u64,
+                size,
                 chunks: n,
                 key: library::encode_key(&file_key),
                 modified: identity::now(),
@@ -298,7 +319,7 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                 library::seal_record(&key, &rec)?,
             )
             .await?;
-            println!("{name}: {} bytes in {n} chunk(s), record {id}", data.len());
+            println!("{name}: {size} bytes in {n} chunk(s), record {id}");
         }
         LibraryCmd::Get { library, name, out } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
@@ -335,6 +356,20 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
         }
     }
     Ok(())
+}
+
+/// as much of `buf` as the reader gives before it ends
+fn read_full(r: &mut dyn std::io::Read, buf: &mut [u8]) -> Result<usize> {
+    let mut at = 0;
+    while at < buf.len() {
+        match r.read(&mut buf[at..]) {
+            Ok(0) => break,
+            Ok(k) => at += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(at)
 }
 
 async fn pick(
