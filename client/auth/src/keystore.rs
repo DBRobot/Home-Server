@@ -26,12 +26,27 @@ impl OsKeyring {
     }
 }
 
+/// the service name before the fleet was called commonty: an entry still
+/// under it is copied on first read, so nothing on a machine has to be
+/// re-made; the old copy stays for a build from before the rename
+const OLD_SERVICE: &str = "distributed-datacenter";
+
 impl KeyStore for OsKeyring {
     fn get(&self, account: &str) -> crate::Result<Option<Zeroizing<String>>> {
         let entry = keyring::Entry::new(&self.service, account)?;
         match entry.get_password() {
             Ok(secret) => Ok(Some(Zeroizing::new(secret))),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => {
+                let old = keyring::Entry::new(OLD_SERVICE, account)?;
+                match old.get_password() {
+                    Ok(secret) => {
+                        entry.set_password(&secret)?;
+                        Ok(Some(Zeroizing::new(secret)))
+                    }
+                    Err(keyring::Error::NoEntry) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -144,7 +159,7 @@ mod tests {
     #[test]
     #[ignore]
     fn round_trips_through_the_os_store() {
-        let ks = OsKeyring::new("distributed-datacenter-test");
+        let ks = OsKeyring::new("commonty-test");
         let account = "roundtrip";
 
         ks.clear(account).unwrap();

@@ -14,6 +14,7 @@ use hkdf::Hkdf;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
+// the fleet's old name, kept as bytes: every derived key depends on it
 const SALT: &[u8] = b"distributed-datacenter";
 
 fn derive(master: &str, label: &str) -> Zeroizing<String> {

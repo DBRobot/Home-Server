@@ -32,7 +32,7 @@ use anyhow::{Context, Result, bail};
 use auth::KeyStore;
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "distributed-datacenter";
+const SERVICE: &str = "commonty";
 const DEFAULT_DIRECTORIES: [&str; 2] = [
     "https://files.commonty.org/_dd/directory",
     "http://100.95.10.10:4181/_dd/directory",

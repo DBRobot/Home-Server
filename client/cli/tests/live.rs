@@ -1,5 +1,5 @@
 //! A guest walks the real fleet. Not part of `cargo test` unless pointed at
-//! it: DD_LIVE_BASE is the domain (distributed-datacenter.duckdns.org) and
+//! it: DD_LIVE_BASE is the domain (commonty.org) and
 //! DD_LIVE_CODE an invite code minted moments ago with `dd invite`. A
 //! software passkey makes an account with the code, then opens every tile
 //! the way a browser would and reports what each service did with a person

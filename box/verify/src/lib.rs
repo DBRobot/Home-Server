@@ -1103,7 +1103,7 @@ pub async fn start(
     // every service on this box, and the cookie rides along to all of them
     let rp_origin = Url::parse(&format!("https://{domain}"))?;
     let webauthn = WebauthnBuilder::new(&domain, &rp_origin)?
-        .rp_name("Distributed Datacenter")
+        .rp_name("Commonty")
         .allow_subdomains(true)
         .build()?;
     let oidc = match cfg.oidc {
