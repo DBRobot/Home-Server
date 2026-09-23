@@ -3,8 +3,8 @@ import json
 
 box.wait_for_unit("dd-transcode.service")
 box.wait_for_open_port(4190)
-# a three-second clip, as a member might have in a library
-box.succeed("ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=duration=3:size=160x120:rate=10 -f lavfi -i sine=frequency=440:duration=3 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest /tmp/clip.mp4")
+# a clip big enough that ffmpeg must seek for the index at its end, as a real file makes it
+box.succeed("ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=duration=20:size=640x360:rate=25 -f lavfi -i sine=frequency=440:duration=20 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest /tmp/clip.mp4")
 # the box's key for this run, then the clip chunked and sealed the way a device does it
 key = json.loads(box.succeed("curl -sf http://127.0.0.1:4190/key"))["key"]
 body = box.succeed("python3 %s /tmp/clip.mp4 /tmp/chunks '%s' http://127.0.0.1:8000" % (nix["chunker"], key)).strip()
