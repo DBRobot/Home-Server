@@ -67,7 +67,12 @@
                       "Cargo.lock"
                     ];
                     # the trees on the way to every member, and every manifest
-                    tree = builtins.elem rel [ "box" "client" ] || builtins.match "(box|client)/[^/]+" rel != null;
+                    tree =
+                      builtins.elem rel [
+                        "box"
+                        "client"
+                      ]
+                      || builtins.match "(box|client)/[^/]+" rel != null;
                     manifest = builtins.match "(box|client)/[^/]+/Cargo\\.toml" rel != null;
                     ours = builtins.any (d: rel == d || pkgs.lib.hasPrefix "${d}/" rel) dirs;
                   in
@@ -101,27 +106,56 @@
             "box"
             "client"
           ];
-          # the crates behind each binary, dependencies included
+          # the crates behind each binary: the path dependencies in the
+          # manifests, followed to the end, so a list never goes stale
+          crateDeps =
+            dir:
+            let
+              m = builtins.fromTOML (builtins.readFile (./. + "/${dir}/Cargo.toml"));
+              deps = (m.dependencies or { }) // (m.build-dependencies or { });
+              norm =
+                base: rel:
+                let
+                  parts = pkgs.lib.filter (p: p != "" && p != ".") (pkgs.lib.splitString "/" "${base}/${rel}");
+                  walk =
+                    acc: ps:
+                    if ps == [ ] then
+                      acc
+                    else if builtins.head ps == ".." then
+                      walk (pkgs.lib.init acc) (builtins.tail ps)
+                    else
+                      walk (acc ++ [ (builtins.head ps) ]) (builtins.tail ps);
+                in
+                pkgs.lib.concatStringsSep "/" (walk [ ] parts);
+            in
+            pkgs.lib.unique (
+              map (d: norm dir d.path) (pkgs.lib.filter (d: d ? path) (builtins.attrValues deps))
+            );
+          crateClosure =
+            roots:
+            let
+              go =
+                seen: todo:
+                if todo == [ ] then
+                  seen
+                else
+                  let
+                    d = builtins.head todo;
+                    rest = builtins.tail todo;
+                  in
+                  if builtins.elem d seen then go seen rest else go (seen ++ [ d ]) (rest ++ crateDeps d);
+            in
+            go [ ] roots;
+          crateSrc = name: roots: srcFor name (crateClosure roots);
           sources = {
-            dd = srcFor "dd" [
+            dd = crateSrc "dd" [
               "client/cli"
               "client/gitremote"
-              "client/identity"
-              "client/auth"
-              "client/ente"
-              "box/release"
-              "box/archive"
             ];
-            agent = srcFor "agent" [
-              "box/release"
-              "client/identity"
-            ];
-            verify = srcFor "verify" [
-              "box/verify"
-              "client/identity"
-            ];
-            games = srcFor "games" [ "box/games" ];
-            web = srcFor "web" [ "client/web" ];
+            agent = crateSrc "agent" [ "box/release" ];
+            verify = crateSrc "verify" [ "box/verify" ];
+            games = crateSrc "games" [ "box/games" ];
+            web = crateSrc "web" [ "client/web" ];
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
