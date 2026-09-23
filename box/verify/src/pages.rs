@@ -9,7 +9,6 @@ use askama::Template;
 pub struct Service {
     pub name: String,
     pub url: String,
-    pub description: String,
     /// photos, videos, files, chat, code, metrics, games, or anything else for a plain mark
     pub icon: String,
     /// a css colour for the tile's icon
@@ -92,7 +91,6 @@ struct Photos<'a> {
 struct Tile<'a> {
     name: &'a str,
     url: &'a str,
-    description: &'a str,
     icon: &'static str,
     color: &'a str,
     shut: bool,
@@ -155,7 +153,6 @@ pub fn home(user: &str, services: &[Service]) -> String {
             .map(|s| Tile {
                 name: &s.name,
                 url: &s.url,
-                description: &s.description,
                 icon: icon(&s.icon),
                 color: &s.color,
                 // a door this account has no key to: shown, shut, and why
@@ -173,7 +170,6 @@ mod tests {
         Service {
             name: name.into(),
             url: format!("https://{}.example/", name.to_lowercase()),
-            description: "what it is".into(),
             icon: icon.into(),
             color: "#123456".into(),
             demo: None,

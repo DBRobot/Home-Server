@@ -14,7 +14,6 @@
       # the forge is told nobody is there (modules/forgejo.nix): public
       # repos, no account
       demo = "full";
-      description = "Repositories and issues.";
       icon = "code";
       color = "#4a5a8a";
       rank = 50;

@@ -143,11 +143,14 @@ main.home h1 {
 .grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* every tile the same size: rows share a height, a tile fills its cell */
+  grid-auto-rows: 1fr;
   gap: 20px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+.grid > li { display: flex; }
 @media (max-width: 800px) {
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -156,6 +159,7 @@ main.home h1 {
 }
 .tile {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 18px;
   padding: 24px;
@@ -185,7 +189,7 @@ main.home h1 {
   height: 28px;
 }
 .tile h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -.01em;
