@@ -96,6 +96,28 @@ in
       revoked = [ ];
     };
   };
+  options.dd.verify.library = lib.mkOption {
+    type = lib.types.nullOr (
+      lib.types.submodule {
+        options = {
+          s3 = lib.mkOption {
+            type = lib.types.str;
+            description = "the s3 endpoint devices reach with the urls the gate signs";
+          };
+          bucket = lib.mkOption {
+            type = lib.types.str;
+            default = "libraries";
+          };
+          keyFile = lib.mkOption {
+            type = lib.types.path;
+            description = "env file with LIBRARY_ID and LIBRARY_SECRET";
+          };
+        };
+      }
+    );
+    default = null;
+    description = "the encrypted libraries' gate (modules/library/libraries.nix); null: this box holds none";
+  };
   options.dd.verify.photos = lib.mkOption {
     type = lib.types.nullOr (
       lib.types.submodule {
@@ -158,6 +180,10 @@ in
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
+      // lib.optionalAttrs (full && cfg.library != null) {
+        VERIFY_LIBRARY_S3 = cfg.library.s3;
+        VERIFY_LIBRARY_BUCKET = cfg.library.bucket;
+      }
       // lib.optionalAttrs (full && cfg.photos != null) {
         VERIFY_PHOTOS_API = cfg.photos.api;
         VERIFY_PHOTOS_SUFFIX = cfg.photos.emailSuffix;
@@ -199,6 +225,8 @@ in
         Type = "simple";
         User = user;
         Group = user;
+        # the gate's bucket key, read by systemd before the drop to `user`
+        EnvironmentFile = lib.optional (full && cfg.library != null) cfg.library.keyFile;
         StateDirectory = "dd-verify";
         StateDirectoryMode = "0700";
         ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.verify}/bin/verify";

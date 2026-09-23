@@ -59,6 +59,11 @@ pub struct Entry {
     /// signed, proven by this root. Absent for everyone else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<Grant>,
+    /// This person's encrypted libraries (crate library): each one's key
+    /// sealed to their devices, root and recovery key, and to any reader's.
+    /// In the entry so the keys are where the identity is and nowhere else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<Library>,
     /// strictly increasing; a box never accepts an older or equal one
     pub version: u64,
     pub updated: u64,
@@ -79,6 +84,34 @@ pub struct Device {
     /// base64 ed25519 public key that signs this device's tokens
     pub public_key: String,
     pub added: u64,
+}
+
+/// A library as its owner's entry carries it: an id, its key sealed to
+/// every key that may open it. The bucket, the records and the chunks
+/// live on boxes under that id (crate library); this is the only place
+/// the key exists.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Library {
+    pub id: String,
+    /// "device:<fingerprint>", "root" or "recovery": whose key opens `sealed`
+    pub keys: Vec<SealedKey>,
+    /// members this library is shared with, each with the key sealed to
+    /// their devices; empty until sharing exists
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub readers: Vec<Reader>,
+    pub created: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SealedKey {
+    pub to: String,
+    pub sealed: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reader {
+    pub name: String,
+    pub keys: Vec<SealedKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,6 +516,7 @@ mod tests {
             recovery: String::new(),
             devices: vec![],
             passkeys: vec![],
+            libraries: vec![],
             grant: Some(Grant {
                 invite: inv.clone(),
                 redeemed: 200,
@@ -520,6 +554,7 @@ mod tests {
         let e1 = Entry {
             passkeys: vec![],
             grant: None,
+            libraries: vec![],
             name: "sarah".into(),
             root: encode_public(&root.verifying_key()),
             recovery: encode_public(&recovery.verifying_key()),

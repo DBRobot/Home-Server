@@ -11,6 +11,7 @@
 //! can add nothing to it. With VERIFY_ROLE=directory that is all a box does.
 
 mod directory;
+pub mod library;
 mod oidc;
 pub mod pages;
 mod session;
@@ -53,6 +54,8 @@ struct App {
     photos: Option<Photos>,
     /// the demo's counted requests, per host and hour (`rate:N`)
     demo_rate: Mutex<HashMap<String, (u64, u32)>>,
+    /// the encrypted libraries' gate (library.rs), on a box with the bucket
+    library: Option<library::Gate>,
 }
 
 enum Ceremony {
@@ -102,6 +105,8 @@ pub struct Config {
     /// Photos: the ente account a passkey opens (pages::photos). None on a
     /// box without the photos role.
     pub photos: Option<Photos>,
+    /// the library gate, if this box holds the libraries bucket
+    pub library: Option<library::Gate>,
 }
 
 /// What the photos page needs to make or open an ente account for a person:
@@ -269,7 +274,7 @@ impl App {
     /// is what the request is for: a token minted for enrolment carries a
     /// check that only "enrol" satisfies, so a leaked enrol link cannot read
     /// a file, and an access token is not an enrol link.
-    fn verify_biscuit(&self, token: &str, operation: &str) -> Result<String> {
+    pub(crate) fn verify_biscuit(&self, token: &str, operation: &str) -> Result<String> {
         let unverified = UnverifiedBiscuit::from_base64(token).context("not a biscuit")?;
         // the user is named in the authority block; it has to be read before the
         // signature can be checked, because the key to check with depends on it
@@ -371,7 +376,7 @@ fn peek_user(source: &str) -> Option<String> {
     Some(rest[..j].to_string())
 }
 
-fn bearer(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(AUTHORIZATION)?
         .to_str()
@@ -606,6 +611,7 @@ async fn join_finish(
             added: now,
         }],
         grant,
+        libraries: vec![],
         version: 1,
         updated: now,
     };
@@ -1129,6 +1135,7 @@ pub async fn start(
         web_dir: cfg.web_dir,
         photos: cfg.photos,
         demo_rate: Mutex::new(HashMap::new()),
+        library: cfg.library,
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -1151,6 +1158,13 @@ pub async fn start(
         .route("/_dd/static/{file}", get(static_file))
         .route("/_dd/photos", get(photos_page))
         .route("/_dd/photos/config", post(photos_config))
+        // the encrypted libraries' gate
+        .route("/_dd/library/{lib}/records", get(library::records))
+        .route(
+            "/_dd/library/{lib}/url/{*object}",
+            get(library::url).put(library::url),
+        )
+        .route("/_dd/library/{lib}/trash/{id}", post(library::trash))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
         .route("/_dd/enrol/result", get(enrol_result))

@@ -61,6 +61,31 @@ pub fn newest(found: &[(String, Result<Option<SignedEntry>>)]) -> Option<SignedE
 /// Push to every directory. Success is every directory accepting; a partial
 /// result is reported line by line and still an error, because a directory
 /// left behind is one that will later serve a stale entry as current.
+/// every name a directory lists
+pub async fn names(dir: &str) -> Result<Vec<String>> {
+    let v: Vec<serde_json::Value> = reqwest::get(dir).await?.error_for_status()?.json().await?;
+    Ok(v.into_iter()
+        .filter_map(|l| l["name"].as_str().map(str::to_string))
+        .collect())
+}
+
+/// a library into our entry: the key was sealed already, this signs it in
+pub async fn add_library(
+    dirs: &[String],
+    name: &str,
+    root: &ed25519_dalek::SigningKey,
+    lib: identity::Library,
+) -> Result<SignedEntry> {
+    let cur = ours(dirs, name, root).await?;
+    let mut entry = cur.entry.clone();
+    entry.libraries.push(lib);
+    entry.version += 1;
+    entry.updated = identity::now();
+    let signed = identity::sign(entry, root)?;
+    publish(dirs, &signed).await?;
+    Ok(signed)
+}
+
 pub async fn publish(dirs: &[String], signed: &SignedEntry) -> Result<()> {
     let http = http()?;
     let mut failed = 0;
@@ -137,6 +162,7 @@ pub async fn create(
         devices: vec![device_of(kp)],
         passkeys: vec![],
         grant: None,
+        libraries: vec![],
         version: 1,
         updated: identity::now(),
     };
@@ -199,6 +225,15 @@ pub async fn admit(
         public_key: public_key.to_string(),
         added: identity::now(),
     });
+    // the new device opens every library this root can
+    for lib in &mut entry.libraries {
+        let key = library::open_library(lib, None, Some(root))
+            .with_context(|| format!("library {}: the root does not open it", lib.id))?;
+        lib.keys.push(library::SealedKey {
+            to: format!("device:{}", identity::fingerprint(public_key)),
+            sealed: library::seal_to(public_key, &key[..])?,
+        });
+    }
     entry.version += 1;
     entry.updated = identity::now();
     let signed = identity::sign(entry, root)?;
@@ -232,9 +267,27 @@ pub async fn recover(
         passkeys: vec![],
         // a grant proves a root; this one is new. `dd invite` again
         grant: None,
+        libraries: vec![],
         version: cur.entry.version + 1,
         updated: identity::now(),
     };
+    // the libraries come along: the paper key opens each one, the new
+    // root and device and recovery key get it sealed afresh
+    let mut entry = entry;
+    for lib in &cur.entry.libraries {
+        let key = lib
+            .keys
+            .iter()
+            .find(|k| k.to == "recovery")
+            .and_then(|k| library::open_with(&recovery, &k.sealed).ok())
+            .with_context(|| format!("library {}: the paper key does not open it", lib.id))?;
+        entry.libraries.push(library::Library {
+            id: lib.id.clone(),
+            keys: library::seal_for_entry(&entry, &key)?,
+            readers: lib.readers.clone(),
+            created: lib.created,
+        });
+    }
     let signed = identity::sign_recovery(entry, &root, &recovery)?;
     publish(dirs, &signed).await?;
     keys.set(ROOT, &identity::encode_secret(&root))?;

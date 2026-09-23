@@ -117,6 +117,7 @@ async fn encrypted_remote_end_to_end() {
         release_pub: None,
         web_dir: None,
         photos: None,
+        library: None,
         domain: None,
         oidc: None,
     })
