@@ -29,6 +29,7 @@ in
       wants = [ "network-online.target" ];
       environment = {
         TRANSCODE_BIND = "127.0.0.1:${toString port}";
+        TRANSCODE_PLAIN_BIND = "127.0.0.1:${toString (port + 1)}";
         TRANSCODE_DIR = "/run/dd-transcode";
         TRANSCODE_FFMPEG = "${pkgs.ffmpeg-headless}/bin/ffmpeg";
       };
@@ -48,7 +49,8 @@ in
       };
     };
 
-    # reached through the gate's host, by a signed-in member only
+    # reached through the gate's host, by a signed-in member only; the plain
+    # listener (port + 1) is for ffmpeg and is proxied by nothing
     services.nginx.virtualHosts."files.${base}".locations."/_dd/transcode/" = {
       proxyPass = "http://127.0.0.1:${toString port}/";
       extraConfig = ''
