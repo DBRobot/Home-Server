@@ -12,7 +12,7 @@ use ente::LoginParams;
 use vault::Vault;
 use zeroize::Zeroizing;
 
-const SERVICE: &str = "distributed-datacenter";
+const SERVICE: &str = "commonty";
 /// DD_KEYRING names a different credential-store service: a second "device"
 /// on one machine. DD_KEYRING_FILE swaps the OS store for a file - tests.
 fn service() -> String {
@@ -36,7 +36,7 @@ const DEFAULT_DIRECTORIES: [&str; 2] = [
 const USER: &str = "user";
 
 #[derive(Parser)]
-#[command(name = "dd", about = "distributed datacenter client")]
+#[command(name = "dd", about = "the commonty client")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

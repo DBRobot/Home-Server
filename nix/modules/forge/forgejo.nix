@@ -37,7 +37,7 @@ in
       database.type = "postgres"; # the instance ente already runs; socket auth
       lfs.enable = true;
       settings = {
-        DEFAULT.APP_NAME = "Distributed Datacenter";
+        DEFAULT.APP_NAME = "Commonty";
         server = {
           DOMAIN = host;
           ROOT_URL = "https://${host}/";
@@ -85,7 +85,7 @@ in
           # workflows; this is where a bare one would be looked up
           DEFAULT_ACTIONS_URL = "github";
         };
-        "ui.meta".DESCRIPTION = "git for the distributed datacenter";
+        "ui.meta".DESCRIPTION = "git for commonty";
         other.SHOW_FOOTER_VERSION = false;
       };
     };
