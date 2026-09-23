@@ -7,6 +7,7 @@
   imports = [
     ./_sops.nix
     ../modules/library/libraries.nix
+    ../modules/library/transcode.nix
   ];
   sops.secrets.library-key-id = { };
   sops.secrets.library-key-secret = { };
@@ -18,4 +19,5 @@
     enable = true;
     keyFile = config.sops.templates."library-key.env".path;
   };
+  dd.transcode.enable = true;
 }

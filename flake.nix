@@ -41,6 +41,7 @@
         "members-runner"
         "games"
         "forge"
+        "transcode"
       ];
       rust =
         let
@@ -155,6 +156,7 @@
             agent = crateSrc "agent" [ "box/release" ];
             verify = crateSrc "verify" [ "box/verify" ];
             games = crateSrc "games" [ "box/games" ];
+            transcode = crateSrc "transcode" [ "box/transcode" ];
             web = crateSrc "web" [ "client/web" ];
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
@@ -245,6 +247,9 @@
           verify = crate "verify" sources.verify "-p verify";
           # the manager behind the Games tile (modules/games.nix)
           games = crate "dd-games" sources.games "-p games";
+          # one file, one viewer, in memory: the compute side of the
+          # encrypted libraries (modules/library/transcode.nix)
+          transcode = crate "dd-transcode" sources.transcode "-p transcode";
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''

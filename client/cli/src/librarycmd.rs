@@ -22,7 +22,7 @@ pub enum LibraryCmd {
     List,
     /// What a library holds
     Ls { library: String },
-    /// A file into a library, under a name (default: the file's name)
+    /// A file into a library, under a name (default: the file's name); `-` reads stdin
     Put {
         library: String,
         file: PathBuf,
@@ -270,25 +270,46 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default()
             });
-            let data =
-                std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+            if name.is_empty() {
+                bail!("a file from stdin needs a name: --as <name>");
+            }
+            // streamed a chunk at a time: a film does not fit in memory, and
+            // `-` lets a copy come in over a pipe (ssh box cat ...)
+            let mut src: Box<dyn std::io::Read> = if file.as_os_str() == "-" {
+                Box::new(std::io::stdin())
+            } else {
+                Box::new(
+                    std::fs::File::open(&file)
+                        .with_context(|| format!("opening {}", file.display()))?,
+                )
+            };
             let file_key = library::random_key();
             let id = library::random_id();
             let mut n = 0u64;
-            for chunk in data.chunks(library::CHUNK) {
+            let mut size = 0u64;
+            let mut buf = vec![0u8; library::CHUNK];
+            loop {
+                let got = read_full(&mut src, &mut buf)?;
+                if got == 0 && n > 0 {
+                    break;
+                }
                 gate.store(
                     &library::chunk_object(&id, n),
-                    library::seal_chunk(&file_key, n, chunk)?,
+                    library::seal_chunk(&file_key, n, &buf[..got])?,
                 )
                 .await?;
                 n += 1;
-                eprint!("\r{}: chunk {n}", name);
+                size += got as u64;
+                eprint!("\r{name}: chunk {n} ({} MiB)", size >> 20);
+                if got < library::CHUNK {
+                    break;
+                }
             }
             eprintln!();
             let rec = Record {
                 id: id.clone(),
                 name: name.clone(),
-                size: data.len() as u64,
+                size,
                 chunks: n,
                 key: library::encode_key(&file_key),
                 modified: identity::now(),
@@ -298,7 +319,7 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                 library::seal_record(&key, &rec)?,
             )
             .await?;
-            println!("{name}: {} bytes in {n} chunk(s), record {id}", data.len());
+            println!("{name}: {size} bytes in {n} chunk(s), record {id}");
         }
         LibraryCmd::Get { library, name, out } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
@@ -335,6 +356,20 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
         }
     }
     Ok(())
+}
+
+/// as much of `buf` as the reader gives before it ends
+fn read_full(r: &mut dyn std::io::Read, buf: &mut [u8]) -> Result<usize> {
+    let mut at = 0;
+    while at < buf.len() {
+        match r.read(&mut buf[at..]) {
+            Ok(0) => break,
+            Ok(k) => at += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(at)
 }
 
 async fn pick(

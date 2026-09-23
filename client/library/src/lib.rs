@@ -97,6 +97,41 @@ pub fn open_with(secret_ed25519: &ed25519_dalek::SigningKey, sealed_b64: &str) -
 
 use sha2::Digest as _;
 
+/// A fresh x25519 pair for a box that will do one job on one file: the
+/// client seals the file key to `public`, the box opens it with `secret`
+/// and forgets both when the job ends. Nothing about the library is ever
+/// sealed this way, only a file key, for a session.
+pub fn ephemeral() -> (String, Zeroizing<[u8; 32]>) {
+    let mut sk = Zeroizing::new([0u8; 32]);
+    fill(&mut sk[..]);
+    let secret = crypto_box::SecretKey::from(*sk);
+    (B64.encode(secret.public_key().as_bytes()), sk)
+}
+
+pub fn seal_to_x25519(public_b64: &str, secret: &[u8]) -> Result<String> {
+    let b = B64
+        .decode(public_b64)
+        .map_err(|e| Error::Key(e.to_string()))?;
+    let arr: [u8; 32] = b[..]
+        .try_into()
+        .map_err(|_| Error::Key("x25519 key is not 32 bytes".into()))?;
+    let pk = crypto_box::PublicKey::from(arr);
+    let sealed = pk.seal(&mut rand_core(), secret).map_err(|_| Error::Aead)?;
+    Ok(B64.encode(sealed))
+}
+
+pub fn open_x25519(secret: &[u8; 32], sealed_b64: &str) -> Result<Key> {
+    let sk = crypto_box::SecretKey::from(*secret);
+    let sealed = B64
+        .decode(sealed_b64)
+        .map_err(|e| Error::Key(e.to_string()))?;
+    let opened = sk.unseal(&sealed).map_err(|_| Error::Sealed)?;
+    let arr: [u8; 32] = opened[..]
+        .try_into()
+        .map_err(|_| Error::Key("sealed key is not 32 bytes".into()))?;
+    Ok(Zeroizing::new(arr))
+}
+
 fn rand_core() -> Urandom {
     Urandom
 }
@@ -359,6 +394,16 @@ mod tests {
             open_library(&lib, None, Some(&stranger)),
             Err(Error::Sealed)
         ));
+    }
+
+    #[test]
+    fn a_file_key_sealed_to_a_box_for_one_job() {
+        let (public, secret) = ephemeral();
+        let fk = random_key();
+        let sealed = seal_to_x25519(&public, &fk[..]).unwrap();
+        assert_eq!(&open_x25519(&secret, &sealed).unwrap()[..], &fk[..]);
+        let (_, other) = ephemeral();
+        assert!(open_x25519(&other, &sealed).is_err());
     }
 
     #[test]
