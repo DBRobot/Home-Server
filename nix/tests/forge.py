@@ -40,3 +40,16 @@ p = json.loads(prot)
 assert p["enable_status_check"], p
 assert any("vm_tests (games)" in c for c in p["status_check_contexts"]), p["status_check_contexts"]
 assert p["required_approvals"] == 0
+
+# the repo's DD_CI secret exists (its value cannot be read back)
+secrets = box.succeed(
+    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/repos/%s/Home-Server/actions/secrets"
+    % (nix["admin"], nix["port"], nix["admin"])
+)
+assert '"name":"DD_CI"' in secrets, secrets
+
+# the cancel route: the wrong secret is a 404, the right one reaches the
+# forge (a run that does not exist answers 404 there, which comes back as 502)
+box.wait_for_open_port(3003)
+box.succeed("test $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-DD-CI: wrong' http://127.0.0.1:3003/_dd/ci/cancel/1) = 404")
+box.succeed("test $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-DD-CI: test-ci-secret' http://127.0.0.1:3003/_dd/ci/cancel/1) = 502")

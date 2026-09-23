@@ -22,3 +22,7 @@ else
   echo "$rule" | as_admin -X POST -H 'content-type: application/json' -d @- $api/repos/$ADMIN/Home-Server/branch_protections >/dev/null
   echo "main protection created"
 fi
+# the ci secret the repo's jobs show ci-cancel.py: the value on this box,
+# set again each run (the api does not read it back)
+printf '{"data":"%s"}' "$(tr -d '\n' < "$CI_SECRET_FILE")" | as_admin -X PUT -H 'content-type: application/json' -d @- $api/repos/$ADMIN/Home-Server/actions/secrets/DD_CI >/dev/null
+echo "ci secret set"

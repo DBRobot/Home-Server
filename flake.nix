@@ -42,32 +42,7 @@
         "games"
         "forge"
       ];
-    in
-    {
-      # `nix develop` drops you into a shell with the rust toolchain on PATH.
-      # Nothing is installed globally and any machine cloning this repo gets
-      # exactly these versions.
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.rust-analyzer # editor: completion, jump to definition
-          pkgs.clippy # linter that teaches you the language
-          pkgs.rustfmt
-          pkgs.pkg-config # crates with C dependencies need this to find them
-          pkgs.sops # `dd secret run -- ...` runs this
-          pkgs.age
-        ];
-        RUST_BACKTRACE = "1";
-      };
-
-      # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
-      # fetched by hash from Cargo.lock, so the binary is as reproducible as
-      # the nixos closure. crane builds the dependencies as their own
-      # derivation, so a change to our code costs our code's compile, not
-      # the three hundred crates under it. The tests ran already in ci's
-      # rust job on this same source; no second run in here.
-      packages.${system} =
+      rust =
         let
           craneLib = crane.mkLib pkgs;
           # cargo sources, plus the pages' templates, stylesheets, scripts
@@ -98,9 +73,11 @@
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
-          wasmToolchain = (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.minimal.override {
-            targets = [ "wasm32-unknown-unknown" ];
-          };
+          wasmToolchain =
+            (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.minimal.override
+              {
+                targets = [ "wasm32-unknown-unknown" ];
+              };
           craneWasm = craneLib.overrideToolchain wasmToolchain;
           wasmCommon = {
             inherit src;
@@ -130,13 +107,34 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
             doCheck = false;
           };
-          cargoArtifacts = craneLib.buildDepsOnly (common // { pname = "dd-deps"; version = "0.1.0"; });
-          crate = pname: cargoExtraArgs:
+          # the dependencies for the whole workspace: what the checks
+          # (fmt, clippy, tests) build on
+          cargoArtifacts = craneLib.buildDepsOnly (
+            common
+            // {
+              pname = "dd-deps";
+              version = "0.1.0";
+            }
+          );
+          # and one dependency build per binary, with that binary's own
+          # `-p`: cargo unifies features per package set, so a cache built
+          # for the whole workspace does not match `-p dd` and every run
+          # recompiled rustic and its friends only to throw them away
+          crate =
+            pname: cargoExtraArgs:
             craneLib.buildPackage (
               common
               // {
-                inherit pname cargoArtifacts cargoExtraArgs;
+                inherit pname cargoExtraArgs;
                 version = "0.1.0";
+                cargoArtifacts = craneLib.buildDepsOnly (
+                  common
+                  // {
+                    inherit cargoExtraArgs;
+                    pname = "${pname}-deps";
+                    version = "0.1.0";
+                  }
+                );
               }
             );
         in
@@ -160,7 +158,69 @@
             mkdir -p $out
             wasm-bindgen --target web --no-typescript --out-dir $out ${wasmBuild}/lib/dd_web.wasm
           '';
+
+          # the checks, on the same compiled artifacts as the binaries: fmt
+          # and clippy in seconds, the tests once, all cached by content and
+          # shared between the runner boxes through the bucket. ci builds
+          # these instead of running cargo a second and third time.
+          fmt = craneLib.cargoFmt {
+            inherit src;
+            pname = "dd";
+            version = "0.1.0";
+          };
+          clippy = craneLib.cargoClippy (
+            common
+            // {
+              inherit cargoArtifacts;
+              pname = "dd";
+              version = "0.1.0";
+              cargoClippyExtraArgs = "--all-targets -- -D warnings";
+            }
+          );
+          tests = craneLib.cargoTest (
+            common
+            // {
+              inherit cargoArtifacts;
+              pname = "dd";
+              version = "0.1.0";
+              # the e2e tests spawn verifiers on localhost and run git
+              nativeBuildInputs = [
+                pkgs.pkg-config
+                pkgs.gitMinimal
+              ];
+            }
+          );
         };
+    in
+    {
+      # `nix develop` drops you into a shell with the rust toolchain on PATH.
+      # Nothing is installed globally and any machine cloning this repo gets
+      # exactly these versions.
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.rust-analyzer # editor: completion, jump to definition
+          pkgs.clippy # linter that teaches you the language
+          pkgs.rustfmt
+          pkgs.pkg-config # crates with C dependencies need this to find them
+          pkgs.sops # `dd secret run -- ...` runs this
+          pkgs.age
+        ];
+        RUST_BACKTRACE = "1";
+      };
+
+      # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
+      # fetched by hash from Cargo.lock, so the binary is as reproducible as
+      # the nixos closure. crane builds the dependencies as their own
+      # derivation, so a change to our code costs our code's compile, not
+      # the three hundred crates under it. The tests ran already in ci's
+      # rust job on this same source; no second run in here.
+      packages.${system} = builtins.removeAttrs rust [
+        "fmt"
+        "clippy"
+        "tests"
+      ];
 
       # Boxes booted as vms and driven through the failure cases, so the
       # modules the real hosts import are proven before a host sees them.
@@ -187,6 +247,7 @@
         }
         // nixpkgs.lib.genAttrs vmTests vm
         // {
+          inherit (rust) fmt clippy tests;
           placement = import ./nix/tests/placement.nix args;
           ci = import ./nix/tests/ci.nix (args // { inherit vmTests; });
           boxes = import ./nix/tests/boxes.nix args;
@@ -213,18 +274,16 @@
           storage = lib.filterAttrs (_: b: builtins.elem "storage" b.roles) boxes;
           # the garage cluster: every storage box, each told about the others
           # whose ids are known (a box's id exists once it has started once)
-          garageOf =
-            name: box:
-            {
-              dd.garage = {
-                zone = box.regionId;
-                inherit (box.garage) capacity dataDir;
-                publicAddr = "${box.tailnet}:3901";
-                peers = lib.mapAttrsToList (_: b: "${b.garage.id}@${b.tailnet}:3901") (
-                  lib.filterAttrs (n: b: n != name && b.garage ? id) storage
-                );
-              };
+          garageOf = name: box: {
+            dd.garage = {
+              zone = box.regionId;
+              inherit (box.garage) capacity dataDir;
+              publicAddr = "${box.tailnet}:3901";
+              peers = lib.mapAttrsToList (_: b: "${b.garage.id}@${b.tailnet}:3901") (
+                lib.filterAttrs (n: b: n != name && b.garage ? id) storage
+              );
             };
+          };
           # closures come from the nix-cache bucket in the garage cluster:
           # through the box's own garage, or a storage box's over the tailnet
           cacheOf =

@@ -12,6 +12,11 @@ name: entry_point
 on:
   pull_request:
 
+# one run per pull request: a new push cancels the run of the push before it
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   files_modified:
     runs-on: nix
@@ -54,8 +59,10 @@ jobs:
   # Always called; each leaf skips itself when nothing relevant changed. A
   # skipped leaf still reports, which a required check needs - a skipped
   # caller would leave the leaves unreported and the merge blocked forever.
+  # the rust checks first: a formatting slip should cost a minute, not
+  # every box building and every vm booting
   nix_checks:
-    needs: files_modified
+    needs: [files_modified, rust_checks]
     uses: ./.forgejo/workflows/nix_checks.yml
     with:
       run: ${{ needs.files_modified.outputs.nix == 'true' }}
