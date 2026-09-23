@@ -16,7 +16,7 @@ use clap::Subcommand;
 
 /// keyring account holding the release key, base64
 const ACCOUNT: &str = "release-key";
-pub const DEFAULT_URL: &str = "https://git.distributed-datacenter.duckdns.org/david/Home-Server/raw/branch/releases/current.json";
+pub const DEFAULT_URL: &str = "https://git.commonty.org/david/Home-Server/raw/branch/releases/current.json";
 /// the nix-cache bucket, through node1's garage over the tailnet
 const DEFAULT_CACHE: &str =
     "s3://nix-cache?endpoint=100.95.31.105:3900&scheme=http&region=us-east-1";

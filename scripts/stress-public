@@ -4,14 +4,20 @@
 # PASS or FAIL; the script fails if any does. Run it from outside the
 # tailnet (a phone's hotspot, a vps) after every change to the public face.
 #
-#   scripts/stress-public [domain]
+#   scripts/stress-public [domain] [address]
+#
+# The address is what the name says unless given: a tailnet member's
+# resolver answers with the tailnet address, so from one of those give the
+# public address and every request goes there by name.
 set -u
-B=${1:-distributed-datacenter.duckdns.org}
-ip=$(dig +short home.$B A | tail -1)
+B=${1:-commonty.org}
+ip=${2:-$(dig +short home.$B A | tail -1)}
 fails=0
 pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; fails=$((fails + 1)); }
-code() { curl -s -o /dev/null -m "${3:-10}" -w '%{http_code}' "${@:4}" "$1"; }
+# --resolve for the host in a url, so the name is sent but the address is ours
+at() { h=$(sed -E 's#^https?://([^/]+).*#\1#' <<<"$1"); echo "--resolve $h:443:$ip --resolve $h:80:$ip"; }
+code() { curl -s -o /dev/null -m "${3:-10}" -w '%{http_code}' $(at "$1") "${@:4}" "$1"; }
 
 echo "== $B is $ip"
 
@@ -34,7 +40,7 @@ for h in home accounts; do
   c=$(code https://$h.$B/); [ "$c" = 200 ] || [ "$c" = 303 ] && pass "$h answers ($c)" || fail "$h: $c"
 done
 for h in photos files jellyfin llm git grafana games s3 api albums cast locker; do
-  c=$(code https://$h.$B/ 8 --resolve $h.$B:443:$ip)
+  c=$(code https://$h.$B/ 8)
   [ "$c" = 000 ] && pass "$h shut (connection closed)" || fail "$h answered $c to an outsider"
 done
 
@@ -50,7 +56,7 @@ n429=0; for i in $(seq 1 25); do [ "$(code https://home.$B/_dd/login/start 5 -X 
 
 # 6. a stranger cannot make themselves a member: sign-up gives an account
 #    with nothing, and a fake grant is refused
-r=$(curl -s -m 10 -X POST -H 'content-type: application/json' -d '{"username":"stranger-probe"}' https://home.$B/_dd/join/start)
+r=$(curl -s -m 10 $(at https://home.$B/) -X POST -H 'content-type: application/json' -d '{"username":"stranger-probe"}' https://home.$B/_dd/join/start)
 echo "$r" | grep -q '"publicKey"' && pass "sign-up hands out a ceremony (an account with nothing follows)" || fail "sign-up start: $r"
 c=$(code https://home.$B/_dd/redeem/start 10 -X POST -H 'x-dd-grant: bm9wZQ=='); [ "$c" = 400 ] || [ "$c" = 401 ] || [ "$c" = 403 ] && pass "a fake grant is refused ($c)" || fail "fake grant: $c"
 
@@ -62,9 +68,9 @@ if command -v timeout >/dev/null; then
 fi
 
 # 8. the demo: works for a stranger, and cannot write
-jar=$(mktemp); curl -s -m 10 -c "$jar" -o /dev/null -L https://home.$B/_dd/demo
+jar=$(mktemp); curl -s -m 10 $(at https://home.$B/) -c "$jar" -o /dev/null -L https://home.$B/_dd/demo
 [ "$(code https://home.$B/_dd/home 10 -b "$jar")" = 200 ] && pass "the demo signs in" || fail "the demo does not sign in"
-c=$(code https://games.$B/create/valheim 8 -b "$jar" -X POST --resolve games.$B:443:$ip); [ "$c" = 000 ] && pass "the demo cannot reach games from outside (tailnet-only)" || fail "demo reached games from outside: $c"
+c=$(code https://games.$B/create/valheim 8 -b "$jar" -X POST); [ "$c" = 000 ] && pass "the demo cannot reach games from outside (tailnet-only)" || fail "demo reached games from outside: $c"
 rm -f "$jar"
 
 echo; [ $fails = 0 ] && echo "all passed" || echo "$fails FAILED"

@@ -7,34 +7,32 @@
     ../modules/gate/acme.nix
     ../modules/gate/public.nix
   ];
-  # the front door on the open internet: off until the house has a line and
-  # a forward for 80 and 443 to this box (dd box public). Off, the name
-  # points at this box's tailnet address, kept so by the same unit.
+  # the front door on the open internet: a Cloudflare tunnel this box opens
+  # outward (the house line is carrier nat; nothing can be forwarded here).
+  # Off, the names point at this box's tailnet address and no outsider is
+  # answered; the same unit keeps the records either way.
   dd.public = {
     enable = true;
-    duckdnsDomain = lib.head (lib.splitString "." config.dd.domain);
-    tokenFile = config.sops.templates."duckdns.env".path;
+    tunnel = "d0534bff-f478-48ab-a949-65e2e3c14c39";
+    credentialsFile = config.sops.secrets.cloudflared-credentials.path;
+    tokenFile = config.sops.templates."cloudflare.env".path;
   };
   dd.verify.role = "full";
   services.tailscale.permitCertUid = "nginx"; # so nginx can fetch *.ts.net certs without root
 
-  sops.secrets.duckdns-token = { };
+  sops.secrets.cloudflare-token = { };
+  sops.secrets.cloudflared-credentials = { }; # systemd hands it to cloudflared as a credential
   # read by the verifier's per-box oidc issuer for jellyfin; the seed script
   # in modules/jellyfin.nix runs as root
   sops.secrets.jellyfin-oauth-secret.owner = "dd-verify";
-  sops.templates."duckdns.env".content = ''
-    DUCKDNS_TOKEN=${config.sops.placeholder.duckdns-token}
+  sops.templates."cloudflare.env".content = ''
+    CF_DNS_API_TOKEN=${config.sops.placeholder.cloudflare-token}
   '';
 
-  # the bare domain: no certificate covers it (duckdns allows one TXT record,
-  # the wildcard has it), so plain http answers with where the front door is
+  # the bare domain: where the front door is
   services.nginx.virtualHosts.${config.dd.domain} = {
-    listen = [
-      {
-        addr = "0.0.0.0";
-        port = 80;
-      }
-    ];
+    forceSSL = true;
+    useACMEHost = config.dd.domain;
     locations."/".return = "301 https://home.${config.dd.domain}$request_uri";
   };
 

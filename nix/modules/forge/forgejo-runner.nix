@@ -2,6 +2,7 @@
   config,
   pkgs,
   lib,
+  ddScript,
   ...
 }:
 let
@@ -76,11 +77,20 @@ in
     };
     users.groups.forgejo-runner = { };
     # (the nixos module registers again by itself when the token or the
-    # labels change, so a new scope reaches the forge on the next start)
+    # labels change, so a new scope reaches the forge on the next start; a
+    # changed address is ours to notice, runner-address.sh)
     systemd.services."gitea-runner-${name}".serviceConfig = {
       DynamicUser = lib.mkForce false;
       User = lib.mkForce "forgejo-runner";
       Group = "forgejo-runner";
+      ExecStartPre = lib.mkBefore [
+        (pkgs.writeShellScript "runner-address" (
+          ddScript ./runner-address.sh {
+            NAME = name;
+            URL = "https://git.${base}";
+          }
+        ))
+      ];
     };
 
     sops.secrets.forgejo-runner-token = { };

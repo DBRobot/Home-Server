@@ -21,15 +21,15 @@ fn service() -> String {
 /// The archive password. Separate again: it decrypts old computers, not
 /// photos, and `dd lock` should be able to forget one without the other.
 const ARCHIVE: &str = "archive";
-const DEFAULT_ENTE: &str = "https://api.distributed-datacenter.duckdns.org";
-const DEFAULT_IMAGES: &str = "https://files.distributed-datacenter.duckdns.org/images/";
+const DEFAULT_ENTE: &str = "https://api.commonty.org";
+const DEFAULT_IMAGES: &str = "https://files.commonty.org/images/";
 /// Any browser-facing host does; the session cookie covers the whole domain.
-const DEFAULT_ENROL: &str = "https://files.distributed-datacenter.duckdns.org/_dd/enrol";
+const DEFAULT_ENROL: &str = "https://files.commonty.org/_dd/enrol";
 /// Where a person's signed entry lives. Any box can hold one; a client that
 /// names several sees whether they agree. node2 has no public name yet, so
 /// its copy is reachable on the tailnet only.
 const DEFAULT_DIRECTORIES: [&str; 2] = [
-    "https://files.distributed-datacenter.duckdns.org/_dd/directory",
+    "https://files.commonty.org/_dd/directory",
     "http://100.95.10.10:4181/_dd/directory",
 ];
 /// keyring account holding the name the device key signs for
@@ -273,10 +273,10 @@ enum BoxCmd {
         #[arg(long)]
         private: bool,
     },
-    /// Can this box be the front door? Asks the box what the world sees it
-    /// as and what its router says its outside address is: the same, and a
-    /// port forward will work; different, and the line is behind carrier
-    /// nat, where no forward can reach it and the plan is a relay instead.
+    /// What the world sees this box as. The front door is a tunnel the box
+    /// opens outward, so this only says whether a direct forward could ever
+    /// work here too: a public address on the router, yes; carrier nat
+    /// (a shared address, as Starry's blocks are), never.
     Public { name: String },
 }
 
@@ -784,11 +784,11 @@ async fn main() -> Result<()> {
                     println!("the box cannot reach the internet: nothing to decide yet");
                 } else if private(seen) {
                     println!(
-                        "the world sees a private address: carrier nat. No port forward will reach this box; the front door needs a relay."
+                        "the world sees a private address: carrier nat. No forward will ever reach this box; the front door stays a tunnel."
                     );
                 } else {
                     println!(
-                        "the world sees {seen}. If the router's WAN page shows the same address, forward tcp 80 and 443 to this box and set dd.public.enable; if it shows a 100.64.x.x or 10.x address, that is carrier nat and the front door needs a relay."
+                        "the world sees {seen}. The front door is a tunnel either way; a direct forward would also work only if the router's WAN page shows this same address and the block is not a carrier's shared pool (check the address's owner)."
                     );
                 }
             }
