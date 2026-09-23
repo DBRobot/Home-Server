@@ -3,10 +3,10 @@ let
   base = config.dd.domain;
 in
 {
-  # One wildcard cert for every subdomain. DNS-01 needs no inbound ports,
-  # which is why nothing here opens 80/443 - tailscale0 is already trusted.
-  # extraDomainNames must stay empty: duckdns allows a single TXT record, so a
-  # cert covering both *.domain and domain deadlocks its own challenges.
+  # One wildcard cert for every subdomain and the bare name. DNS-01 needs no
+  # inbound ports, which is why nothing here opens 80/443 - tailscale0 is
+  # already trusted. The challenge writes a TXT record at Cloudflare with the
+  # same token the front door uses.
   security.acme = {
     acceptTerms = true;
     # The role account, not a personal address. This one genuinely cannot come
@@ -17,8 +17,9 @@ in
     defaults.email = "distributed.datacenter@gmail.com";
     certs.${base} = {
       domain = "*.${base}";
-      dnsProvider = "duckdns";
-      environmentFile = config.sops.templates."duckdns.env".path;
+      extraDomainNames = [ base ];
+      dnsProvider = "cloudflare";
+      environmentFile = config.sops.templates."cloudflare.env".path;
       # a group rather than the nginx user: kanidm once read these too, and
       # the next service that terminates its own tls will again
       group = "acmecerts";

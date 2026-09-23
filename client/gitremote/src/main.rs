@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 const SERVICE: &str = "distributed-datacenter";
 const DEFAULT_DIRECTORIES: [&str; 2] = [
-    "https://files.distributed-datacenter.duckdns.org/_dd/directory",
+    "https://files.commonty.org/_dd/directory",
     "http://100.95.10.10:4181/_dd/directory",
 ];
 

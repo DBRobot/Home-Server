@@ -1,9 +1,16 @@
-# The front door on the open internet, or not. Off, the fleet is reachable
-# on the tailnet only and the name points at the gateway's tailnet address.
-# On, the name points at the box's public address (kept current), 80 and
-# 443 open on the box's other interfaces, and only the hosts listed here
-# answer there: the rest stay tailnet-only however the name resolves,
+# The front door on the open internet, or not. The house line is carrier
+# nat, so nothing can be forwarded to this box: the door is a Cloudflare
+# tunnel this box opens outward, and only the hosts listed here are put
+# behind it. Off, the fleet's names point at the gateway's tailnet address
+# and nothing answers an outsider at all. On, `home` and `accounts` are
+# proxied names at Cloudflare that land on a listener nginx knows is the
+# outside; every other host stays tailnet-only however a name resolves,
 # because nginx is told which server names take a public connection.
+#
+# What Cloudflare sees on the way through: the sign-up and sign-in pages,
+# passkey ceremonies (a public key and a signature, nothing reusable), and
+# the session for those two hosts. That is the plaintext label these two
+# carry; nothing else passes there.
 {
   config,
   pkgs,
@@ -13,6 +20,8 @@
 let
   cfg = config.dd.public;
   base = config.dd.domain;
+  # where the tunnel lands: an nginx listener that only cloudflared reaches
+  tunnelPort = 8443;
 in
 {
   options.dd.public = {
@@ -25,25 +34,27 @@ in
       ];
       description = "the subdomains that answer a connection from outside the tailnet: the gate's own pages (sign-in, sign-up, the demo) and what they need. Everything else is tailnet-only.";
     };
-    duckdnsDomain = lib.mkOption {
+    tunnel = lib.mkOption {
       type = lib.types.str;
-      description = "the duckdns name, without .duckdns.org";
+      description = "the Cloudflare tunnel's id, made once through the api; its credentials are in credentialsFile";
+    };
+    credentialsFile = lib.mkOption {
+      type = lib.types.path;
+      description = "cloudflared's credentials json for the tunnel (AccountTag, TunnelSecret, TunnelID)";
     };
     tokenFile = lib.mkOption {
       type = lib.types.path;
-      description = "file holding DUCKDNS_TOKEN";
+      description = "file holding CF_DNS_API_TOKEN: dns edit and zone read on the fleet's zone, tunnel edit on the account";
     };
   };
 
   config = {
-    # the tailnet's own view of the names. With the door open the name
-    # resolves to the public address for everyone, and a member's browser
-    # would knock on the public side of its own gateway and be refused for
-    # every host but the public ones. So a member asks the gateway instead:
-    # Tailscale's split DNS sends <base> to this box's tailnet address (the
-    # one setting in the admin console), and this answers every name under
-    # it with the tailnet address. Nothing else is answered or forwarded;
-    # the boxes themselves have the same answer in /etc/hosts (flake.nix).
+    # the tailnet's own view of the names. Tailscale's split DNS sends <base>
+    # to this box's tailnet address (one setting there), and this answers
+    # every name under it with the tailnet address, so a member's browser
+    # takes the tunnel to the gate and never knocks on the public side of
+    # its own gateway. Nothing else is answered or forwarded; the boxes
+    # themselves have the same answer in /etc/hosts (flake.nix).
     services.dnsmasq = {
       enable = true;
       resolveLocalQueries = false;
@@ -57,11 +68,12 @@ in
       };
     };
 
-    # the name follows the switch: the public address when on, the tailnet
-    # address when off. Every ten minutes, and at every switch, so flipping
-    # takes effect within the ttl.
+    # the names follow the switch: `*` and the bare name always point at
+    # this box's tailnet address, the public hosts are proxied names at
+    # Cloudflare while the door is open. Converged at boot and at every
+    # switch; nothing here changes on its own, so no timer.
     systemd.services.dd-dns = {
-      description = "Point the fleet's name where the front door is";
+      description = "Converge the fleet's names at Cloudflare";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -69,55 +81,56 @@ in
         Type = "oneshot";
         EnvironmentFile = cfg.tokenFile;
         DynamicUser = true;
+        ExecStart = "${pkgs.python3}/bin/python3 ${./dns.py}";
       };
-      path = [
-        pkgs.curl
-        pkgs.iproute2
-      ];
-      script = ''
-        set -euo pipefail
-        if [ "${lib.boolToString cfg.enable}" = true ]; then
-          # what the world sees this box as
-          ip=$(curl -fsS -4 --max-time 10 https://api.ipify.org)
-        else
-          ip=${lib.escapeShellArg config.dd.box.tailnet}
-        fi
-        out=$(curl -fsS --max-time 10 "https://www.duckdns.org/update?domains=${cfg.duckdnsDomain}&token=$DUCKDNS_TOKEN&ip=$ip")
-        [ "$out" = OK ] || { echo "duckdns said: $out" >&2; exit 1; }
-        echo "${base} -> $ip"
-      '';
-    };
-    systemd.timers.dd-dns = {
-      wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnBootSec = "2min";
-        OnUnitActiveSec = "10min";
+      environment = {
+        ZONE = base;
+        TAILNET = config.dd.box.tailnet;
+        TUNNEL = cfg.tunnel;
+        HOSTS = lib.concatStringsSep " " cfg.hosts;
+        PUBLIC = lib.boolToString cfg.enable;
       };
     };
 
-    # the door itself: 80 and 443 on every interface only when on (the
-    # tailnet interface is trusted already)
-    networking.firewall.allowedTCPPorts = lib.mkIf cfg.enable [
-      80
-      443
-    ];
+    # the door itself: an outbound tunnel, not an open port. Each public host
+    # is handed to nginx's tunnel listener with its own name, so the same
+    # server blocks and certificate serve both sides.
+    services.cloudflared = lib.mkIf cfg.enable {
+      enable = true;
+      tunnels.${cfg.tunnel} = {
+        credentialsFile = cfg.credentialsFile;
+        default = "http_status:404";
+        ingress = lib.genAttrs (map (h: "${h}.${base}") cfg.hosts) (host: {
+          service = "https://127.0.0.1:${toString tunnelPort}";
+          originRequest.originServerName = host;
+        });
+      };
+    };
 
-    # a connection from outside the tailnet gets only the public hosts. The
-    # map says, per connection and host, whether the door is shut; every
-    # server block checks it first (commonHttpConfig applies to all), so a
-    # public connection to a tailnet-only name gets a closed connection,
-    # not a page, and nothing behind the gate is reachable however the name
-    # resolves.
+    # A connection is inside only when it comes from the tailnet and not
+    # through the tunnel's listener. The map says, per connection and host,
+    # whether the door is shut; every server block checks it first
+    # (commonHttpConfig applies to all), so an outside connection to a
+    # tailnet-only name gets a closed connection, not a page, and nothing
+    # behind the gate is reachable however the name resolves.
     services.nginx.appendHttpConfig = lib.mkIf cfg.enable ''
         # per address: a ceremony a second, ten in hand
         limit_req_zone $binary_remote_addr zone=dd_ceremony:1m rate=1r/s;
         # and a lid on how many connections one address holds open
         limit_conn_zone $binary_remote_addr zone=dd_conn:1m;
-      geo $dd_inside {
+      geo $dd_net {
         default 0;
         100.64.0.0/10 1;
         127.0.0.0/8 1;
         ::1 1;
+      }
+      map $server_port $dd_tunnel {
+        default 0;
+        ${toString tunnelPort} 1;
+      }
+      map "$dd_tunnel:$dd_net" $dd_inside {
+        default 0;
+        "0:1" 1;
       }
       map "$dd_inside:$host" $dd_shut {
         default 1;
@@ -126,29 +139,47 @@ in
       }
     '';
     services.nginx.virtualHosts = lib.mkIf cfg.enable (
-      lib.genAttrs (map (h: "${h}.${base}") config.dd.verify.hosts) (_: {
-        extraConfig = lib.mkBefore ''
-          if ($dd_shut) { return 444; }
-          # what a public connection may send: pages and json, never a
-          # photo (uploads go to services that are not public); and a lid
-          # on how many connections one address holds open
-          client_max_body_size 1m;
-          client_body_timeout 15s;
-          client_header_timeout 15s;
-          limit_conn dd_conn 20;
-        '';
-        # the ceremonies a stranger may start: sign-up, sign-in, enrol, a
-        # code. A person clicks these a few times; a script gets told to
-        # wait. The rest of /_dd/ stays unlimited (jellyfin's sso polls it)
-        locations."~ ^/_dd/(join|login|enrol|redeem)/" = {
-          proxyPass = "http://127.0.0.1:${toString config.dd.verify.port}";
-          extraConfig = ''
-            limit_req zone=dd_ceremony burst=10 nodelay;
-            limit_req_status 429;
-            proxy_set_header X-Original-URI $request_uri;
-          '';
-        };
-      })
+      lib.genAttrs (map (h: "${h}.${base}") config.dd.verify.hosts) (
+        name:
+        let
+          isPublic = builtins.elem name (map (h: "${h}.${base}") cfg.hosts);
+        in
+        {
+          extraConfig = lib.mkBefore (
+            ''
+              if ($dd_shut) { return 444; }
+            ''
+            + lib.optionalString isPublic ''
+              # the tunnel's side of this host
+              listen 127.0.0.1:${toString tunnelPort} ssl;
+              # the visitor's own address, as Cloudflare reports it, so the
+              # limits below count visitors and not the tunnel
+              set_real_ip_from 127.0.0.1;
+              real_ip_header CF-Connecting-IP;
+              # what a public connection may send: pages and json, never a
+              # photo (uploads go to services that are not public); and a lid
+              # on how many connections one address holds open
+              client_max_body_size 1m;
+              client_body_timeout 15s;
+              client_header_timeout 15s;
+              limit_conn dd_conn 20;
+            ''
+          );
+        }
+        // lib.optionalAttrs isPublic {
+          # the ceremonies a stranger may start: sign-up, sign-in, enrol, a
+          # code. A person clicks these a few times; a script gets told to
+          # wait. The rest of /_dd/ stays unlimited (jellyfin's sso polls it)
+          locations."~ ^/_dd/(join|login|enrol|redeem)/" = {
+            proxyPass = "http://127.0.0.1:${toString config.dd.verify.port}";
+            extraConfig = ''
+              limit_req zone=dd_ceremony burst=10 nodelay;
+              limit_req_status 429;
+              proxy_set_header X-Original-URI $request_uri;
+            '';
+          };
+        }
+      )
     );
   };
 }

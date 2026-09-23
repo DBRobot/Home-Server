@@ -30,7 +30,7 @@
   # the write-ahead log of a running prometheus does not restore (segments
   # out of order); the blocks do, at the cost of the last two hours
   dd.backup.exclude = [ "/var/lib/prometheus2/data/wal" ];
-  dd.domain = "distributed-datacenter.duckdns.org";
+  dd.domain = "commonty.org";
   # every box holds a directory replica; the gateway role turns this into
   # the full verifier with the browser login
   dd.verify.role = lib.mkDefault "directory";
