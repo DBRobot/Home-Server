@@ -828,7 +828,6 @@ async fn the_demo_is_an_account_with_a_small_permission_set() {
     let tile = |name: &str, demo: Option<&str>| verify::pages::Service {
         name: name.into(),
         url: format!("https://{name}.x/"),
-        description: "d".into(),
         icon: "".into(),
         color: "#000".into(),
         demo: demo.map(String::from),
