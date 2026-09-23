@@ -16,7 +16,6 @@ in
     description = "Jobs this box runs at once. A vm test is a few vms of 1-2G each; the 14G box takes two, a 62G box more.";
   };
 
-
   config = {
     # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
     dd.box.plaintext = [ "forgejo-runner (runs contributed code)" ];
@@ -38,14 +37,14 @@ in
         # first start and keeps its own credential in its state dir after
         tokenFile = config.sops.templates."forgejo-runner.env".path;
         # nix: the job runs on a box with nix. gating: what this box builds and
-      # reports is what the fleet installs and what merges main; that is
-      # only ever a box the release signer owns (roles/runner.nix). A
-      # stranger's box, when there is one, gets a runner without the second
-      # label, a read-only cache key, and jobs whose verdicts are advisory.
-      labels = [
-        "nix:host"
-        "gating:host"
-      ];
+        # reports is what the fleet installs and what merges main; that is
+        # only ever a box the release signer owns (roles/runner.nix). A
+        # stranger's box, when there is one, gets a runner without the second
+        # label, a read-only cache key, and jobs whose verdicts are advisory.
+        labels = [
+          "nix:host"
+          "gating:host"
+        ];
         settings.runner.capacity = config.dd.runner.capacity;
         hostPackages = with pkgs; [
           bash
