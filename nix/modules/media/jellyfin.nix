@@ -75,6 +75,9 @@ in
   systemd.services.jellyfin = {
     after = [ "media-union.service" ];
     requires = [ "media-union.service" ];
+    # the sso provider's endpoint carries the fleet's name; a new name is
+    # written by the seed and read at start
+    restartTriggers = [ base ];
   };
 
   # The plugin's own config is xml in jellyfin's data dir, not nix. This

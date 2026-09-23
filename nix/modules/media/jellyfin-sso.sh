@@ -3,8 +3,17 @@
 dir=$DATA_DIR/plugins/configurations
 mkdir -p "$dir"
 cfg=$dir/SSO-Auth.xml
+want="https://jellyfin.$BASE/_dd/oidc"
 if [ -f "$cfg" ] && $GREP/bin/grep -q "<string>dd</string>" "$cfg"; then
-  echo "dd provider already present; leaving config alone"
+  # the provider is there; only its endpoint may have moved (a domain
+  # change). Everything else in the file, the account links above all,
+  # is left as it is.
+  if $GREP/bin/grep -q "<OidEndpoint>$want</OidEndpoint>" "$cfg"; then
+    echo "dd provider already present; leaving config alone"
+  else
+    $SED/bin/sed -i "s|<OidEndpoint>[^<]*</OidEndpoint>|<OidEndpoint>$want</OidEndpoint>|" "$cfg"
+    echo "dd provider endpoint moved to $want"
+  fi
   exit 0
 fi
 secret=$(cat $OAUTH_SECRET_FILE)
