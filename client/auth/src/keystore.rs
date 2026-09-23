@@ -27,8 +27,8 @@ impl OsKeyring {
 }
 
 /// the service name before the fleet was called commonty: an entry still
-/// under it is moved on first read, so nothing on a machine has to be
-/// re-made
+/// under it is copied on first read, so nothing on a machine has to be
+/// re-made; the old copy stays for a build from before the rename
 const OLD_SERVICE: &str = "distributed-datacenter";
 
 impl KeyStore for OsKeyring {
@@ -41,7 +41,6 @@ impl KeyStore for OsKeyring {
                 match old.get_password() {
                     Ok(secret) => {
                         entry.set_password(&secret)?;
-                        let _ = old.delete_credential();
                         Ok(Some(Zeroizing::new(secret)))
                     }
                     Err(keyring::Error::NoEntry) => Ok(None),
