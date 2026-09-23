@@ -516,6 +516,7 @@ mod tests {
             recovery: String::new(),
             devices: vec![],
             passkeys: vec![],
+            libraries: vec![],
             grant: Some(Grant {
                 invite: inv.clone(),
                 redeemed: 200,

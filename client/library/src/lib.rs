@@ -317,6 +317,7 @@ mod tests {
                 .collect(),
             passkeys: vec![],
             grant: None,
+            libraries: vec![],
             version: 1,
             updated: 1,
         }
