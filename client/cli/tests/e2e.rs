@@ -133,6 +133,10 @@ impl Device {
         r.out
     }
     fn dd_fails(&self, args: &[&str], containing: &str) -> String {
+        self.dd_fails_with(args, &[containing])
+    }
+    /// failed, and for one of these reasons
+    fn dd_fails_with(&self, args: &[&str], any_of: &[&str]) -> String {
         let r = self.dd(args);
         assert!(
             !r.ok,
@@ -141,8 +145,8 @@ impl Device {
             r.out
         );
         assert!(
-            r.out.contains(containing),
-            "dd {} failed for the wrong reason - wanted {containing:?} in:\n{}",
+            any_of.iter().any(|c| r.out.contains(c)),
+            "dd {} failed for the wrong reason - wanted one of {any_of:?} in:\n{}",
             args.join(" "),
             r.out
         );
@@ -1222,8 +1226,10 @@ async fn boxes_share_the_directory_and_refuse_squats() {
     .await;
     assert_eq!(entry(&fresh, "amy").await.unwrap()["entry"]["version"], 2);
 
-    // bob is born on a. the fresh box has not pulled yet, but it asks its
-    // peer before taking a new name: a stranger's bob is refused there
+    // bob is born on a. Whether the fresh box has pulled him yet is a
+    // race with its one-second pull: if it has, the cli sees the entry and
+    // refuses before asking; if not, the box asks its peer before taking a
+    // new name and answers 409. A stranger's bob is refused either way.
     let bob = Device::new();
     bob.dd_ok(&[
         "identity",
@@ -1234,7 +1240,7 @@ async fn boxes_share_the_directory_and_refuse_squats() {
         &a.directory(),
     ]);
     let sq = Device::new();
-    sq.dd_fails(
+    sq.dd_fails_with(
         &[
             "identity",
             "new",
@@ -1243,7 +1249,7 @@ async fn boxes_share_the_directory_and_refuse_squats() {
             "--directory",
             &fresh.directory(),
         ],
-        "409",
+        &["409", "already has an entry for bob"],
     );
 
     // a forged newer entry pushed straight at the fresh box
