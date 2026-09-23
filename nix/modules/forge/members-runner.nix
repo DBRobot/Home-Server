@@ -3,6 +3,7 @@
   pkgs,
   lib,
   utils,
+  ddScript,
   ...
 }:
 let
@@ -82,14 +83,24 @@ in
       # user turns that into a symlink into /var/lib/private that the host
       # runner cannot work through ("mkdir: file exists" on every job). The
       # docker group is this unit's alone; host jobs do not get it.
+      path = [ pkgs.curl ];
       serviceConfig = {
         DynamicUser = lib.mkForce false;
         User = lib.mkForce "forgejo-runner";
         Group = "forgejo-runner";
         SupplementaryGroups = [ "docker" ];
+        # the forge must answer first, and at this address (runner-address.sh)
+        TimeoutStartSec = "10min";
+        ExecStartPre = lib.mkBefore [
+          (pkgs.writeShellScript "runner-address" (
+            ddScript ./runner-address.sh {
+              NAME = name;
+              URL = "https://git.${base}";
+            }
+          ))
+        ];
       };
     };
-
 
     # What a job may reach: the internet. Docker's DOCKER-USER chain runs
     # before its own forwarding rules; established replies come back, the
