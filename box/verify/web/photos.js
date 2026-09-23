@@ -73,8 +73,24 @@ async function seed(s) {
   location.replace('/');
 }
 
+// Whatever ente's app kept from whoever was here before: gone, before
+// anything else happens. The app trusts its own storage, so a session left
+// behind on a shared machine would open the previous person's library to
+// the next, and a failed sign-in below must land on nothing, not on it.
+async function wipe() {
+  localStorage.clear();
+  sessionStorage.clear();
+  const dbs = indexedDB.databases ? await indexedDB.databases() : [{ name: 'kv' }, { name: 'files' }];
+  await Promise.all(dbs.map(d => new Promise(resolve => {
+    const r = indexedDB.deleteDatabase(d.name);
+    r.onsuccess = r.onerror = r.onblocked = () => resolve();
+  })));
+  if (window.caches) await Promise.all((await caches.keys()).map(k => caches.delete(k)));
+}
+
 async function go() {
   try {
+    await wipe();
     const user = document.querySelector('.card').dataset.user;
     const c = await fetch('/_dd/photos/config', { method: 'POST' });
     if (!c.ok) throw new Error('photos is not on this box');
