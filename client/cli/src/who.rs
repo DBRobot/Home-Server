@@ -61,6 +61,31 @@ pub fn newest(found: &[(String, Result<Option<SignedEntry>>)]) -> Option<SignedE
 /// Push to every directory. Success is every directory accepting; a partial
 /// result is reported line by line and still an error, because a directory
 /// left behind is one that will later serve a stale entry as current.
+/// every name a directory lists
+pub async fn names(dir: &str) -> Result<Vec<String>> {
+    let v: Vec<serde_json::Value> = reqwest::get(dir).await?.error_for_status()?.json().await?;
+    Ok(v.into_iter()
+        .filter_map(|l| l["name"].as_str().map(str::to_string))
+        .collect())
+}
+
+/// a library into our entry: the key was sealed already, this signs it in
+pub async fn add_library(
+    dirs: &[String],
+    name: &str,
+    root: &ed25519_dalek::SigningKey,
+    lib: identity::Library,
+) -> Result<SignedEntry> {
+    let cur = ours(dirs, name, root).await?;
+    let mut entry = cur.entry.clone();
+    entry.libraries.push(lib);
+    entry.version += 1;
+    entry.updated = identity::now();
+    let signed = identity::sign(entry, root)?;
+    publish(dirs, &signed).await?;
+    Ok(signed)
+}
+
 pub async fn publish(dirs: &[String], signed: &SignedEntry) -> Result<()> {
     let http = http()?;
     let mut failed = 0;

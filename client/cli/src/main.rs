@@ -1,4 +1,5 @@
 mod derive;
+mod librarycmd;
 mod member;
 mod release_cmd;
 mod ui;
@@ -82,6 +83,13 @@ enum Command {
         #[arg(long, default_value = DEFAULT_ENROL)]
         url: String,
         #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES)]
+        directories: Vec<String>,
+    },
+    /// Your encrypted libraries: files and media no box can read.
+    Library {
+        #[command(subcommand)]
+        cmd: librarycmd::LibraryCmd,
+        #[arg(long = "directory", default_values = DEFAULT_DIRECTORIES, global = true)]
         directories: Vec<String>,
     },
     /// The browser passkeys in your entry.
@@ -560,6 +568,8 @@ async fn main() -> Result<()> {
             );
             println!("the browser can sign in now, on every box that has your entry.");
         }
+
+        Command::Library { cmd, directories } => librarycmd::run(cmd, &keys, &directories).await?,
 
         Command::Passkey { cmd, directories } => match cmd {
             PasskeyCmd::List => {

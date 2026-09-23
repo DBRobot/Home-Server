@@ -45,10 +45,12 @@ pub fn random_key() -> Key {
     k
 }
 
+/// 32 hex characters: a library or file id, safe in a url, a bucket key
+/// and a directory entry alike
 pub fn random_id() -> String {
     let mut b = [0u8; 16];
     fill(&mut b);
-    B64.encode(b)
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn fill(buf: &mut [u8]) {
