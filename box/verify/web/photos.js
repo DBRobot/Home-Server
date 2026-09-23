@@ -88,7 +88,8 @@ async function go() {
     try {
       session = JSON.parse(await ente_login(cfg.api, cfg.email, password));
     } catch (err) {
-      if (!/404|not found|user not/i.test(String(err))) throw err;
+      // the wasm throws an object; its text is in message
+      if (!/404|not found|user not/i.test(String((err && err.message) || err))) throw err;
       session = await askToLink(cfg, password);
     }
     await seed(session);
