@@ -8,8 +8,9 @@ inputs:
 runs:
   using: composite
   steps:
-    - if: failure()
-      shell: bash
+    # no condition here: inside a composite, failure() sees only the
+    # action's own steps. The job's `if: failure()` on the use decides.
+    - shell: bash
       run: |
         echo "this job failed; stopping run ${{ github.run_id }}"
         curl -fsS -X POST -H "X-DD-CI: ${{ inputs.secret }}" \
