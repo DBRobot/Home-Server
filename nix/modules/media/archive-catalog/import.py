@@ -26,7 +26,7 @@ COLLECTIONS = ["feature_films", "publicmovies212", "prelinger"]
 # Leading wildcards are rejected, hence the http prefix.
 LICENSES = ["http*publicdomain*", "http*creativecommons*"]
 
-UA = "node1-archive-catalog (+https://github.com/DBRobot/Home-Server)"
+UA = "node1-archive-catalog (+https://github.com/DBRobot/commonty)"
 PREFERRED = [".mp4", ".mkv", ".ogv", ".avi"]
 
 

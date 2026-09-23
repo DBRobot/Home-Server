@@ -24,6 +24,11 @@ jobs:
       - uses: https://github.com/actions/checkout@v4
       # evaluate everything, build nothing: the vm tests are built by their
       # own jobs, only when what a box runs changed
+      # the check does not write a derivation it has not seen, then asks
+      # the store for it ("path ...drv is not valid"); the packages' source
+      # trees are derivations, so they are written first
+      - name: instantiate the packages
+        run: nix path-info --derivation .#dd .#verify .#agent .#games .#web >/dev/null
       - name: flake check
         run: nix flake check --no-build --show-trace
       # the checks that are plain evaluation, no vm: seconds

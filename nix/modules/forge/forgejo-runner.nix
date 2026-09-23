@@ -78,6 +78,11 @@ in
     # (the nixos module registers again by itself when the token or the
     # labels change, so a new scope reaches the forge on the next start; a
     # changed address is ours to notice, runner-address.sh)
+    # no flake evaluation cache on a runner: it remembers derivation paths
+    # that a later collection removed and then refuses them ("path ...drv
+    # is not valid"); a job evaluates from scratch, which costs seconds
+    nix.settings.eval-cache = false;
+
     systemd.services."gitea-runner-${name}" = {
       path = [ pkgs.curl ];
       serviceConfig = {

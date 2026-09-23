@@ -170,6 +170,7 @@ in
       # moment it exists
       script = ddScript ./forgejo-setup.sh {
         ADMIN = cfg.admin;
+        REPO = config.dd.repo;
         PORT = toString port;
         CI_SECRET_FILE = cfg.ciSecretFile;
         RULE = builtins.toJSON {
@@ -214,7 +215,7 @@ in
       environment = {
         FORGE = "http://127.0.0.1:${toString port}";
         ADMIN = cfg.admin;
-        REPO = "${cfg.admin}/Home-Server";
+        REPO = config.dd.repo;
         SECRET_FILE = "%d/secret";
         LISTEN = toString cancelPort;
       };

@@ -21,7 +21,7 @@
   dd.verify.releasePublicKey = lib.fileContents ../../fleet/release.pub;
   dd.agent = {
     enable = true;
-    url = "https://git.${config.dd.domain}/david/Home-Server/raw/branch/releases/current.json";
+    url = "https://git.${config.dd.domain}/${config.dd.repo}/raw/branch/releases/current.json";
     publicKey = lib.fileContents ../../fleet/release.pub;
   };
 
@@ -31,6 +31,7 @@
   # out of order); the blocks do, at the cost of the last two hours
   dd.backup.exclude = [ "/var/lib/prometheus2/data/wal" ];
   dd.domain = "commonty.org";
+  dd.repo = "david/commonty";
   # every box holds a directory replica; the gateway role turns this into
   # the full verifier with the browser login
   dd.verify.role = lib.mkDefault "directory";
