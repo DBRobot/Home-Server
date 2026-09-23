@@ -7,6 +7,7 @@ members = [
   "box/archive",
   "client/cli",
   "client/identity",
+  "client/library",
   "client/auth",
   "client/ente",
   "client/gitremote",

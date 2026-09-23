@@ -606,6 +606,7 @@ async fn join_finish(
             added: now,
         }],
         grant,
+        libraries: vec![],
         version: 1,
         updated: now,
     };

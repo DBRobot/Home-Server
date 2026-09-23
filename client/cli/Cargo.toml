@@ -8,6 +8,7 @@ license.workspace = true
 ente = { path = "../ente" }
 auth = { path = "../auth" }
 identity = { path = "../identity" }
+library = { path = "../library" }
 release = { path = "../../box/release" }
 ed25519-dalek = "2"
 biscuit-auth = "6"
