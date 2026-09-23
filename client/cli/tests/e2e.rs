@@ -1228,7 +1228,9 @@ async fn boxes_share_the_directory_and_refuse_squats() {
     // bob is born on a. Whether the fresh box has pulled him yet is a
     // race with its one-second pull: if it has, the cli sees the entry and
     // refuses before asking; if not, the box asks its peer before taking a
-    // new name and answers 409. A stranger's bob is refused either way.
+    // new name and answers 409; and if the pull lands between the cli's
+    // look and its write, the box refuses the write as not newer. A
+    // stranger's bob is refused every way.
     let bob = Device::new();
     bob.dd_ok(&[
         "identity",
@@ -1248,7 +1250,7 @@ async fn boxes_share_the_directory_and_refuse_squats() {
             "--directory",
             &fresh.directory(),
         ],
-        &["409", "already has an entry for bob"],
+        &["409", "already has an entry for bob", "not newer"],
     );
 
     // a forged newer entry pushed straight at the fresh box
