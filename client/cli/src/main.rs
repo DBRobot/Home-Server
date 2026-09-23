@@ -197,6 +197,10 @@ enum Command {
         /// the demo's password (secrets: ente-demo-password)
         #[arg(long)]
         password: String,
+        /// the address the account had before (a domain move): signed
+        /// into with the same password and moved to --email, nothing made
+        #[arg(long)]
+        from: Option<String>,
     },
     /// What is cached on this machine.
     Status,
@@ -1178,6 +1182,7 @@ async fn main() -> Result<()> {
             email,
             code,
             password,
+            from,
         } => {
             let client = ente::client(&ente_origin)?;
             // the terminal's prompts, but the fleet's code answered for it
@@ -1227,6 +1232,24 @@ async fn main() -> Result<()> {
                     Ok(a) => {
                         eprintln!("demo account exists (user {})", a.user_id);
                         a.user_id
+                    }
+                    Err(_) if from.is_some() => {
+                        // the same account under its old address: moved,
+                        // as the photos page moves a member's (ente_adopt)
+                        let a = flow
+                            .login(ente::LoginParams {
+                                email: from.clone().unwrap(),
+                                password: Zeroizing::new(password.clone()),
+                            })
+                            .await?;
+                        client.set_auth_token(Some({
+                            use base64::Engine as _;
+                            base64::engine::general_purpose::URL_SAFE.encode(&a.secrets.token)
+                        }));
+                        client.send_otp(&email, "signup").await?;
+                        client.change_email(&email, &code).await?;
+                        eprintln!("demo account moved to {email} (user {})", a.user_id);
+                        return Ok(());
                     }
                     Err(_) => {
                         client.send_otp(&email, "signup").await?;
