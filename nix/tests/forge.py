@@ -51,5 +51,5 @@ assert '"name":"DD_CI"' in secrets, secrets
 # the cancel route: the wrong secret is a 404, the right one reaches the
 # forge (a run that does not exist answers 404 there, which comes back as 502)
 box.wait_for_open_port(3003)
-box.succeed("test $(curl -s -o /dev/null -w '%%{http_code}' -X POST -H 'X-DD-CI: wrong' http://127.0.0.1:3003/_dd/ci/cancel/1) = 404")
-box.succeed("test $(curl -s -o /dev/null -w '%%{http_code}' -X POST -H 'X-DD-CI: test-ci-secret' http://127.0.0.1:3003/_dd/ci/cancel/1) = 502")
+box.succeed("test $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-DD-CI: wrong' http://127.0.0.1:3003/_dd/ci/cancel/1) = 404")
+box.succeed("test $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-DD-CI: test-ci-secret' http://127.0.0.1:3003/_dd/ci/cancel/1) = 502")
