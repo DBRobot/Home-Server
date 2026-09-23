@@ -25,7 +25,7 @@
   dd.backup.paths = [ "/vault/forgejo" ]; # repositories, lfs, custom config; its db is in the postgres dumps
   dd.forgejo.mirrors = [
     {
-      repo = "david/Home-Server";
+      repo = config.dd.repo;
       to = "https://github.com/DBRobot/Home-Server.git";
       user = "DBRobot";
     }

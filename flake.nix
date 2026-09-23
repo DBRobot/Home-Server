@@ -45,31 +45,83 @@
       rust =
         let
           craneLib = crane.mkLib pkgs;
-          # cargo sources, plus the pages' templates, stylesheets, scripts
-          # and icons the crates include at build time
-          # only the rust: the workspace files and the box/ and client/
-          # trees, so a change under nix/ or data/ is not a rust rebuild
-          src = pkgs.lib.cleanSourceWith {
-            src = ./.;
-            filter =
-              path: type:
-              let
-                rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
-                inRust = builtins.match "(box|client)(/.*)?" rel != null;
-                top = builtins.elem rel [
-                  "Cargo.toml"
-                  "Cargo.lock"
-                ];
-              in
-              top
-              || (
-                inRust
-                && (
-                  type == "directory"
-                  || craneLib.filterCargoSources path type
-                  || builtins.match ".*/(templates|web)/.*" rel != null
-                )
-              );
+          # One source tree per binary: the workspace files, every member's
+          # manifest (cargo loads the whole workspace), and the full trees
+          # of only the crates that binary is built from - with the pages'
+          # templates, stylesheets, scripts and icons those include. The
+          # members it does not use get an empty stub target, so a change
+          # to the verifier's pages is not a games rebuild, not a games vm
+          # test, not a release of anything but the verifier. The filter
+          # step is content-addressed; the stub step only sees its output.
+          srcFor =
+            name: dirs:
+            let
+              filtered = pkgs.lib.cleanSourceWith {
+                src = ./.;
+                filter =
+                  path: type:
+                  let
+                    rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+                    top = builtins.elem rel [
+                      "Cargo.toml"
+                      "Cargo.lock"
+                    ];
+                    # the trees on the way to every member, and every manifest
+                    tree = builtins.elem rel [ "box" "client" ] || builtins.match "(box|client)/[^/]+" rel != null;
+                    manifest = builtins.match "(box|client)/[^/]+/Cargo\\.toml" rel != null;
+                    ours = builtins.any (d: rel == d || pkgs.lib.hasPrefix "${d}/" rel) dirs;
+                  in
+                  top
+                  || manifest
+                  || (type == "directory" && tree)
+                  || (
+                    ours
+                    && (
+                      type == "directory"
+                      || craneLib.filterCargoSources path type
+                      || builtins.match ".*/(templates|web)/.*" rel != null
+                    )
+                  );
+              };
+            in
+            pkgs.runCommand "src-${name}" { } ''
+              cp -r ${filtered} $out
+              chmod -R u+w $out
+              for m in $out/box/* $out/client/*; do
+                [ -f "$m/Cargo.toml" ] || continue
+                if [ ! -d "$m/src" ]; then
+                  mkdir -p "$m/src"
+                  : > "$m/src/lib.rs"
+                  echo 'fn main() {}' > "$m/src/main.rs"
+                fi
+              done
+            '';
+          # every crate: the checks (fmt, clippy, tests) build the workspace
+          src = srcFor "workspace" [
+            "box"
+            "client"
+          ];
+          # the crates behind each binary, dependencies included
+          sources = {
+            dd = srcFor "dd" [
+              "client/cli"
+              "client/gitremote"
+              "client/identity"
+              "client/auth"
+              "client/ente"
+              "box/release"
+              "box/archive"
+            ];
+            agent = srcFor "agent" [
+              "box/release"
+              "client/identity"
+            ];
+            verify = srcFor "verify" [
+              "box/verify"
+              "client/identity"
+            ];
+            games = srcFor "games" [ "box/games" ];
+            web = srcFor "web" [ "client/web" ];
           };
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
@@ -80,7 +132,7 @@
               };
           craneWasm = craneLib.overrideToolchain wasmToolchain;
           wasmCommon = {
-            inherit src;
+            src = sources.web;
             strictDeps = true;
             doCheck = false;
             CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
@@ -121,14 +173,19 @@
           # for the whole workspace does not match `-p dd` and every run
           # recompiled rustic and its friends only to throw them away
           crate =
-            pname: cargoExtraArgs:
+            pname: source: cargoExtraArgs:
+            let
+              c = common // {
+                src = source;
+              };
+            in
             craneLib.buildPackage (
-              common
+              c
               // {
                 inherit pname cargoExtraArgs;
                 version = "0.1.0";
                 cargoArtifacts = craneLib.buildDepsOnly (
-                  common
+                  c
                   // {
                     inherit cargoExtraArgs;
                     pname = "${pname}-deps";
@@ -140,18 +197,18 @@
         in
         {
           # the cli, and `git remote add origin dd::...`, which dd repo calls too
-          dd = crate "dd" "-p dd -p git-remote-dd";
+          dd = crate "dd" sources.dd "-p dd -p git-remote-dd";
           # The release agent, on every box. Server side like verify: the
           # release crate holds the file format the cli signs and this
           # binary checks, and nothing that needs a keyring.
-          agent = crate "dd-agent" "-p release";
+          agent = crate "dd-agent" sources.agent "-p release";
           # The verifier behind nginx's auth_request. Built separately from dd
           # rather than as another binary in the same derivation: this one
           # runs on a server and has no business pulling in the keyring/dbus
           # stack that the cli needs.
-          verify = crate "verify" "-p verify";
+          verify = crate "verify" sources.verify "-p verify";
           # the manager behind the Games tile (modules/games.nix)
-          games = crate "dd-games" "-p games";
+          games = crate "dd-games" sources.games "-p games";
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''

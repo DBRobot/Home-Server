@@ -19,7 +19,7 @@ box.succeed("journalctl -u forgejo-protection | grep -q 'nothing to protect'")
 # pushed to); here it is made through the api, then the protection applies
 box.succeed(
     "curl -sf -X POST -H 'X-WEBAUTH-USER: %s' -H 'content-type: application/json' "
-    "-d '{\"name\":\"Home-Server\",\"default_branch\":\"main\",\"auto_init\":true}' "
+    "-d '{\"name\":\"commonty\",\"default_branch\":\"main\",\"auto_init\":true}' "
     "http://127.0.0.1:%d/api/v1/user/repos >/dev/null" % (nix["admin"], nix["port"])
 )
 box.succeed("systemctl restart forgejo-protection.service")
@@ -32,7 +32,7 @@ assert '"is_admin":true' in users, "the admin is an admin"
 
 # main is protected, and by the whole suite
 prot = box.succeed(
-    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/repos/%s/Home-Server/branch_protections/main"
+    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/repos/%s/commonty/branch_protections/main"
     % (nix["admin"], nix["port"], nix["admin"])
 )
 import json
@@ -43,7 +43,7 @@ assert p["required_approvals"] == 0
 
 # the repo's DD_CI secret exists (its value cannot be read back)
 secrets = box.succeed(
-    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/repos/%s/Home-Server/actions/secrets"
+    "curl -sf -H 'X-WEBAUTH-USER: %s' http://127.0.0.1:%d/api/v1/repos/%s/commonty/actions/secrets"
     % (nix["admin"], nix["port"], nix["admin"])
 )
 assert '"name":"DD_CI"' in secrets, secrets

@@ -11,6 +11,7 @@
     ../modules/observe/metrics.nix
   ];
   dd.domain = "test.invalid";
+  dd.repo = "tester/commonty";
   dd.verify.role = "directory";
   dd.verify.syncSeconds = 2;
   networking.firewall.enable = false; # the test network is the only network
