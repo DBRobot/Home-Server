@@ -191,6 +191,8 @@
             inherit src;
             strictDeps = true;
             nativeBuildInputs = [ pkgs.pkg-config ];
+            # the cli's mount (dd media) links libfuse
+            buildInputs = [ pkgs.fuse3 ];
             doCheck = false;
           };
           # the dependencies for the whole workspace: what the checks
@@ -295,6 +297,7 @@
           pkgs.clippy # linter that teaches you the language
           pkgs.rustfmt
           pkgs.pkg-config # crates with C dependencies need this to find them
+          pkgs.fuse3 # the cli's mount
           pkgs.sops # `dd secret run -- ...` runs this
           pkgs.age
         ];

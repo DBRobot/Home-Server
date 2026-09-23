@@ -40,13 +40,13 @@ pub enum LibraryCmd {
 }
 
 /// what this machine can open a library with
-struct Opener {
+pub struct Opener {
     device: (String, ed25519_dalek::SigningKey),
     root: Option<ed25519_dalek::SigningKey>,
 }
 
 impl Opener {
-    fn load(keys: &auth::Store) -> Result<(Self, String, String)> {
+    pub fn load(keys: &auth::Store) -> Result<(Self, String, String)> {
         let kp = auth::device::load(keys)?.context("no device key here - `dd device show`")?;
         let user = keys
             .get(crate::USER)?
@@ -80,14 +80,14 @@ impl Opener {
 }
 
 /// the gate on the box, for one library
-struct Gate {
+pub struct Gate {
     base: String,
     token: String,
     http: reqwest::Client,
 }
 
 impl Gate {
-    fn new(files_base: &str, lib: &str, token: &str) -> Self {
+    pub fn new(files_base: &str, lib: &str, token: &str) -> Self {
         Gate {
             base: format!("{}/_dd/library/{lib}", files_base.trim_end_matches('/')),
             token: token.to_string(),
@@ -139,7 +139,7 @@ impl Gate {
         }
         Ok(ids)
     }
-    async fn fetch(&self, object: &str) -> Result<Vec<u8>> {
+    pub async fn fetch(&self, object: &str) -> Result<Vec<u8>> {
         let url = self.url(reqwest::Method::GET, object).await?;
         let r = self.http.get(url).send().await?;
         if !r.status().is_success() {
@@ -147,7 +147,7 @@ impl Gate {
         }
         Ok(r.bytes().await?.to_vec())
     }
-    async fn store(&self, object: &str, bytes: Vec<u8>) -> Result<()> {
+    pub async fn store(&self, object: &str, bytes: Vec<u8>) -> Result<()> {
         let url = self.url(reqwest::Method::PUT, object).await?;
         let r = self.http.put(url).body(bytes).send().await?;
         if !r.status().is_success() {
@@ -155,7 +155,7 @@ impl Gate {
         }
         Ok(())
     }
-    async fn records(&self, key: &library::Key) -> Result<Vec<Record>> {
+    pub async fn records(&self, key: &library::Key) -> Result<Vec<Record>> {
         let mut out = Vec::new();
         for id in self.record_ids().await? {
             let bytes = self.fetch(&library::record_object(&id)).await?;
@@ -167,7 +167,7 @@ impl Gate {
 
 /// every library this machine can open: the member's own, then those
 /// shared with them by anyone whose entry names them
-async fn openable(
+pub async fn openable(
     dirs: &[String],
     user: &str,
     opener: &Opener,
@@ -205,7 +205,7 @@ async fn openable(
     Ok(out)
 }
 
-fn files_base(dirs: &[String]) -> Result<String> {
+pub fn files_base(dirs: &[String]) -> Result<String> {
     // the gate is on the same host as the directory: https://files.<base>
     let d = dirs.first().context("no directory")?;
     Ok(d.trim_end_matches("/_dd/directory").to_string())
