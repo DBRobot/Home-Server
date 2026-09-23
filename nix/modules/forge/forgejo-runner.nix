@@ -78,18 +78,23 @@ in
     # (the nixos module registers again by itself when the token or the
     # labels change, so a new scope reaches the forge on the next start; a
     # changed address is ours to notice, runner-address.sh)
-    systemd.services."gitea-runner-${name}".serviceConfig = {
-      DynamicUser = lib.mkForce false;
-      User = lib.mkForce "forgejo-runner";
-      Group = "forgejo-runner";
-      ExecStartPre = lib.mkBefore [
-        (pkgs.writeShellScript "runner-address" (
-          ddScript ./runner-address.sh {
-            NAME = name;
-            URL = "https://git.${base}";
-          }
-        ))
-      ];
+    systemd.services."gitea-runner-${name}" = {
+      path = [ pkgs.curl ];
+      serviceConfig = {
+        DynamicUser = lib.mkForce false;
+        User = lib.mkForce "forgejo-runner";
+        Group = "forgejo-runner";
+        # the wait for the forge (its certificate arrives after a switch)
+        TimeoutStartSec = "10min";
+        ExecStartPre = lib.mkBefore [
+          (pkgs.writeShellScript "runner-address" (
+            ddScript ./runner-address.sh {
+              NAME = name;
+              URL = "https://git.${base}";
+            }
+          ))
+        ];
+      };
     };
 
     sops.secrets.forgejo-runner-token = { };

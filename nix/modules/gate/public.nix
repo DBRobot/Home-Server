@@ -65,6 +65,9 @@ in
         no-resolv = true;
         no-hosts = true;
         address = [ "/${base}/${config.dd.box.tailnet}" ];
+        # authoritative for the name: an AAAA gets "no such record", not a
+        # refusal (a resolver that asks both would fail the whole lookup)
+        local = [ "/${base}/" ];
       };
     };
 
@@ -95,6 +98,10 @@ in
     # the door itself: an outbound tunnel, not an open port. Each public host
     # is handed to nginx's tunnel listener with its own name, so the same
     # server blocks and certificate serve both sides.
+    # over tcp: quic to the edge kept dropping through the carrier's nat
+    # ("no recent network activity" every minute); http2 holds
+    systemd.services."cloudflared-tunnel-${cfg.tunnel}".environment.TUNNEL_TRANSPORT_PROTOCOL =
+      lib.mkIf cfg.enable "http2";
     services.cloudflared = lib.mkIf cfg.enable {
       enable = true;
       tunnels.${cfg.tunnel} = {
