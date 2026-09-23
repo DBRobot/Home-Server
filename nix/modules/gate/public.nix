@@ -159,6 +159,8 @@ in
             + lib.optionalString isPublic ''
               # the tunnel's side of this host
               listen 127.0.0.1:${toString tunnelPort} ssl;
+              # a visitor who typed http: Cloudflare carries it in as-is
+              if ($http_x_forwarded_proto = "http") { return 301 https://$host$request_uri; }
               # the visitor's own address, as Cloudflare reports it, so the
               # limits below count visitors and not the tunnel
               set_real_ip_from 127.0.0.1;

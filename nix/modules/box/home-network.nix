@@ -97,6 +97,18 @@ in
         };
     };
     networking.networkmanager.wifi.powersave = false;
+    # Two interfaces on one subnet: by default Linux answers ARP for the
+    # wired address from the wifi card too, so the router learns the wifi
+    # mac for it, traffic leaves by cable and returns by wifi, and every
+    # long-lived connection dies within minutes (the tunnel, tailscale's
+    # control poll, the runners). An address is answered for only on the
+    # interface that holds it; the wifi stays a warm standby.
+    boot.kernel.sysctl = {
+      "net.ipv4.conf.all.arp_ignore" = 1;
+      "net.ipv4.conf.all.arp_announce" = 2;
+      "net.ipv4.conf.default.arp_ignore" = 1;
+      "net.ipv4.conf.default.arp_announce" = 2;
+    };
     # a profile that leaves the config leaves the box: ensureProfiles only
     # writes, so without this an old profile stays active until a reboot
     systemd.services.NetworkManager-ensure-profiles.preStart =

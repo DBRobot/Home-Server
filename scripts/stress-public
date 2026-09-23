@@ -41,7 +41,9 @@ for h in home accounts; do
 done
 for h in photos files jellyfin llm git grafana games s3 api albums cast locker; do
   c=$(code https://$h.$B/ 8)
-  [ "$c" = 000 ] && pass "$h shut (connection closed)" || fail "$h answered $c to an outsider"
+  # closed by nginx, or a 403 from Cloudflare's edge for a name it has no
+  # tunnel route for: either way the box was never reached
+  [ "$c" = 000 ] || [ "$c" = 403 ] && pass "$h shut ($c)" || fail "$h answered $c to an outsider"
 done
 
 # 4. the gate's own pages: sign-in and sign-up load, nothing behind them does
@@ -70,7 +72,7 @@ fi
 # 8. the demo: works for a stranger, and cannot write
 jar=$(mktemp); curl -s -m 10 $(at https://home.$B/) -c "$jar" -o /dev/null -L https://home.$B/_dd/demo
 [ "$(code https://home.$B/_dd/home 10 -b "$jar")" = 200 ] && pass "the demo signs in" || fail "the demo does not sign in"
-c=$(code https://games.$B/create/valheim 8 -b "$jar" -X POST); [ "$c" = 000 ] && pass "the demo cannot reach games from outside (tailnet-only)" || fail "demo reached games from outside: $c"
+c=$(code https://games.$B/create/valheim 8 -b "$jar" -X POST); [ "$c" = 000 ] || [ "$c" = 403 ] && pass "the demo cannot reach games from outside (tailnet-only)" || fail "demo reached games from outside: $c"
 rm -f "$jar"
 
 echo; [ $fails = 0 ] && echo "all passed" || echo "$fails FAILED"
