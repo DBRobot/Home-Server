@@ -64,6 +64,9 @@ jobs:
   nix_checks:
     needs: [files_modified, rust_checks]
     uses: ./.forgejo/workflows/nix_checks.yml
+    # the ci secret, for stop-run: a called workflow sees no secrets but
+    # those its caller hands over
+    secrets: inherit
     with:
       run: ${{ needs.files_modified.outputs.nix == 'true' }}
       vm: ${{ needs.files_modified.outputs.vm == 'true' }}
@@ -71,5 +74,6 @@ jobs:
   rust_checks:
     needs: files_modified
     uses: ./.forgejo/workflows/rust_checks.yml
+    secrets: inherit
     with:
       run: ${{ needs.files_modified.outputs.rust == 'true' }}
