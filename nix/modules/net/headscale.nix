@@ -167,7 +167,9 @@ in
     systemd.services.dd-verify.after = [ "headscale-seed.service" ];
     systemd.services.dd-verify.wants = [ "headscale-seed.service" ];
 
-    # this box joins its own network with the key it just made
+    # this box joins its own network with the key it just made: a member's
+    # device reaching the fleet arrives here, so this end has to be on it
+    dd.net.enable = true;
     dd.net.keyFile = cfg.boxKeyFile;
     dd.net.controlUrl = cfg.url;
     systemd.services.commonty-net-up.after = [ "headscale-seed.service" ];
