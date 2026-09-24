@@ -14,9 +14,8 @@ let
   } (builtins.readFile ./archive-catalog/import.py);
 in
 {
-  # Deliberately NOT under /srv/media: the union in modules/media-tier.nix is
-  # household media, this is a public catalogue, and keeping them apart is the
-  # whole point. Its only writer is this service - there is no path by which a
+  # Deliberately NOT under /srv/media: that is the demo's film library, this
+  # is a public catalogue, and keeping them apart is the whole point. Its only writer is this service - there is no path by which a
   # user puts anything into the public library, so nothing needs policing at
   # runtime.
   users.users.archive-catalog = {

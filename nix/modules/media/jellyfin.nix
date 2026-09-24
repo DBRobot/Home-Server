@@ -7,6 +7,7 @@
 let
   base = config.dd.domain;
   host = "jellyfin.${base}";
+  library = "/srv/media";
 
   # Not in nixpkgs, and jellyfin has no plugin option, so it is fetched and
   # dropped into the plugin dir. The upstream repo is ARCHIVED - it targets
@@ -25,12 +26,20 @@ let
   };
 in
 {
-  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
-  dd.box.plaintext = [ "jellyfin (media library, per-user files)" ];
+  # what jellyfin reads is the demo's library: films that are nobody's, in
+  # a plain folder. A member's media never comes here (client/media)
+  dd.box.plaintext = [ "jellyfin (the demo's films)" ];
   services.jellyfin = {
     enable = true;
-    group = "media"; # reads the union in modules/media-tier.nix
+    group = "media";
   };
+  users.users.media = {
+    isSystemUser = true;
+    group = "media";
+  };
+  users.groups.media = { };
+  # the demo's library; jellyfin's own config names it, so the path stays
+  systemd.tmpfiles.rules = [ "d ${library} 2775 media media -" ];
 
   # Tiger Lake iris xe does several 4k transcodes at once, but only with the
   # VA-API driver present. Without it jellyfin silently falls back to software
@@ -70,11 +79,7 @@ in
     "video"
   ];
 
-  # The union is a fuse mount; jellyfin marks a library "missing" and drops its
-  # metadata if it scans while the mount is absent.
   systemd.services.jellyfin = {
-    after = [ "media-union.service" ];
-    requires = [ "media-union.service" ];
     # the sso provider's endpoint carries the fleet's name; a new name is
     # written by the seed and read at start
     restartTriggers = [ base ];
@@ -105,13 +110,13 @@ in
       RemainAfterExit = true;
     };
     script = ddScript ./jellyfin-sso.sh {
-        BASE = base;
-        DATA_DIR = config.services.jellyfin.dataDir;
-        GROUP = config.services.jellyfin.group;
-        OAUTH_SECRET_FILE = config.sops.secrets.jellyfin-oauth-secret.path;
-        GREP = pkgs.gnugrep;
-        SED = pkgs.gnused;
-      };
+      BASE = base;
+      DATA_DIR = config.services.jellyfin.dataDir;
+      GROUP = config.services.jellyfin.group;
+      OAUTH_SECRET_FILE = config.sops.secrets.jellyfin-oauth-secret.path;
+      GREP = pkgs.gnugrep;
+      SED = pkgs.gnused;
+    };
   };
 
   services.nginx.virtualHosts.${host} = {
