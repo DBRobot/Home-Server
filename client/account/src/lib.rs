@@ -180,7 +180,7 @@ pub async fn ours(
             .map(|(d, r)| match r {
                 Ok(None) => format!("{d}: no entry"),
                 Ok(Some(_)) => unreachable!(),
-                Err(e) => format!("{d}: {e}"),
+                Err(e) => format!("{d}: {e:#}"),
             })
             .collect();
         format!(
@@ -226,6 +226,33 @@ pub async fn admit(
             to: format!("device:{}", identity::fingerprint(public_key)),
             sealed: library::seal_to(public_key, &key[..])?,
         });
+    }
+    entry.version += 1;
+    entry.updated = identity::now();
+    let signed = identity::sign(entry, root)?;
+    publish(dirs, &signed).await?;
+    Ok(signed)
+}
+
+/// Remove a device, signed by the root here: it leaves the list and every
+/// library key sealed to it goes with it. What it cached it keeps, as any
+/// lost device would; a library shared with it is rotated by its owner.
+pub async fn remove_device(
+    dirs: &[String],
+    name: &str,
+    root: &ed25519_dalek::SigningKey,
+    fingerprint: &str,
+) -> Result<SignedEntry> {
+    let cur = ours(dirs, name, root).await?;
+    let mut entry = cur.entry.clone();
+    let before = entry.devices.len();
+    entry.devices.retain(|d| d.fingerprint != fingerprint);
+    if entry.devices.len() == before {
+        bail!("no device {fingerprint} in the entry");
+    }
+    let sealed_to = format!("device:{fingerprint}");
+    for lib in &mut entry.libraries {
+        lib.keys.retain(|k| k.to != sealed_to);
     }
     entry.version += 1;
     entry.updated = identity::now();

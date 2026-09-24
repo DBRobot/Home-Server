@@ -39,9 +39,22 @@ function render(st) {
     const tag = document.createElement("span");
     tag.className = "tag";
     tag.textContent = d.this ? "this device" : `added ${when(d.added)}`;
+    if (st.root && !d.this) {
+      const rm = document.createElement("button");
+      rm.className = "quiet inline";
+      rm.textContent = "Remove";
+      rm.addEventListener("click", async () => {
+        rm.disabled = true;
+        try { render(await invoke("remove_device", { fingerprint: d.fingerprint })); }
+        catch (err) { alert(String(err)); rm.disabled = false; }
+      });
+      tag.append(rm);
+    }
     li.append(tag);
     return li;
   }));
+  $("add-device").hidden = !st.root;
+  $("no-root").hidden = st.root;
   show("home");
   media();
   net();
@@ -156,6 +169,32 @@ $("name-form").addEventListener("submit", async (ev) => {
   }
 });
 $("to-signup").addEventListener("click", () => show("signup"));
+$("to-recover").addEventListener("click", () => show("recover"));
+$("recover-back").addEventListener("click", () => show("name"));
+$("recover-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("recover-error").hidden = true;
+  try {
+    const next = await invoke("recover", { name: $("recover-name").value, recovery: $("recover-key").value });
+    $("recover-key").value = "";
+    $("recovery-key").textContent = next;
+    show("recovery");
+  } catch (e) {
+    $("recover-error").textContent = String(e);
+    $("recover-error").hidden = false;
+  }
+});
+$("admit-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("admit-error").hidden = true;
+  try {
+    render(await invoke("admit_device", { publicKey: $("admit-key").value }));
+    $("admit-key").value = "";
+  } catch (e) {
+    $("admit-error").textContent = String(e);
+    $("admit-error").hidden = false;
+  }
+});
 $("signup-back").addEventListener("click", () => show("name"));
 $("signup-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();

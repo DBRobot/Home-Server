@@ -8,5 +8,5 @@ description = "A member's entry as the directories hold it: fetch, pick the newe
 [dependencies]
 identity = { path = "../identity" }
 anyhow = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "socks"] }
 serde_json = "1"

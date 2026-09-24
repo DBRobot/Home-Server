@@ -208,6 +208,71 @@ pub async fn sign_up(keys: State<'_, Keys>, name: String, code: String) -> Resul
     Ok(recovery.to_string())
 }
 
+fn root_here(keys: &Keys) -> Result<ed25519_dalek::SigningKey, String> {
+    account::load_root(&keys.0)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "the account's root key is not on this device: add devices from the one that made the account".to_string())
+}
+
+fn name_here(keys: &Keys) -> Result<String, String> {
+    keys.0
+        .get(USER)
+        .map_err(|e| e.to_string())?
+        .map(|s| s.to_string())
+        .ok_or_else(|| "no name on this device".to_string())
+}
+
+/// Add a device: its public key, as its own admit page shows it, signed
+/// into the entry by the root here; every library key is sealed to it
+#[tauri::command]
+pub async fn admit_device(keys: State<'_, Keys>, public_key: String) -> Result<Status, String> {
+    let root = root_here(&keys)?;
+    let name = name_here(&keys)?;
+    let pk = public_key.trim();
+    // a whole "dd device admit <key>" line pasted is fine too
+    let pk = pk.rsplit(' ').next().unwrap_or(pk);
+    account::admit(&dirs(), &name, &root, pk)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    status(keys).await
+}
+
+/// Remove a device by its fingerprint; not this one
+#[tauri::command]
+pub async fn remove_device(keys: State<'_, Keys>, fingerprint: String) -> Result<Status, String> {
+    let root = root_here(&keys)?;
+    let name = name_here(&keys)?;
+    let (kp, _) = auth::device::load_or_create(&keys.0).map_err(|e| e.to_string())?;
+    if identity::fingerprint(&auth::device::public_b64(&kp)) == fingerprint {
+        return Err("not this device: sign out instead".to_string());
+    }
+    account::remove_device(&dirs(), &name, &root, &fingerprint)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    status(keys).await
+}
+
+/// Every device lost: the recovery key installs a new root and a new
+/// recovery key, and this device becomes the only one. Returns the new
+/// recovery key, once.
+#[tauri::command]
+pub async fn recover(
+    keys: State<'_, Keys>,
+    name: String,
+    recovery: String,
+) -> Result<String, String> {
+    let name = name.trim().to_string();
+    if !identity::valid_name(&name) {
+        return Err("a name is lowercase letters, digits and dashes".to_string());
+    }
+    let (kp, _) = auth::device::load_or_create(&keys.0).map_err(|e| e.to_string())?;
+    let next = account::recover(&keys.0, &dirs(), &name, recovery.trim(), &kp)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    keys.0.set(USER, &name).map_err(|e| e.to_string())?;
+    Ok(next.to_string())
+}
+
 /// leave: the name goes, the device key stays (a key is cheap to keep and
 /// costly to re-admit)
 #[tauri::command]

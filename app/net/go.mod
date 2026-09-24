@@ -4,6 +4,7 @@ go 1.26.2
 
 require (
 	github.com/coder/websocket v1.8.12
+	golang.org/x/net v0.53.0
 	tailscale.com v1.98.1
 )
 
@@ -40,7 +41,6 @@ require (
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect

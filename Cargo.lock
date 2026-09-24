@@ -1325,6 +1325,7 @@ dependencies = [
  "anyhow",
  "auth",
  "directory",
+ "ed25519-dalek",
  "identity",
  "media",
  "reqwest 0.12.28",

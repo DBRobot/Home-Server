@@ -97,8 +97,11 @@ fn start(control: &str, key: &str) -> Result<Started, String> {
         return Err(st.error);
     }
     eprintln!("network: on as {}, proxy at {}", st.ip, st.proxy);
+    if std::env::var_os("COMMONTY_NET_DEBUG").is_some() {
+        eprintln!("network: proxy credential {}", st.credential);
+    }
     directory::via(Some(directory::Proxy {
-        url: format!("http://{}", st.proxy),
+        addr: st.proxy.clone(),
         user: "tsnet".to_string(),
         password: st.credential.clone(),
     }));
