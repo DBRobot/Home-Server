@@ -20,7 +20,9 @@ tauri-build = { version = "2", features = [] }
 auth = { path = "../client/auth" }
 identity = { path = "../client/identity" }
 directory = { path = "../client/directory" }
+media = { path = "../client/media" }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+tokio = { version = "1", features = ["sync"] }

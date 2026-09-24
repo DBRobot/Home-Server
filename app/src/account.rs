@@ -42,7 +42,7 @@ pub struct Status {
     pub gate: Option<String>,
 }
 
-fn dirs() -> Vec<String> {
+pub fn dirs() -> Vec<String> {
     match std::env::var("COMMONTY_DIRECTORY") {
         Ok(s) if !s.is_empty() => s.split_whitespace().map(str::to_string).collect(),
         _ => directory::DEFAULT.iter().map(|s| s.to_string()).collect(),

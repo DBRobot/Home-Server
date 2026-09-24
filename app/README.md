@@ -20,3 +20,13 @@ point it at nix's mesa:
 Milestone 1: sign in. Type a name, the app shows `dd device admit <key>`,
 run that on a machine that is already yours, and the app is a device in
 your entry with every library key sealed to it.
+
+Milestone 2: Movies & TV. Open mounts every library you can open at
+`~/Commonty` (client/media, FUSE) and starts Jellyfin on this machine
+against it, with its data in `~/.local/share/commonty/jellyfin`, then shows
+it in a window of its own, signed in. First start answers Jellyfin's setup:
+you as its one user (a random password kept in the keystore, account
+`jellyfin-password`) and the mount as one library. The packaged app brings
+its own Jellyfin (`COMMONTY_JELLYFIN`); a dev build takes the one on PATH.
+Jellyfin dies with the app; a mount left by a crash is cleared on the next
+open.
