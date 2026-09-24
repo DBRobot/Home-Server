@@ -27,10 +27,11 @@ jobs:
       # the check does not write a derivation it has not seen, then asks
       # the store for it ("path ...drv is not valid"); the packages' source
       # trees are derivations, so they are written first: every package,
-      # from the flake, so a new one cannot be left off
+      # from the flake, so a new one cannot be left off, and the workspace
+      # checks' own tree
       - name: instantiate the packages
         run: |
-          nix path-info --derivation $(nix eval --raw .#packages.x86_64-linux --apply 'ps: builtins.concatStringsSep " " (map (n: ".#" + n) (builtins.attrNames ps))') >/dev/null
+          nix path-info --derivation $(nix eval --raw .#packages.x86_64-linux --apply 'ps: builtins.concatStringsSep " " (map (n: ".#" + n) (builtins.attrNames ps))') .#checks.x86_64-linux.fmt >/dev/null
       - name: flake check
         run: nix flake check --no-build --show-trace
       # the checks that are plain evaluation, no vm: seconds
