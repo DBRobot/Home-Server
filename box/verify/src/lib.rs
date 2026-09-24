@@ -441,11 +441,32 @@ async fn enrol_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
     }
 }
 
+/// what the browser sends when it has finished making a passkey: the
+/// credential, and the public half of the key it derived from that
+/// passkey's own PRF secret, so libraries can be sealed to it
+#[derive(Deserialize)]
+struct Enrolled {
+    #[serde(flatten)]
+    credential: RegisterPublicKeyCredential,
+    /// base64 ed25519 public key; absent where the browser has no PRF
+    #[serde(default)]
+    library_key: Option<String>,
+}
+
 async fn enrol_finish(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Json(reg): Json<RegisterPublicKeyCredential>,
+    Json(body): Json<Enrolled>,
 ) -> Response {
+    let Enrolled {
+        credential: reg,
+        library_key,
+    } = body;
+    if let Some(k) = &library_key
+        && identity::decode_public(k).is_err()
+    {
+        return (StatusCode::BAD_REQUEST, "that is not a public key").into_response();
+    }
     let Some(Ceremony::Enrol { user, state }) = headers
         .get("x-dd-ceremony")
         .and_then(|v| v.to_str().ok())
@@ -483,6 +504,7 @@ async fn enrol_finish(
                 id: id.clone(),
                 cred,
                 added: identity::now(),
+                library_key: library_key.clone(),
             },
         ),
     );
@@ -573,8 +595,17 @@ async fn join_start(
 async fn join_finish(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Json(reg): Json<RegisterPublicKeyCredential>,
+    Json(body): Json<Enrolled>,
 ) -> Response {
+    let Enrolled {
+        credential: reg,
+        library_key,
+    } = body;
+    if let Some(k) = &library_key
+        && identity::decode_public(k).is_err()
+    {
+        return (StatusCode::BAD_REQUEST, "that is not a public key").into_response();
+    }
     let Some(Ceremony::Join { user, state }) = headers
         .get("x-dd-ceremony")
         .and_then(|v| v.to_str().ok())
@@ -613,6 +644,7 @@ async fn join_finish(
             id: id.clone(),
             cred,
             added: now,
+            library_key: library_key.clone(),
         }],
         grant,
         libraries: vec![],

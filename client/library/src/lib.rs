@@ -179,6 +179,16 @@ pub fn seal_for_entry(entry: &identity::Entry, key: &Key) -> Result<Vec<SealedKe
             sealed: seal_to(&entry.root, &key[..])?,
         });
     }
+    // a passkey that has published a library key of its own: any browser
+    // holding that passkey can open this library
+    for p in &entry.passkeys {
+        if let Some(pk) = &p.library_key {
+            out.push(SealedKey {
+                to: format!("passkey:{}", p.id),
+                sealed: seal_to(pk, &key[..])?,
+            });
+        }
+    }
     if !entry.recovery.is_empty() {
         out.push(SealedKey {
             to: "recovery".into(),

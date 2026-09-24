@@ -258,6 +258,8 @@
             doCheck = false;
             CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
             cargoExtraArgs = "-p dd-web";
+            # getrandom 0.3 takes its backend from a cfg, not a feature
+            RUSTFLAGS = "--cfg getrandom_backend=\"wasm_js\"";
           };
           wasmArtifacts = craneWasm.buildDepsOnly (
             wasmCommon

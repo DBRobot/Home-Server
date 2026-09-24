@@ -16,6 +16,8 @@ use ente_core::crypto;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
 
+pub mod library;
+
 /// No prompts: the code is given up front, and an account made here has
 /// no second factor.
 struct NoUi;

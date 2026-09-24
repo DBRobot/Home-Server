@@ -76,6 +76,13 @@ pub struct Passkey {
     /// the whole credential as webauthn-rs serialises it; opaque here
     pub cred: serde_json::Value,
     pub added: u64,
+    /// The public half of a key only this passkey can make: the browser
+    /// derives it from the passkey's own PRF secret, which never leaves
+    /// the tab. Library keys are sealed to it, so any browser holding this
+    /// passkey opens the member's libraries without being admitted as a
+    /// device of its own. Absent on a passkey enrolled before this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
