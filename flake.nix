@@ -72,9 +72,12 @@
                       builtins.elem rel [
                         "box"
                         "client"
+                        "app"
                       ]
                       || builtins.match "(box|client)/[^/]+" rel != null;
-                    manifest = builtins.match "(box|client)/[^/]+/Cargo\\.toml" rel != null;
+                    manifest = builtins.match "(box|client)/[^/]+/Cargo\\.toml" rel != null || rel == "app/Cargo.toml";
+                    # the app's pages, icons and tauri config sit beside its src
+                    appFile = pkgs.lib.hasPrefix "app/" rel;
                     ours = builtins.any (d: rel == d || pkgs.lib.hasPrefix "${d}/" rel) dirs;
                   in
                   top
@@ -86,6 +89,7 @@
                       type == "directory"
                       || craneLib.filterCargoSources path type
                       || builtins.match ".*/(templates|web)/.*" rel != null
+                      || appFile
                     )
                   );
               };
@@ -93,7 +97,7 @@
             pkgs.runCommand "src-${name}" { } ''
               cp -r ${filtered} $out
               chmod -R u+w $out
-              for m in $out/box/* $out/client/*; do
+              for m in $out/box/* $out/client/* $out/app; do
                 [ -f "$m/Cargo.toml" ] || continue
                 if [ ! -d "$m/src" ]; then
                   mkdir -p "$m/src"
@@ -106,6 +110,7 @@
           src = srcFor "workspace" [
             "box"
             "client"
+            "app"
           ];
           # the crates behind each binary: the path dependencies in the
           # manifests, followed to the end, so a list never goes stale
@@ -158,7 +163,17 @@
             games = crateSrc "games" [ "box/games" ];
             transcode = crateSrc "transcode" [ "box/transcode" ];
             web = crateSrc "web" [ "client/web" ];
+            app = crateSrc "app" [ "app" ];
           };
+          # what the app's window is made of; the workspace checks compile
+          # the app too, so they need it as well
+          appLibs = [
+            pkgs.webkitgtk_4_1
+            pkgs.gtk3
+            pkgs.libsoup_3
+            pkgs.glib
+            pkgs.openssl
+          ];
           # the same toolchain, plus the wasm32 target; nixpkgs' rustc
           # ships no std for it
           wasmToolchain =
@@ -193,8 +208,8 @@
             inherit src;
             strictDeps = true;
             nativeBuildInputs = [ pkgs.pkg-config ];
-            # the cli's mount (dd media) links libfuse
-            buildInputs = [ pkgs.fuse3 ];
+            # the cli's mount (dd media) links libfuse; the app its window
+            buildInputs = [ pkgs.fuse3 ] ++ appLibs;
             doCheck = false;
           };
           # the dependencies for the whole workspace: what the checks
@@ -250,6 +265,19 @@
           # one file, one viewer, in memory: the compute side of the
           # encrypted libraries (modules/library/transcode.nix)
           transcode = crate "dd-transcode" sources.transcode "-p transcode";
+          # The app: the same crates as dd behind a window (app/). Wrapped
+          # so the webview finds its schemas and gio modules; the dmabuf
+          # renderer is off because on nvidia it draws a blank window.
+          app = (crate "commonty" sources.app "-p commonty").overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.wrapGAppsHook3 ];
+            buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.glib-networking ];
+            postFixup =
+              (old.postFixup or "")
+              + "\n"
+              + ''
+                wrapProgram $out/bin/commonty --set WEBKIT_DISABLE_DMABUF_RENDERER 1
+              '';
+          });
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
@@ -305,8 +333,21 @@
           pkgs.fuse3 # the cli's mount
           pkgs.sops # `dd secret run -- ...` runs this
           pkgs.age
+          pkgs.cargo-tauri # `cargo tauri dev` in app/
+        ]
+        ++ [
+          # the app's window, for `cargo build -p commonty` here
+          pkgs.webkitgtk_4_1
+          pkgs.gtk3
+          pkgs.libsoup_3
+          pkgs.glib
+          pkgs.openssl
+          pkgs.glib-networking
         ];
         RUST_BACKTRACE = "1";
+        # the webview finds its gio modules (tls) and, on nvidia, draws
+        WEBKIT_DISABLE_DMABUF_RENDERER = "1";
+        GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
       };
 
       # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is

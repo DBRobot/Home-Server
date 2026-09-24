@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Commonty</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top">
+    <span class="wordmark">Commonty</span>
+    <span id="who" class="who"></span>
+  </header>
+
+  <main>
+    <section id="page-name" class="page" hidden>
+      <h1>Who are you?</h1>
+      <p class="lead">Your name on Commonty. This device makes its own key and asks to be added to your account.</p>
+      <form id="name-form">
+        <label>Name <input id="name" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="david"></label>
+        <button type="submit" class="primary">Continue</button>
+      </form>
+      <p id="name-error" class="error" hidden></p>
+    </section>
+
+    <section id="page-admit" class="page" hidden>
+      <h1>Add this device</h1>
+      <p class="lead">This device's key is not in your account yet. On a machine that is, run:</p>
+      <pre class="cmd"><code id="admit-cmd"></code></pre>
+      <p class="small">Fingerprint <span id="admit-fp" class="mono"></span>. The key never leaves this device.</p>
+      <p id="admit-dirs" class="small"></p>
+      <p class="small waiting">Checking again every few seconds…</p>
+      <button id="admit-back" class="quiet">Different name</button>
+    </section>
+
+    <section id="page-home" class="page" hidden>
+      <h1>Signed in</h1>
+      <dl class="facts">
+        <dt>Name</dt><dd id="home-name"></dd>
+        <dt>Entry</dt><dd id="home-entry"></dd>
+        <dt>Libraries</dt><dd id="home-libraries"></dd>
+        <dt>Passkeys</dt><dd id="home-passkeys"></dd>
+        <dt>Gate</dt><dd id="home-gate"></dd>
+      </dl>
+      <h2>Devices</h2>
+      <ul id="home-devices" class="devices"></ul>
+      <button id="home-forget" class="quiet">Sign out on this device</button>
+    </section>
+
+    <section id="page-error" class="page" hidden>
+      <h1>Something is off</h1>
+      <p id="error-text" class="error"></p>
+      <button id="error-retry" class="primary">Try again</button>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
