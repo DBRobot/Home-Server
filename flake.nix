@@ -491,6 +491,9 @@
                   dd.box.site = box.siteId;
                   dd.box.region = box.regionId;
                   dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);
+                  # the control box's tailnet address: boxes pin the control
+                  # server's name to it (modules/net/box.nix)
+                  dd.net.controlAddress = (lib.findFirst (b: b.public) box (builtins.attrValues boxes)).tailnet;
                 }
               ]
               ++ map (r: ./nix/roles/${r}.nix) box.roles

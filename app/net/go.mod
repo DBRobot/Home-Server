@@ -2,13 +2,15 @@ module commonty.org/app/net
 
 go 1.26.2
 
-require tailscale.com v1.98.1
+require (
+	github.com/coder/websocket v1.8.12
+	tailscale.com v1.98.1
+)
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect
 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
-	github.com/coder/websocket v1.8.12 // indirect
 	github.com/creachadair/msync v0.7.1 // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect

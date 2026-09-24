@@ -4,7 +4,9 @@
 # and every address have moved over and the old one is retired by hand.
 # Names on this network come from Headscale; the box keeps its own
 # resolver and takes none from here (accept-dns off). The control server's
-# name resolves to the gateway's tailnet address, never through Cloudflare.
+# name is pinned to the control box's tailnet address in /etc/hosts: the
+# front door's proxy strips the control protocol's upgrade (the app has a
+# bridge for that; a box's stock tailscaled has not).
 {
   config,
   pkgs,
@@ -31,6 +33,10 @@ in
       type = lib.types.str;
       default = "/run/commonty-net/tailscaled.sock";
       readOnly = true;
+    };
+    controlAddress = lib.mkOption {
+      type = lib.types.str;
+      description = "the control box's tailnet address: the control server's name resolves to it here, never to the front door, whose proxy strips the control protocol's upgrade";
     };
     afterJoin = lib.mkOption {
       type = lib.types.lines;
@@ -114,6 +120,9 @@ in
         ${cfg.afterJoin}
       '';
     };
+
+    # the control server by its name, straight to the control box
+    networking.hosts.${cfg.controlAddress} = [ "headscale.${base}" ];
 
     networking.firewall.trustedInterfaces = [ "commonty0" ];
     networking.firewall.allowedUDPPorts = [ 41642 ];

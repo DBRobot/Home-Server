@@ -20,6 +20,7 @@
     hosts = [
       "home"
       "accounts"
+      "headscale" # the network's control server, for the app's bridge (modules/net)
     ];
     tunnel = "d0534bff-f478-48ab-a949-65e2e3c14c39";
     credentialsFile = config.sops.secrets.cloudflared-credentials.path;

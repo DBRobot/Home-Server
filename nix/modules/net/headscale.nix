@@ -173,12 +173,13 @@ in
     systemd.services.commonty-net-up.after = [ "headscale-seed.service" ];
     systemd.services.commonty-net-up.wants = [ "headscale-seed.service" ];
 
-    # Reached over the tailnet, by its plain name: the control protocol is
-    # an http upgrade that is not websocket, and Cloudflare's proxy strips
-    # it, so the front door cannot carry it. A device that is on no network
-    # yet needs a control server on a public address: the public box, when
-    # there is one. Until then this serves the boxes and the owner's own
-    # devices. The upgrade under /ts2021 is passed like a websocket.
+    # Reached from outside through the front door (the gateway role lists
+    # the host as public) and from the boxes by the pinned name. The
+    # control protocol is an http upgrade that is not websocket, and the
+    # door's proxy strips it: the app carries it over a real websocket
+    # (its bridge, app/net/bridge.go), which the server takes as well; a
+    # box's stock tailscaled reaches this box directly. Both upgrades pass
+    # nginx the same way.
     services.nginx.virtualHosts.${host} = lib.mkIf cfg.behindNginx {
       useACMEHost = base;
       forceSSL = true;
