@@ -921,6 +921,25 @@ async fn web_file(
     }
 }
 
+/// The one thing every page needs to talk to a passkey: which domain the
+/// credentials belong to. Public, and true of the box either way.
+async fn page_config(State(app): State<Arc<App>>) -> Response {
+    Json(serde_json::json!({ "rpId": app.domain.clone() })).into_response()
+}
+
+/// Files: a member's library, opened in the browser by their passkey. The
+/// demo has no passkey and no library, so it does not come here.
+async fn files_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Html(pages::files(&user)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to("/_dd/login?rd=/_dd/files").into_response(),
+    }
+}
+
 /// Photos, opened with the passkey: the page runs our wasm against ente.
 async fn photos_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
@@ -1193,6 +1212,9 @@ pub async fn start(
         .route("/_dd/demo", get(demo))
         .route("/_dd/web/{file}", get(web_file))
         .route("/_dd/static/{file}", get(static_file))
+        // what any page needs before it can ask a passkey for anything
+        .route("/_dd/config", get(page_config))
+        .route("/_dd/files", get(files_page))
         .route("/_dd/photos", get(photos_page))
         .route("/_dd/photos/config", post(photos_config))
         // the network's door: a join key for an admitted device

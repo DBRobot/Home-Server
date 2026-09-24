@@ -37,6 +37,7 @@ pub fn static_file(name: &str) -> Option<(&'static str, &'static str)> {
         "enrol.js" => (include_str!("../web/enrol.js"), js),
         "redeem.js" => (include_str!("../web/redeem.js"), js),
         "photos.js" => (include_str!("../web/photos.js"), js),
+        "files.js" => (include_str!("../web/files.js"), js),
         _ => return None,
     })
 }
@@ -77,6 +78,13 @@ struct Join;
 #[derive(Template)]
 #[template(path = "waiting.html")]
 struct Waiting<'a> {
+    user: &'a str,
+    initial: String,
+}
+
+#[derive(Template)]
+#[template(path = "files.html")]
+struct Files<'a> {
     user: &'a str,
     initial: String,
 }
@@ -128,6 +136,14 @@ pub fn join() -> String {
 /// open to it yet. A code from the owner opens it here.
 pub fn waiting(user: &str) -> String {
     render(Waiting {
+        user,
+        initial: initial(user),
+    })
+}
+
+/// Files: a member's library, opened by their passkey.
+pub fn files(user: &str) -> String {
+    render(Files {
         user,
         initial: initial(user),
     })
