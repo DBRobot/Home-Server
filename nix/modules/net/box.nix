@@ -3,7 +3,8 @@
 # own state, socket, port and interface. Both run until the fleet's names
 # and every address have moved over and the old one is retired by hand.
 # Names on this network come from Headscale; the box keeps its own
-# resolver and takes none from here (accept-dns off).
+# resolver and takes none from here (accept-dns off). The control server's
+# name resolves to the gateway's tailnet address, never through Cloudflare.
 {
   config,
   pkgs,

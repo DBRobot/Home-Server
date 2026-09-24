@@ -188,10 +188,12 @@ in
     systemd.services.commonty-net-up.after = [ "headscale-seed.service" ];
     systemd.services.commonty-net-up.requires = [ "headscale-seed.service" ];
 
-    # reached from the network and from outside alike (the gateway role
-    # lists the host as public): a device that is not on the network yet
-    # has to reach the control server to join it. The protocol under
-    # /ts2021 is an upgrade, hence websockets.
+    # Reached over the tailnet, by its plain name: the control protocol is
+    # an http upgrade that is not websocket, and Cloudflare's proxy strips
+    # it, so the front door cannot carry it. A device that is on no network
+    # yet needs a control server on a public address: the public box, when
+    # there is one. Until then this serves the boxes and the owner's own
+    # devices. The upgrade under /ts2021 is passed like a websocket.
     services.nginx.virtualHosts.${host} = lib.mkIf cfg.behindNginx {
       useACMEHost = base;
       forceSSL = true;
