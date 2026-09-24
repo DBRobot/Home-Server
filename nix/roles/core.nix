@@ -69,9 +69,15 @@
     enable = true;
     openFirewall = true;
   };
-  # and the fleet's own network beside it (modules/net/box.nix); the key
-  # comes from the control box's seed or, elsewhere, the net role
-  dd.net.enable = true;
+  # The fleet's own network is NOT started here. Two tailscaleds on one box
+  # share routing table 52 and the same policy rules, and the second one
+  # rewrites that table every time it reconfigures: on node2 a login loop
+  # did exactly that all night and took the box off the network while every
+  # link stayed up. Only the box that runs the control server joins its own
+  # network (modules/net/headscale.nix), because a device has to reach it
+  # there. Boxes in one house reach each other on that house's network and
+  # need no overlay between them; the day they are in different houses,
+  # this becomes the one tailscaled they run, not a second.
   # tailscale0 is the trusted side; whatever cable or wifi a box has stays as it is
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
   networking.networkmanager.enable = true;
