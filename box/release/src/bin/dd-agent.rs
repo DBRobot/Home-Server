@@ -46,6 +46,52 @@ struct Args {
     /// the verifier's port, probed after a switch
     #[arg(long, env = "DD_AGENT_VERIFY_PORT", default_value = "4181")]
     verify_port: u16,
+    /// host:port of the other boxes, whitespace separated. A release that
+    /// takes away the reach this box had before it is rolled back: the
+    /// switch may not strand the box, however healthy it looks from here.
+    #[arg(long, env = "DD_AGENT_REACH", default_value = "")]
+    reach: String,
+}
+
+/// Can this box still reach the fleet? None of these is a health check of
+/// the other box; the question is only whether this box's own network
+/// still carries a connection off itself.
+fn reaches_any(reach: &str) -> bool {
+    let targets: Vec<&str> = reach.split_whitespace().collect();
+    if targets.is_empty() {
+        return true; // nothing to reach: a fleet of one
+    }
+    targets.iter().any(|t| {
+        use std::net::ToSocketAddrs as _;
+        t.to_socket_addrs()
+            .ok()
+            .into_iter()
+            .flatten()
+            .any(|a| std::net::TcpStream::connect_timeout(&a, Duration::from_secs(4)).is_ok())
+    })
+}
+
+/// The same, given a while, and it has to hold: a box that has just
+/// switched may need a moment for its network to settle, and the network
+/// it is losing may take a moment to go. One answer proves nothing, so
+/// two in a row, seconds apart, are asked for.
+fn reaches_within(reach: &str, window: Duration) -> bool {
+    let start = Instant::now();
+    let mut held = 0;
+    loop {
+        if reaches_any(reach) {
+            held += 1;
+            if held >= 2 {
+                return true;
+            }
+        } else {
+            held = 0;
+        }
+        if start.elapsed() > window {
+            return false;
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    }
 }
 
 fn main() {
@@ -147,6 +193,8 @@ fn run(args: &Args) -> Result<String> {
     fs::write(args.state.join("previous"), &current)?;
     let guard_secs = (args.probe_secs + 300).to_string();
     let _ = disarm();
+    // what this box could reach before the switch, to compare after
+    let reached_before = reaches_any(&args.reach);
     sh(
         "systemd-run",
         &[
@@ -167,7 +215,10 @@ fn run(args: &Args) -> Result<String> {
         &["switch"],
     );
 
-    let healthy = switched.is_ok() && probe_until(args, Duration::from_secs(args.probe_secs));
+    let healthy = switched.is_ok()
+        && probe_until(args, Duration::from_secs(args.probe_secs))
+        // and it may not have cost this box its way off itself
+        && (!reached_before || reaches_within(&args.reach, Duration::from_secs(args.probe_secs)));
     if !healthy {
         let _ = sh(
             "nix-env",
@@ -180,8 +231,13 @@ fn run(args: &Args) -> Result<String> {
         let _ = disarm();
         record(args, &name, last, "rollback");
         bail!(
-            "release {counter}: {} did not come up healthy; back on {current}",
-            mine.path
+            "release {counter}: {} did not come up healthy{}; back on {current}",
+            mine.path,
+            if reached_before && !reaches_any(&args.reach) {
+                " (it could no longer reach the fleet)"
+            } else {
+                ""
+            }
         );
     }
     let _ = disarm();

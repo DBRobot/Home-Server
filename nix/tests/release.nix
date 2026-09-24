@@ -32,7 +32,10 @@ in
         enable = true;
         url = "http://forge/current.json";
         publicKeyFile = "/root/release.pub"; # made below, not at build time
-        probeSeconds = 10;
+        probeSeconds = 20;
+        # the forge stands in for another box: what this one must still
+        # reach after a switch
+        reach = [ "forge:80" ];
       };
       # the same box with a mark on it: what a release moves it to
       specialisation.marked.configuration.environment.etc."dd-marker".text = "release 2\n";
@@ -40,6 +43,16 @@ in
       specialisation.broken.configuration = {
         environment.etc."dd-marker".text = "release 3\n";
         services.openssh.enable = pkgs.lib.mkForce false;
+      };
+      # healthy in every way this box can see, and cut off from the fleet:
+      # the shape of a network change that strands a box
+      specialisation.stranded.configuration = {
+        environment.etc."dd-marker".text = "release 4\n";
+        networking.firewall.enable = pkgs.lib.mkForce true;
+        networking.firewall.extraCommands = ''
+          iptables -I OUTPUT -p tcp --dport 80 -j REJECT
+          ip6tables -I OUTPUT -p tcp --dport 80 -j REJECT
+        '';
       };
     };
   };
@@ -50,5 +63,6 @@ in
       base = "${nodes.box.system.build.toplevel}";
       marked = "${nodes.box.specialisation.marked.configuration.system.build.toplevel}";
       broken = "${nodes.box.specialisation.broken.configuration.system.build.toplevel}";
+      stranded = "${nodes.box.specialisation.stranded.configuration.system.build.toplevel}";
     };
 }
