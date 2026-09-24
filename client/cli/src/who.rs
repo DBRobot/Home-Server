@@ -4,7 +4,7 @@
 //! No server is asked for anything but storage. A directory that lies can
 //! withhold or replay, and publishing to more than one is how that is caught.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use auth::KeyStore;
 use identity::{Device, Entry, SignedEntry};
 
@@ -18,56 +18,7 @@ pub fn load_root(keys: &impl KeyStore) -> Result<Option<ed25519_dalek::SigningKe
     }
 }
 
-pub fn http() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?)
-}
-
-/// What each directory has for `name`; a directory that cannot be reached is
-/// an error entry, not a missing one, because the two mean different things.
-pub async fn fetch(dirs: &[String], name: &str) -> Vec<(String, Result<Option<SignedEntry>>)> {
-    let mut out = Vec::new();
-    let http = match http() {
-        Ok(h) => h,
-        Err(e) => return vec![(String::new(), Err(e))],
-    };
-    for d in dirs {
-        let url = format!("{}/{name}", d.trim_end_matches('/'));
-        let r = async {
-            let r = http.get(&url).send().await?;
-            match r.status().as_u16() {
-                404 => Ok(None),
-                200 => Ok(Some(r.json::<SignedEntry>().await?)),
-                s => Err(anyhow!("{s} {}", r.text().await.unwrap_or_default())),
-            }
-        }
-        .await;
-        out.push((d.clone(), r));
-    }
-    out
-}
-
-/// The newest entry any directory holds, checked against nothing yet: the
-/// caller decides what it must match (its own root, or a recovery key).
-pub fn newest(found: &[(String, Result<Option<SignedEntry>>)]) -> Option<SignedEntry> {
-    found
-        .iter()
-        .filter_map(|(_, r)| r.as_ref().ok().and_then(|o| o.clone()))
-        .max_by_key(|e| e.entry.version)
-}
-
-/// Push to every directory. Success is every directory accepting; a partial
-/// result is reported line by line and still an error, because a directory
-/// left behind is one that will later serve a stale entry as current.
-/// every name a directory lists
-pub async fn names(dir: &str) -> Result<Vec<String>> {
-    let v: Vec<serde_json::Value> = reqwest::get(dir).await?.error_for_status()?.json().await?;
-    Ok(v.into_iter()
-        .filter_map(|l| l["name"].as_str().map(str::to_string))
-        .collect())
-}
+pub use directory::{fetch, http, names, newest};
 
 /// a library into our entry: the key was sealed already, this signs it in
 pub async fn add_library(
@@ -87,25 +38,20 @@ pub async fn add_library(
 }
 
 pub async fn publish(dirs: &[String], signed: &SignedEntry) -> Result<()> {
-    let http = http()?;
+    let took = directory::publish(dirs, signed).await?;
     let mut failed = 0;
-    for d in dirs {
-        let url = format!("{}/{}", d.trim_end_matches('/'), signed.entry.name);
-        match http.put(&url).json(signed).send().await {
-            Ok(r) if r.status().is_success() => {
+    for (d, t) in &took {
+        match t {
+            directory::Took::Accepted => {
                 println!("  {d}: accepted version {}", signed.entry.version)
             }
-            Ok(r) => {
+            directory::Took::Refused(why) => {
                 failed += 1;
-                let s = r.status();
-                println!(
-                    "  {d}: refused ({s} {})",
-                    r.text().await.unwrap_or_default().trim()
-                );
+                println!("  {d}: refused ({why})");
             }
-            Err(e) => {
+            directory::Took::Unreachable(why) => {
                 failed += 1;
-                println!("  {d}: unreachable ({e})");
+                println!("  {d}: unreachable ({why})");
             }
         }
     }

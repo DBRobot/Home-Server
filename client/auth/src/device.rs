@@ -10,7 +10,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use biscuit_auth::{Biscuit, KeyPair, PrivateKey, builder::Algorithm};
+/// the device key type, for callers that hold one without depending on biscuit
+pub use biscuit_auth::KeyPair;
+use biscuit_auth::{Biscuit, PrivateKey, builder::Algorithm};
 use zeroize::Zeroizing;
 
 use crate::{KeyStore, Result};

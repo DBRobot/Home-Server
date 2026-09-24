@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"the app's own pages may call its own commands","local":true,"windows":["main"],"permissions":["core:default"]}}

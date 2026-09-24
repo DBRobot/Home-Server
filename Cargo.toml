@@ -9,10 +9,12 @@ members = [
   "client/cli",
   "client/identity",
   "client/library",
+  "client/directory",
   "client/auth",
   "client/ente",
   "client/gitremote",
   "client/web",
+  "app",
 ]
 
 [workspace.package]

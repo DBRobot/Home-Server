@@ -8,6 +8,7 @@ license.workspace = true
 ente = { path = "../ente" }
 auth = { path = "../auth" }
 identity = { path = "../identity" }
+directory = { path = "../directory" }
 library = { path = "../library" }
 fuser = "0.18"
 libc = "0.2"

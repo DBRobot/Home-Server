@@ -30,10 +30,7 @@ const DEFAULT_ENROL: &str = "https://files.commonty.org/_dd/enrol";
 /// Where a person's signed entry lives. Any box can hold one; a client that
 /// names several sees whether they agree. node2 has no public name yet, so
 /// its copy is reachable on the tailnet only.
-const DEFAULT_DIRECTORIES: [&str; 2] = [
-    "https://files.commonty.org/_dd/directory",
-    "http://100.95.10.10:4181/_dd/directory",
-];
+const DEFAULT_DIRECTORIES: [&str; 2] = directory::DEFAULT;
 /// keyring account holding the name the device key signs for
 const USER: &str = "user";
 
