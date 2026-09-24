@@ -32,6 +32,11 @@ in
       default = "/run/commonty-net/tailscaled.sock";
       readOnly = true;
     };
+    afterJoin = lib.mkOption {
+      type = lib.types.lines;
+      default = "";
+      description = "shell run once this box is on the network (the control box writes the fleet's names)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -63,39 +68,50 @@ in
       };
     };
 
-    # joined with the boxes' key; the key carries the tag the policy grants
-    # to, so the node asks for none. The owner's tailscale keeps the
-    # firewall, this one stays out of netfilter
+    # Joined with the boxes' key; the key carries the tag the policy grants
+    # to, so the node asks for none. A keeper, not a oneshot: it tries
+    # until the control server answers and then runs what comes after,
+    # and a release switch never waits on it or fails because of it (a
+    # box whose control server is down still takes releases). The owner's
+    # tailscale keeps the firewall, this one stays out of netfilter.
     systemd.services.commonty-net-up = {
       description = "Join the fleet's own network";
       after = [ "commonty-net.service" ];
       requires = [ "commonty-net.service" ];
       wantedBy = [ "multi-user.target" ];
-      path = [ pkgs.tailscale ];
+      path = [
+        pkgs.tailscale
+        pkgs.jq
+      ];
       serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
+        Type = "simple";
+        Restart = "on-failure";
+        RestartSec = 30;
       };
       script = ''
-        set -eu
+        set -u
+        sock=${cfg.socket}
         for _ in $(seq 1 30); do
-          tailscale --socket ${cfg.socket} status >/dev/null 2>&1 && break
+          tailscale --socket "$sock" status >/dev/null 2>&1 && break
           sleep 1
         done
-        if tailscale --socket ${cfg.socket} status --json | ${pkgs.jq}/bin/jq -e '.BackendState == "Running"' >/dev/null; then
-          exit 0
-        fi
-        for _ in $(seq 1 20); do
-          [ -s ${cfg.keyFile} ] && break
-          sleep 3
+        until tailscale --socket "$sock" status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null; do
+          if [ ! -s ${cfg.keyFile} ]; then
+            echo "no key at ${cfg.keyFile} yet"
+            sleep 30
+            continue
+          fi
+          tailscale --socket "$sock" up \
+            --login-server=${cfg.controlUrl} \
+            --auth-key=file:${cfg.keyFile} \
+            --hostname=${config.networking.hostName} \
+            --accept-dns=false \
+            --accept-routes=false \
+            --netfilter-mode=off \
+            --timeout=60s || sleep 30
         done
-        tailscale --socket ${cfg.socket} up \
-          --login-server=${cfg.controlUrl} \
-          --auth-key=file:${cfg.keyFile} \
-          --hostname=${config.networking.hostName} \
-          --accept-dns=false \
-          --accept-routes=false \
-          --netfilter-mode=off
+        echo "on the network as $(tailscale --socket "$sock" ip -4)"
+        ${cfg.afterJoin}
       '';
     };
 

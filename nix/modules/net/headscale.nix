@@ -36,7 +36,7 @@ let
     }
   );
   # every name nginx serves on this box, answered on the network with this
-  # box's network address (filled in by headscale-names below)
+  # box's network address (written by the join keeper, dd.net.afterJoin)
   names = lib.filter (n: lib.hasSuffix ".${base}" n || n == base) (
     builtins.attrNames config.services.nginx.virtualHosts
   );
@@ -146,31 +146,16 @@ in
     };
 
     # the names, once this box is on its own network and has an address
-    # there. Headscale watches the file.
-    systemd.services.headscale-names = {
-      description = "Answer the fleet's names on the network with this box's address";
-      after = [ "commonty-net-up.service" ];
-      requires = [ "commonty-net-up.service" ];
-      wantedBy = [ "multi-user.target" ];
-      path = [
-        pkgs.tailscale
-        pkgs.jq
-        pkgs.coreutils
-      ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      script = ''
-        set -eu
-        ip=$(tailscale --socket ${config.dd.net.socket} ip -4)
-        jq -n --arg ip "$ip" '[${
-          lib.concatMapStringsSep ", " (n: ''{"name": "${n}", "type": "A", "value": $ip}'') names
-        }]' > ${state}/extra-records.json.tmp
-        chown headscale:headscale ${state}/extra-records.json.tmp
-        mv ${state}/extra-records.json.tmp ${state}/extra-records.json
-      '';
-    };
+    # there (run by the join keeper). Headscale watches the file.
+    dd.net.afterJoin = ''
+      ip=$(tailscale --socket ${config.dd.net.socket} ip -4)
+      jq -n --arg ip "$ip" '[${
+        lib.concatMapStringsSep ", " (n: ''{"name": "${n}", "type": "A", "value": $ip}'') names
+      }]' > ${state}/extra-records.json.tmp
+      chown headscale:headscale ${state}/extra-records.json.tmp
+      mv ${state}/extra-records.json.tmp ${state}/extra-records.json
+      echo "the fleet's names answer with $ip on the network"
+    '';
 
     # the gate hands admitted devices their join keys through headscale's api
     dd.verify.network = {
@@ -186,7 +171,7 @@ in
     dd.net.keyFile = cfg.boxKeyFile;
     dd.net.controlUrl = cfg.url;
     systemd.services.commonty-net-up.after = [ "headscale-seed.service" ];
-    systemd.services.commonty-net-up.requires = [ "headscale-seed.service" ];
+    systemd.services.commonty-net-up.wants = [ "headscale-seed.service" ];
 
     # Reached over the tailnet, by its plain name: the control protocol is
     # an http upgrade that is not websocket, and Cloudflare's proxy strips

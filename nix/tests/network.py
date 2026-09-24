@@ -9,15 +9,13 @@ box.succeed("test -s /var/lib/headscale/box.key && test -s /var/lib/dd-verify/he
 # readable by the verifier and nobody else (systemd reowns its state dir on start)
 owner = box.succeed("stat -c '%G:%a' /var/lib/dd-verify/headscale-api.key").strip()
 assert owner == "dd-verify:440", owner
-# the box on its own network, as a box
-box.wait_for_unit("commonty-net-up.service", timeout=120)
-st = json.loads(box.succeed("tailscale --socket /run/commonty-net/tailscaled.sock status --json"))
-assert st["BackendState"] == "Running", st["BackendState"]
+# the box on its own network, as a box (the keeper retries until it is)
+box.wait_until_succeeds("tailscale --socket /run/commonty-net/tailscaled.sock status --json | jq -e '.BackendState == \"Running\"'", timeout=180)
 ip = box.succeed("tailscale --socket /run/commonty-net/tailscaled.sock ip -4").strip()
 assert ip.startswith("100."), ip
 box.succeed("headscale nodes list -o json | jq -e '.[] | select(.name == \"box\") | .tags | index(\"tag:box\")'")
 # names on the network: every host nginx serves here, at this address
-box.wait_for_unit("headscale-names.service")
+box.wait_until_succeeds("jq -e 'length > 0' /var/lib/headscale/extra-records.json", timeout=60)
 records = json.loads(box.succeed("cat /var/lib/headscale/extra-records.json"))
 assert all(r["value"] == ip for r in records), records
 # a member's device: made here, admitted by its own root, asks the gate
