@@ -2,18 +2,20 @@
 //!
 //! The rule of the fleet is ciphertext at rest, plaintext only in memory
 //! while working. A member's device asks this box to play something its
-//! own player cannot: it sends the urls of the file's chunks (which it got
-//! from the gate with its own token; this box holds no key to the bucket)
-//! and the file key sealed to this box's ephemeral key. The box fetches
-//! and decrypts chunks in memory as ffmpeg asks for them (containers keep
-//! their index at the end, so ffmpeg must seek: the plain bytes are served
-//! to it over a second listener on localhost, with ranges, that nothing
-//! else reaches), and serves the HLS it makes from a runtime directory
-//! that is wiped when the session ends. The library key is never here;
-//! the file key lives as long as the session and is zeroed with it.
+//! own player cannot: it sends a url for the sealed file (which it got
+//! from the gate with its own token, good for minutes; this box holds no
+//! key to the bucket) and the library's data key sealed to this box's
+//! ephemeral key. The file is rclone's crypt format: a header and 64 KiB
+//! blocks. The box fetches and decrypts blocks in memory as ffmpeg asks
+//! for them (containers keep their index at the end, so ffmpeg must seek:
+//! the plain bytes are served to it over a second listener on localhost,
+//! with ranges, that nothing else reaches), and serves the HLS it makes
+//! from a runtime directory that is wiped when the session ends. The
+//! names' key is never here; the data key lives as long as the session
+//! and is zeroed with it.
 //!
 //!   GET  /key                    the box's current public key to seal to
-//!   POST /session                { chunks: [url...], key: sealed, size }
+//!   POST /session                { url, key: sealed data key, size: sealed bytes }
 //!                                -> { id, playlist }
 //!   GET  /session/{id}/{file}    the playlist and its segments
 //!   DELETE /session/{id}         over, wiped
@@ -36,44 +38,60 @@ use tokio::sync::Mutex;
 
 /// a session nobody has fetched from in this long is over
 const IDLE: Duration = Duration::from_secs(600);
-/// decrypted chunks kept per session, for ffmpeg's seeks back
-const KEEP: usize = 8;
+/// decrypted pieces kept per session, for ffmpeg's seeks back
+const KEEP: usize = 64;
+/// blocks fetched from the bucket in one request: 64 of 64 KiB, a range
+const PIECE: u64 = 64;
+
+use library::crypt::{BLOCK, HEADER, SEALED_BLOCK};
 
 struct Session {
     dir: PathBuf,
     last: Mutex<Instant>,
     child: Mutex<Option<tokio::process::Child>>,
-    chunks: Vec<String>,
-    key: library::Key,
+    url: String,
+    dec: library::crypt::Decrypter,
+    /// plain bytes
     size: u64,
     cache: Mutex<HashMap<u64, Arc<Vec<u8>>>>,
 }
 
 impl Session {
-    /// chunk n, plain, from the cache or the bucket
-    async fn chunk(&self, http: &reqwest::Client, n: u64) -> Result<Arc<Vec<u8>>> {
-        if let Some(c) = self.cache.lock().await.get(&n) {
+    /// piece p (PIECE blocks from block p*PIECE), plain, from the cache or
+    /// the bucket by range
+    async fn piece(&self, http: &reqwest::Client, p: u64) -> Result<Arc<Vec<u8>>> {
+        if let Some(c) = self.cache.lock().await.get(&p) {
             return Ok(c.clone());
         }
-        let url = self.chunks.get(n as usize).context("no such chunk")?;
+        let first = p * PIECE;
+        let from = HEADER as u64 + first * SEALED_BLOCK as u64;
+        let to = from + PIECE * SEALED_BLOCK as u64 - 1;
         let sealed = http
-            .get(url)
+            .get(&self.url)
+            .header("range", format!("bytes={from}-{to}"))
             .send()
             .await?
             .error_for_status()?
             .bytes()
             .await?;
-        let plain =
-            Arc::new(library::open_chunk(&self.key, n, &sealed).context("chunk does not open")?);
+        let mut plain = Vec::with_capacity(sealed.len());
+        for (i, b) in sealed.chunks(SEALED_BLOCK).enumerate() {
+            plain.extend(
+                self.dec
+                    .block(first + i as u64, b)
+                    .context("block does not open")?,
+            );
+        }
+        let plain = Arc::new(plain);
         let mut cache = self.cache.lock().await;
         if cache.len() >= KEEP {
             // the furthest from this one goes; ffmpeg mostly moves forward
-            let far = cache.keys().copied().max_by_key(|k| k.abs_diff(n));
+            let far = cache.keys().copied().max_by_key(|k| k.abs_diff(p));
             if let Some(k) = far {
                 cache.remove(&k);
             }
         }
-        cache.insert(n, plain.clone());
+        cache.insert(p, plain.clone());
         Ok(plain)
     }
 }
@@ -90,9 +108,11 @@ struct App {
 
 #[derive(Deserialize)]
 struct Start {
-    chunks: Vec<String>,
-    /// the file key, sealed to this box's public key
+    /// where the sealed file is, for a few minutes, ranges allowed
+    url: String,
+    /// the library's data key, sealed to this box's public key
     key: String,
+    /// the sealed file's size in bytes
     size: u64,
 }
 
@@ -101,18 +121,38 @@ async fn key(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
 }
 
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
-    let file_key = match library::open_x25519(&app.secret, &s.key) {
+    let data_key = match library::open_x25519(&app.secret, &s.key) {
         Ok(k) => k,
         Err(_) => {
             return (StatusCode::BAD_REQUEST, "the key is not sealed to this box").into_response();
         }
     };
-    if s.chunks.is_empty() || s.chunks.len() > 100_000 {
-        return (StatusCode::BAD_REQUEST, "no chunks").into_response();
+    if !s.url.starts_with("https://") && !s.url.starts_with("http://") {
+        return (StatusCode::BAD_REQUEST, "not a url").into_response();
     }
-    if s.size > (s.chunks.len() as u64) * (library::CHUNK as u64) {
-        return (StatusCode::BAD_REQUEST, "size does not fit the chunks").into_response();
-    }
+    let plain_size = match library::crypt::plain_size(s.size) {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::BAD_REQUEST, "not a sealed file's size").into_response(),
+    };
+    // the header first: the file's nonce, from which every block's follows
+    let header = match app
+        .http
+        .get(&s.url)
+        .header("range", format!("bytes=0-{}", HEADER - 1))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(r) => match r.bytes().await {
+            Ok(b) => b,
+            Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        },
+        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    };
+    let dec = match library::crypt::Cipher::decrypter_with(&data_key, &header) {
+        Ok(d) => d,
+        Err(_) => return (StatusCode::BAD_REQUEST, "not an encrypted file").into_response(),
+    };
     let id = library::random_id();
     let dir = app.root.join(&id);
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -165,9 +205,9 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
             dir,
             last: Mutex::new(Instant::now()),
             child: Mutex::new(Some(child)),
-            chunks: s.chunks,
-            key: file_key,
-            size: s.size,
+            url: s.url,
+            dec,
+            size: plain_size,
             cache: Mutex::new(HashMap::new()),
         }),
     );
@@ -220,10 +260,14 @@ async fn plain(
             if at > end {
                 return Ok::<_, anyhow::Error>(None);
             }
-            let n = at / library::CHUNK as u64;
-            let plain = sess.chunk(&http, n).await?;
-            let from = (at - n * library::CHUNK as u64) as usize;
-            let to = ((end + 1 - n * library::CHUNK as u64) as usize).min(plain.len());
+            let piece_bytes = PIECE * BLOCK as u64;
+            let p = at / piece_bytes;
+            let plain = sess.piece(&http, p).await?;
+            let from = (at - p * piece_bytes) as usize;
+            let to = ((end + 1 - p * piece_bytes) as usize).min(plain.len());
+            if from >= to {
+                return Ok(None);
+            }
             let piece = bytes::Bytes::copy_from_slice(&plain[from..to]);
             let next = at + (to - from) as u64;
             Ok(Some((piece, (sess, next))))

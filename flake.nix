@@ -43,6 +43,7 @@
         "forge"
         "transcode"
         "network"
+        "library"
       ];
       rust =
         let
@@ -320,7 +321,16 @@
         in
         {
           # the cli, and `git remote add origin dd::...`, which dd repo calls too
-          dd = crate "dd" sources.dd "-p dd -p git-remote-dd";
+          # `dd media` mounts libraries with rclone; the binary knows where it is
+          dd = (crate "dd" sources.dd "-p dd -p git-remote-dd").overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.makeWrapper ];
+            postFixup =
+              (old.postFixup or "")
+              + "\n"
+              + ''
+                wrapProgram $out/bin/dd --set DD_RCLONE ${pkgs.rclone}/bin/rclone
+              '';
+          });
           # The release agent, on every box. Server side like verify: the
           # release crate holds the file format the cli signs and this
           # binary checks, and nothing that needs a keyring.
@@ -388,11 +398,13 @@
               inherit cargoArtifacts;
               pname = "dd";
               version = "0.1.0";
-              # the e2e tests spawn verifiers on localhost and run git
+              # the e2e tests spawn verifiers on localhost and run git; the
+              # library's format is checked against rclone itself
               nativeBuildInputs = [
                 pkgs.pkg-config
                 pkgs.gitMinimal
               ];
+              RCLONE = "${pkgs.rclone}/bin/rclone";
             }
           );
         };

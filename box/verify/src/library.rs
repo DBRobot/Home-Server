@@ -12,12 +12,9 @@
 //! holds the bucket, and who may see which prefix is this module's
 //! decision from the directory, not garage's.
 
-use std::sync::Arc;
-
 use anyhow::{Context, Result, anyhow};
-use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Response};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
@@ -68,7 +65,7 @@ fn sha_hex(b: &[u8]) -> String {
 }
 
 /// AWS's uri encoding: unreserved bytes as they are, '/' kept in paths
-fn uri_encode(s: &str, keep_slash: bool) -> String {
+pub(crate) fn uri_encode(s: &str, keep_slash: bool) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         let c = b as char;
@@ -171,7 +168,7 @@ impl Gate {
     }
 
     /// a request the gate makes itself, signed in headers
-    async fn call(
+    pub(crate) async fn call(
         &self,
         method: reqwest::Method,
         object_path: &str,
@@ -270,7 +267,7 @@ impl Gate {
         Ok((keys, truncated))
     }
 
-    async fn copy(&self, from: &str, to: &str) -> Result<()> {
+    pub(crate) async fn copy(&self, from: &str, to: &str) -> Result<()> {
         let source = format!("/{}/{}", self.bucket, uri_encode(from, true));
         self.call(
             reqwest::Method::PUT,
@@ -282,7 +279,7 @@ impl Gate {
         Ok(())
     }
 
-    async fn delete(&self, object: &str) -> Result<()> {
+    pub(crate) async fn delete(&self, object: &str) -> Result<()> {
         self.call(reqwest::Method::DELETE, &format!("/{object}"), "", &[])
             .await?;
         Ok(())
@@ -293,7 +290,19 @@ impl Gate {
 
 /// who is asking, and may they touch this library
 #[allow(clippy::result_large_err)]
-fn allowed(app: &App, headers: &HeaderMap, lib: &str) -> std::result::Result<String, Response> {
+/// what a token holder is to a library
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub(crate) enum Role {
+    Owner,
+    Reader,
+}
+
+#[allow(clippy::result_large_err)]
+pub(crate) fn allowed(
+    app: &App,
+    headers: &HeaderMap,
+    lib: &str,
+) -> std::result::Result<(String, Role), Response> {
     let refused = |code: StatusCode, why: &str| Err((code, why.to_string()).into_response());
     if !lib.chars().all(|c| c.is_ascii_hexdigit()) || lib.len() != 32 {
         return refused(StatusCode::BAD_REQUEST, "not a library id");
@@ -309,7 +318,7 @@ fn allowed(app: &App, headers: &HeaderMap, lib: &str) -> std::result::Result<Str
     if let Ok(Some(e)) = app.directory.entry(&user)
         && e.entry.libraries.iter().any(|l| l.id == lib)
     {
-        return Ok(user);
+        return Ok((user, Role::Owner));
     }
     // a reader: some owner's entry names them for it
     if let Ok(listed) = app.directory.list() {
@@ -320,7 +329,7 @@ fn allowed(app: &App, headers: &HeaderMap, lib: &str) -> std::result::Result<Str
                     .iter()
                     .any(|x| x.id == lib && x.readers.iter().any(|r| r.name == user))
             {
-                return Ok(user);
+                return Ok((user, Role::Reader));
             }
         }
     }
@@ -328,116 +337,10 @@ fn allowed(app: &App, headers: &HeaderMap, lib: &str) -> std::result::Result<Str
 }
 
 #[allow(clippy::result_large_err)]
-fn gate(app: &App) -> std::result::Result<&Gate, Response> {
+pub(crate) fn gate(app: &App) -> std::result::Result<&Gate, Response> {
     app.library
         .as_ref()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "no libraries on this box").into_response())
-}
-
-/// an object name under the library, as the client gave it: only the
-/// shapes the format uses, so a client cannot name a path outside them
-fn object_ok(object: &str) -> bool {
-    let ok_id =
-        |s: &str| !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit());
-    match object.split('/').collect::<Vec<_>>()[..] {
-        ["records", id] => ok_id(id),
-        ["chunks", id, n] => ok_id(id) && n.len() == 8 && n.chars().all(|c| c.is_ascii_digit()),
-        _ => false,
-    }
-}
-
-#[derive(serde::Deserialize)]
-pub struct ListQuery {
-    pub after: Option<String>,
-}
-
-/// GET /_dd/library/{lib}/records?after=<key>: record ids, a page at a time
-pub(crate) async fn records(
-    State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    Path(lib): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<ListQuery>,
-) -> Response {
-    let g = match gate(&app) {
-        Ok(g) => g,
-        Err(r) => return r,
-    };
-    if let Err(r) = allowed(&app, &headers, &lib) {
-        return r;
-    }
-    let prefix = format!("{lib}/records/");
-    match g.list(&prefix, q.after.as_deref()).await {
-        Ok((keys, more)) => {
-            let ids: Vec<String> = keys
-                .iter()
-                .filter_map(|k| k.strip_prefix(&prefix).map(str::to_string))
-                .collect();
-            Json(serde_json::json!({ "ids": ids, "more": more, "last": keys.last() }))
-                .into_response()
-        }
-        Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
-    }
-}
-
-/// GET or PUT /_dd/library/{lib}/url/{object}: a presigned url for that
-/// object, to fetch (GET) or to upload (PUT); the url lives ten minutes
-pub(crate) async fn url(
-    State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    method: axum::http::Method,
-    Path((lib, object)): Path<(String, String)>,
-) -> Response {
-    let g = match gate(&app) {
-        Ok(g) => g,
-        Err(r) => return r,
-    };
-    if let Err(r) = allowed(&app, &headers, &lib) {
-        return r;
-    }
-    if !object_ok(&object) {
-        return (StatusCode::BAD_REQUEST, "not an object of a library").into_response();
-    }
-    let verb = if method == axum::http::Method::PUT {
-        "PUT"
-    } else {
-        "GET"
-    };
-    Json(serde_json::json!({
-        "url": g.presign(verb, &format!("{lib}/{object}")),
-        "expires": URL_SECS,
-    }))
-    .into_response()
-}
-
-/// POST /_dd/library/{lib}/trash/{id}: the record goes under trash/, the
-/// chunks stay; nothing is gone until a purge with a retention window
-pub(crate) async fn trash(
-    State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    Path((lib, id)): Path<(String, String)>,
-) -> Response {
-    let g = match gate(&app) {
-        Ok(g) => g,
-        Err(r) => return r,
-    };
-    if let Err(r) = allowed(&app, &headers, &lib) {
-        return r;
-    }
-    if !object_ok(&format!("records/{id}")) {
-        return (StatusCode::BAD_REQUEST, "not a record id").into_response();
-    }
-    let (stamp, _) = now_stamps();
-    let from = format!("{lib}/records/{id}");
-    let to = format!("{lib}/trash/{id}/{stamp}");
-    match async {
-        g.copy(&from, &to).await?;
-        g.delete(&from).await
-    }
-    .await
-    {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
-    }
 }
 
 #[cfg(test)]
@@ -448,17 +351,6 @@ mod tests {
     fn civil_dates() {
         assert_eq!(civil(0), (1970, 1, 1, 0, 0, 0));
         assert_eq!(civil(1_700_000_000), (2023, 11, 14, 22, 13, 20));
-    }
-
-    #[test]
-    fn only_the_formats_objects() {
-        assert!(object_ok("records/0123456789abcdef0123456789abcdef"));
-        assert!(object_ok(
-            "chunks/0123456789abcdef0123456789abcdef/00000007"
-        ));
-        assert!(!object_ok("chunks/../x/00000000"));
-        assert!(!object_ok("records/../../other/records/x"));
-        assert!(!object_ok("anything"));
     }
 
     /// the worked example from AWS's signature documentation, so the

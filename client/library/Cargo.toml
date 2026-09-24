@@ -7,7 +7,13 @@ description = "A member's encrypted library: files in chunks a box can hold but 
 
 [dependencies]
 identity = { path = "../identity" }
-chacha20poly1305 = "0.10"
+# rclone's crypt format (crypt.rs): scrypt keys, AES-EME names, secretbox blocks
+scrypt = { version = "0.11", default-features = false }
+aes = "0.8"
+eme-mode = { version = "0.3", features = ["block-padding", "alloc"] }
+crypto_secretbox = "0.1"
+base32 = "0.5"
+getrandom = "0.2"
 crypto_box = { version = "0.9", features = ["seal"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = "2"

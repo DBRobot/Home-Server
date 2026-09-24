@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use auth::KeyStore;
-use library::{Library, Record};
+use library::Library;
 
 pub use account::{ROOT, USER, load_root};
 
@@ -51,92 +51,353 @@ impl Opener {
     }
 }
 
-/// the gate on the box, for one library
+/// The gate on the box, for one library: WebDAV over the library's prefix,
+/// the device token as bearer. Names and bytes are rclone's crypt format,
+/// made and read here with the library's cipher; the gate moves ciphertext.
 pub struct Gate {
     base: String,
     token: String,
     http: reqwest::Client,
+    cipher: library::crypt::Cipher,
+}
+
+/// one thing in a library, by its plain name
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Item {
+    /// the plain path under the library
+    pub path: String,
+    pub dir: bool,
+    /// plain bytes (the sealed size less headers and tags)
+    pub size: u64,
+    pub modified: String,
 }
 
 impl Gate {
-    pub fn new(files_base: &str, lib: &str, token: &str) -> Self {
+    pub fn new(files_base: &str, lib: &str, token: &str, key: &library::Key) -> Self {
         Gate {
-            base: format!("{}/_dd/library/{lib}", files_base.trim_end_matches('/')),
+            base: format!("{}/_dd/dav/{lib}", files_base.trim_end_matches('/')),
             token: token.to_string(),
             http: directory::builder()
                 .and_then(|b| b.build().map_err(Into::into))
                 .unwrap_or_default(),
+            cipher: library::crypt::Cipher::for_library(key, lib),
         }
     }
-    pub async fn json(&self, method: reqwest::Method, path: &str) -> Result<serde_json::Value> {
-        let r = self
-            .http
-            .request(method, format!("{}{path}", self.base))
+
+    pub fn cipher(&self) -> &library::crypt::Cipher {
+        &self.cipher
+    }
+
+    /// the url of a plain path: every segment encrypted, then url-encoded
+    pub fn url(&self, plain: &str) -> String {
+        let enc = self.cipher.encrypt_path(plain);
+        let mut u = self.base.clone();
+        u.push('/');
+        u.push_str(
+            &enc.split('/')
+                .filter(|s| !s.is_empty())
+                .map(|s| urlencoding(s))
+                .collect::<Vec<_>>()
+                .join("/"),
+        );
+        u
+    }
+
+    fn req(&self, method: &str, url: &str) -> reqwest::RequestBuilder {
+        self.http
+            .request(
+                reqwest::Method::from_bytes(method.as_bytes()).expect("a method"),
+                url,
+            )
             .bearer_auth(&self.token)
+    }
+
+    /// what is directly under a plain folder ("" for the root)
+    pub async fn list(&self, plain_dir: &str) -> Result<Vec<Item>> {
+        let mut url = self.url(plain_dir);
+        if !url.ends_with('/') {
+            url.push('/');
+        }
+        let r = self
+            .req("PROPFIND", &url)
+            .header("depth", "1")
             .send()
             .await?;
         let status = r.status();
         let body = r.text().await.unwrap_or_default();
-        if !status.is_success() {
-            bail!("gate: {status} {body}");
+        if status.as_u16() == 404 {
+            return Ok(Vec::new());
         }
-        if body.is_empty() {
-            return Ok(serde_json::Value::Null);
+        if status.as_u16() != 207 {
+            bail!(
+                "gate: {status} {}",
+                body.chars().take(200).collect::<String>()
+            );
         }
-        Ok(serde_json::from_str(&body)?)
+        let prefix = format!("{}/", self.base.trim_end_matches('/'));
+        let prefix_path = prefix
+            .split_once("/_dd/dav/")
+            .map(|(_, p)| format!("/_dd/dav/{p}"))
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        for resp in body.split("<D:response>").skip(1) {
+            let href = between(resp, "<D:href>", "</D:href>").unwrap_or_default();
+            let href = unxml(&href);
+            let Some(rel) = href.strip_prefix(&prefix_path) else {
+                continue;
+            };
+            let dir = resp.contains("<D:collection/>");
+            let rel = rel.trim_end_matches('/');
+            if rel.is_empty() {
+                continue;
+            }
+            let enc = rel
+                .split('/')
+                .map(percent_decode)
+                .collect::<Vec<_>>()
+                .join("/");
+            let Ok(path) = self.cipher.decrypt_path(&enc) else {
+                // a name not in the format (the trash, a stray): not ours to show
+                continue;
+            };
+            // the folder asked about lists itself first
+            if path == plain_dir.trim_matches('/') {
+                continue;
+            }
+            let sealed: u64 = between(resp, "<D:getcontentlength>", "</D:getcontentlength>")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            out.push(Item {
+                size: if dir {
+                    0
+                } else {
+                    library::crypt::plain_size(sealed).unwrap_or(0)
+                },
+                path,
+                dir,
+                modified: between(resp, "<D:getlastmodified>", "</D:getlastmodified>")
+                    .map(|s| unxml(&s))
+                    .unwrap_or_default(),
+            });
+        }
+        Ok(out)
     }
-    async fn url(&self, method: reqwest::Method, object: &str) -> Result<String> {
-        let v = self.json(method, &format!("/url/{object}")).await?;
+
+    /// everything under a plain folder, all levels, files only
+    pub async fn walk(&self, plain_dir: &str) -> Result<Vec<Item>> {
+        let mut out = Vec::new();
+        let mut todo = vec![plain_dir.to_string()];
+        while let Some(d) = todo.pop() {
+            for it in self.list(&d).await? {
+                if it.dir {
+                    todo.push(it.path.clone());
+                } else {
+                    out.push(it);
+                }
+            }
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
+    }
+
+    /// a file in: read plain bytes, out go header and sealed blocks, as a
+    /// stream with a known length. `progress` gets plain bytes done.
+    pub async fn put(
+        &self,
+        plain_path: &str,
+        mut src: impl std::io::Read + Send + 'static,
+        plain_len: u64,
+        progress: impl Fn(u64) + Send + 'static,
+    ) -> Result<()> {
+        let enc = self.cipher.encrypter();
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<std::result::Result<Vec<u8>, std::io::Error>>(4);
+        std::thread::spawn(move || {
+            let _ = tx.blocking_send(Ok(enc.header()));
+            let mut buf = vec![0u8; library::crypt::BLOCK];
+            let mut n = 0u64;
+            let mut done = 0u64;
+            loop {
+                let got = match read_full(&mut src, &mut buf) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(e));
+                        return;
+                    }
+                };
+                if got == 0 {
+                    break;
+                }
+                if tx.blocking_send(Ok(enc.block(n, &buf[..got]))).is_err() {
+                    return;
+                }
+                n += 1;
+                done += got as u64;
+                progress(done);
+                if got < library::crypt::BLOCK {
+                    break;
+                }
+            }
+        });
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        let r = self
+            .req("PUT", &self.url(plain_path))
+            .header("content-length", library::crypt::sealed_size(plain_len))
+            .body(reqwest::Body::wrap_stream(stream))
+            .send()
+            .await?;
+        if !r.status().is_success() {
+            bail!("storing {plain_path}: {}", r.status());
+        }
+        Ok(())
+    }
+
+    /// a file out: sealed bytes in, plain bytes to `dst`
+    pub async fn get(
+        &self,
+        plain_path: &str,
+        mut dst: impl std::io::Write,
+        progress: impl Fn(u64),
+    ) -> Result<u64> {
+        let r = self.req("GET", &self.url(plain_path)).send().await?;
+        if !r.status().is_success() {
+            bail!("fetching {plain_path}: {}", r.status());
+        }
+        let mut body = r.bytes_stream();
+        use futures::StreamExt as _;
+        let mut pending: Vec<u8> = Vec::new();
+        let mut dec = None;
+        let mut n = 0u64;
+        let mut done = 0u64;
+        while let Some(chunk) = body.next().await {
+            pending.extend_from_slice(&chunk?);
+            if dec.is_none() {
+                if pending.len() < library::crypt::HEADER {
+                    continue;
+                }
+                dec = Some(self.cipher.decrypter(&pending[..library::crypt::HEADER])?);
+                pending.drain(..library::crypt::HEADER);
+            }
+            let d = dec.as_ref().expect("decrypter");
+            while pending.len() >= library::crypt::SEALED_BLOCK {
+                let plain = d.block(n, &pending[..library::crypt::SEALED_BLOCK])?;
+                dst.write_all(&plain)?;
+                done += plain.len() as u64;
+                progress(done);
+                pending.drain(..library::crypt::SEALED_BLOCK);
+                n += 1;
+            }
+        }
+        if dec.is_none() {
+            bail!("{plain_path}: shorter than a header");
+        }
+        if !pending.is_empty() {
+            let plain = dec.as_ref().expect("decrypter").block(n, &pending)?;
+            dst.write_all(&plain)?;
+            done += plain.len() as u64;
+            progress(done);
+        }
+        Ok(done)
+    }
+
+    /// a url a box may fetch the sealed file from for a few minutes, for
+    /// the transcode handoff
+    pub async fn handoff_url(&self, plain_path: &str) -> Result<String> {
+        let r = self
+            .req("GET", &self.url(plain_path))
+            .header("x-dd-presign", "1")
+            .send()
+            .await?;
+        if !r.status().is_success() {
+            bail!("handing off {plain_path}: {}", r.status());
+        }
+        let v: serde_json::Value = r.json().await?;
         v["url"]
             .as_str()
             .map(str::to_string)
             .context("gate gave no url")
     }
-    async fn record_ids(&self) -> Result<Vec<String>> {
-        let mut ids = Vec::new();
-        let mut after: Option<String> = None;
-        loop {
-            let path = match &after {
-                Some(a) => format!("/records?after={a}"),
-                None => "/records".to_string(),
-            };
-            let v = self.json(reqwest::Method::GET, &path).await?;
-            for id in v["ids"].as_array().into_iter().flatten() {
-                if let Some(s) = id.as_str() {
-                    ids.push(s.to_string());
-                }
-            }
-            if v["more"].as_bool() != Some(true) {
-                break;
-            }
-            after = v["last"].as_str().map(str::to_string);
-        }
-        Ok(ids)
-    }
-    pub async fn fetch(&self, object: &str) -> Result<Vec<u8>> {
-        let url = self.url(reqwest::Method::GET, object).await?;
-        let r = self.http.get(url).send().await?;
+
+    /// to the trash (the gate never deletes)
+    pub async fn trash(&self, plain_path: &str) -> Result<()> {
+        let r = self.req("DELETE", &self.url(plain_path)).send().await?;
         if !r.status().is_success() {
-            bail!("fetching {object}: {}", r.status());
-        }
-        Ok(r.bytes().await?.to_vec())
-    }
-    pub async fn store(&self, object: &str, bytes: Vec<u8>) -> Result<()> {
-        let url = self.url(reqwest::Method::PUT, object).await?;
-        let r = self.http.put(url).body(bytes).send().await?;
-        if !r.status().is_success() {
-            bail!("storing {object}: {}", r.status());
+            bail!("trashing {plain_path}: {}", r.status());
         }
         Ok(())
     }
-    pub async fn records(&self, key: &library::Key) -> Result<Vec<Record>> {
-        let mut out = Vec::new();
-        for id in self.record_ids().await? {
-            let bytes = self.fetch(&library::record_object(&id)).await?;
-            out.push(library::open_record(key, &id, &bytes)?);
+
+    /// a folder, so an empty one shows
+    pub async fn mkdir(&self, plain_path: &str) -> Result<()> {
+        let r = self.req("MKCOL", &self.url(plain_path)).send().await?;
+        if !r.status().is_success() {
+            bail!("making {plain_path}: {}", r.status());
         }
-        Ok(out)
+        Ok(())
     }
+
+    /// the base url and token, for something else that speaks WebDAV
+    /// (rclone) to open the same library
+    pub fn dav(&self) -> (&str, &str) {
+        (&self.base, &self.token)
+    }
+}
+
+fn read_full(r: &mut impl std::io::Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut at = 0;
+    while at < buf.len() {
+        match r.read(&mut buf[at..]) {
+            Ok(0) => break,
+            Ok(k) => at += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(at)
+}
+
+fn urlencoding(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() + 1 && i + 3 <= b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn between(s: &str, a: &str, b: &str) -> Option<String> {
+    let start = s.find(a)? + a.len();
+    let end = s[start..].find(b)? + start;
+    Some(s[start..end].to_string())
+}
+
+fn unxml(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
 }
 
 /// every library this machine can open: the member's own, then those
