@@ -47,6 +47,16 @@ for h in hosts:
     else:
         want[h + "." + zone] = None
 
+# a name that was public and no longer is: its proxied record goes, so the
+# wildcard answers with the tailnet address again
+for name, records in have.items():
+    if name in want:
+        continue
+    for r in records:
+        if r["type"] == "CNAME" and r["content"].endswith(".cfargotunnel.com"):
+            call("DELETE", "/zones/%s/dns_records/%s" % (zone_id, r["id"]))
+            print("removed", name, "(no longer public)")
+
 for name, spec in want.items():
     current = have.get(name, [])
     if spec is None:
