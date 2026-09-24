@@ -38,3 +38,8 @@ by `nix build .#net` and linked by `build.rs` from `COMMONTY_NET_LIB_DIR`).
 From then on every request the app makes goes through the engine's
 loopback proxy, by the box's name, straight to the box; state lives in
 `~/.local/share/commonty/net` and is resumed at the next start.
+
+Sign-up: "New here? I have an invite code". The app fetches the invite the
+code derives, makes the root and recovery keys on this device, publishes
+the entry with its grant (`client/account`, shared with `dd identity new
+--code`), shows the recovery key once, and joins the network.

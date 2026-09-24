@@ -10,6 +10,7 @@ auth = { path = "../auth" }
 identity = { path = "../identity" }
 library = { path = "../library" }
 directory = { path = "../directory" }
+account = { path = "../account" }
 anyhow = "1"
 ed25519-dalek = "2"
 fuser = "0.18"

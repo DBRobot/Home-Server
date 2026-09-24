@@ -19,6 +19,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             account::status,
             account::set_name,
+            account::sign_up,
             account::forget,
             media::media_status,
             media::media_open,

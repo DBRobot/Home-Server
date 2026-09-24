@@ -15,12 +15,32 @@
   <main>
     <section id="page-name" class="page" hidden>
       <h1>Who are you?</h1>
-      <p class="lead">Your name on Commonty. This device makes its own key and asks to be added to your account.</p>
+      <p class="lead">Already a member: your name, and this device asks to be added to your account.</p>
       <form id="name-form">
         <label>Name <input id="name" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="david"></label>
         <button type="submit" class="primary">Continue</button>
       </form>
       <p id="name-error" class="error" hidden></p>
+      <button id="to-signup" class="quiet">New here? I have an invite code</button>
+    </section>
+
+    <section id="page-signup" class="page" hidden>
+      <h1>Welcome</h1>
+      <p class="lead">Someone gave you a code. Pick a name; your account's keys are made on this device and nowhere else.</p>
+      <form id="signup-form">
+        <label>Name <input id="signup-name" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="sarah"></label>
+        <label>Invite code <input id="signup-code" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="abcde-fghjk"></label>
+        <button type="submit" class="primary">Create my account</button>
+      </form>
+      <p id="signup-error" class="error" hidden></p>
+      <button id="signup-back" class="quiet">I already have an account</button>
+    </section>
+
+    <section id="page-recovery" class="page" hidden>
+      <h1>Write this down</h1>
+      <p class="lead">Your recovery key. It is the only way back in if every device is lost or stolen. It is not stored anywhere, and nobody can issue another.</p>
+      <pre class="cmd"><code id="recovery-key"></code></pre>
+      <button id="recovery-done" class="primary">I wrote it down</button>
     </section>
 
     <section id="page-admit" class="page" hidden>

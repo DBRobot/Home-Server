@@ -10,6 +10,7 @@ members = [
   "client/identity",
   "client/library",
   "client/directory",
+  "client/account",
   "client/media",
   "client/auth",
   "client/ente",

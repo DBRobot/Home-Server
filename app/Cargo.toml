@@ -20,9 +20,11 @@ tauri-build = { version = "2", features = [] }
 auth = { path = "../client/auth" }
 identity = { path = "../client/identity" }
 directory = { path = "../client/directory" }
+account = { path = "../client/account" }
 media = { path = "../client/media" }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["sync"] }

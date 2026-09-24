@@ -40,12 +40,22 @@ pub struct Status {
     pub admitted: bool,
     /// the gate's answer to a token signed by this device, once admitted
     pub gate: Option<String>,
+    /// this device holds the root: it made the account, it can admit others
+    pub root: bool,
 }
 
+/// the directories this app asks: the gateway's, by name. A phone talks to
+/// one directory; asking several is `dd`'s job. (The default list also
+/// names a box by its address on the owner's tailnet, which means nothing
+/// from the fleet's own network.)
 pub fn dirs() -> Vec<String> {
     match std::env::var("COMMONTY_DIRECTORY") {
         Ok(s) if !s.is_empty() => s.split_whitespace().map(str::to_string).collect(),
-        _ => directory::DEFAULT.iter().map(|s| s.to_string()).collect(),
+        _ => directory::DEFAULT
+            .iter()
+            .filter(|d| d.starts_with("https://"))
+            .map(|s| s.to_string())
+            .collect(),
     }
 }
 
@@ -84,6 +94,11 @@ pub async fn status(keys: State<'_, Keys>) -> Result<Status, String> {
         entry: None,
         admitted: false,
         gate: None,
+        root: keys
+            .0
+            .get(account::ROOT)
+            .map(|r| r.is_some())
+            .unwrap_or(false),
     };
     let Some(name) = name else { return Ok(st) };
     let found = directory::fetch(&dirs(), &name).await;
@@ -93,7 +108,7 @@ pub async fn status(keys: State<'_, Keys>) -> Result<Status, String> {
             match r {
                 Ok(Some(e)) => format!("version {}", e.entry.version),
                 Ok(None) => "no such name".to_string(),
-                Err(e) => format!("unreachable: {e}"),
+                Err(e) => format!("unreachable: {e:#}"),
             },
         ));
     }
@@ -138,10 +153,17 @@ async fn check_gate(
 ) -> anyhow::Result<String> {
     let token = auth::device::mint(kp, name, Duration::from_secs(300))?;
     // the first library's record list is the cheapest gated thing there is;
-    // without a library, the verifier's own check of the token
-    let url = match entry.libraries.first() {
-        Some(l) => format!("{}/_dd/library/{}/records", gate_base(), l.id),
-        None => format!("{}/_dd/verify", gate_base()),
+    // without a library, a library that is nobody's: the gate answers 403
+    // to a token it accepts and 401 to one it does not
+    let (url, own) = match entry.libraries.first() {
+        Some(l) => (
+            format!("{}/_dd/library/{}/records", gate_base(), l.id),
+            true,
+        ),
+        None => (
+            format!("{}/_dd/library/{}/records", gate_base(), "0".repeat(32)),
+            false,
+        ),
     };
     let r = directory::http()?
         .get(&url)
@@ -149,7 +171,7 @@ async fn check_gate(
         .send()
         .await?;
     let s = r.status();
-    if s.is_success() {
+    if s.is_success() || (!own && s == reqwest::StatusCode::FORBIDDEN) {
         Ok("accepted this device's token".to_string())
     } else {
         anyhow::bail!("{s}")
@@ -163,6 +185,27 @@ pub fn set_name(keys: State<'_, Keys>, name: String) -> Result<(), String> {
         return Err("a name is lowercase letters, digits and dashes".to_string());
     }
     keys.0.set(USER, &name).map_err(|e| e.to_string())
+}
+
+/// A new member, from a code: the invite it derives is fetched from the
+/// directory, a root and a recovery key are made here, the entry with its
+/// grant is published, the root goes into the keystore. The recovery key
+/// comes back once, for the page to show and never keep.
+#[tauri::command]
+pub async fn sign_up(keys: State<'_, Keys>, name: String, code: String) -> Result<String, String> {
+    let name = name.trim().to_string();
+    if !identity::valid_name(&name) {
+        return Err("a name is lowercase letters, digits and dashes".to_string());
+    }
+    if code.trim().is_empty() {
+        return Err("the invite code is what lets you in".to_string());
+    }
+    let (kp, _) = auth::device::load_or_create(&keys.0).map_err(|e| e.to_string())?;
+    let recovery = account::create(&keys.0, &dirs(), &name, &kp, Some(code.trim()))
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    keys.0.set(USER, &name).map_err(|e| e.to_string())?;
+    Ok(recovery.to_string())
 }
 
 /// leave: the name goes, the device key stays (a key is cheap to keep and
