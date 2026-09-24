@@ -155,6 +155,29 @@ $("name-form").addEventListener("submit", async (ev) => {
     $("name-error").hidden = false;
   }
 });
+$("to-signup").addEventListener("click", () => show("signup"));
+$("signup-back").addEventListener("click", () => show("name"));
+$("signup-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const b = ev.submitter || $("signup-form").querySelector("button");
+  $("signup-error").hidden = true;
+  b.disabled = true;
+  try {
+    const recovery = await invoke("sign_up", { name: $("signup-name").value, code: $("signup-code").value });
+    $("recovery-key").textContent = recovery;
+    show("recovery");
+  } catch (e) {
+    $("signup-error").textContent = String(e);
+    $("signup-error").hidden = false;
+  }
+  b.disabled = false;
+});
+$("recovery-done").addEventListener("click", () => {
+  $("recovery-key").textContent = "";
+  refresh();
+  // on the network from the first minute
+  invoke("net_join").then((st) => net(st)).catch(() => {});
+});
 $("admit-back").addEventListener("click", async () => { await invoke("forget"); refresh(); });
 $("home-forget").addEventListener("click", async () => { await invoke("forget"); refresh(); });
 $("error-retry").addEventListener("click", refresh);

@@ -8,18 +8,7 @@ use anyhow::{Context, Result, bail};
 use auth::KeyStore;
 use library::{Library, Record};
 
-/// keyring account holding the name the device key signs for
-pub const USER: &str = "user";
-/// keyring account holding the root secret, base64 (a machine that made
-/// the identity; a phone has none)
-pub const ROOT: &str = "identity-root";
-
-pub fn load_root(keys: &impl KeyStore) -> Result<Option<ed25519_dalek::SigningKey>> {
-    match keys.get(ROOT)? {
-        Some(s) => Ok(Some(identity::decode_secret(&s)?)),
-        None => Ok(None),
-    }
-}
+pub use account::{ROOT, USER, load_root};
 
 /// what this machine can open a library with
 pub struct Opener {

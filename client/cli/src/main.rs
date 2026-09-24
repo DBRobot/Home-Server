@@ -232,11 +232,15 @@ enum Command {
 #[derive(Subcommand)]
 enum IdentityCmd {
     /// Create your identity and publish it, with this device as the first.
-    /// Prints the recovery key once.
+    /// Prints the recovery key once. With an invite code, the entry
+    /// carries the grant that makes you a member.
     New {
         /// Your name; defaults to the one already on this machine.
         #[arg(long)]
         name: Option<String>,
+        /// the invite code someone gave you (`dd invite` on their side)
+        #[arg(long)]
+        code: Option<String>,
     },
     /// What every directory has for you, and whether it is yours.
     Show,
@@ -453,7 +457,7 @@ async fn main() -> Result<()> {
             password_stdin,
         } => {
             let (kp, _) = auth::device::load_or_create(&keys)?;
-            let recovery = who::create(&keys, &directories, &username, &kp).await?;
+            let recovery = who::create(&keys, &directories, &username, &kp, None).await?;
             keys.set(USER, &username)?;
             println!(
                 "identity {username} published; device {} is its first",
@@ -637,13 +641,14 @@ async fn main() -> Result<()> {
         },
 
         Command::Identity { cmd, directories } => match cmd {
-            IdentityCmd::New { name } => {
+            IdentityCmd::New { name, code } => {
                 let name = match name.or(keys.get(USER)?.map(|z| z.to_string())) {
                     Some(n) => n,
                     None => anyhow::bail!("no name: pass --name"),
                 };
                 let (kp, _) = auth::device::load_or_create(&keys)?;
-                let recovery = who::create(&keys, &directories, &name, &kp).await?;
+                let recovery =
+                    who::create(&keys, &directories, &name, &kp, code.as_deref()).await?;
                 keys.set(USER, &name)?;
                 println!(
                     "identity {name} published; device {} is its first",

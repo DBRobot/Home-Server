@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "account"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auth",
+ "base64 0.22.1",
+ "directory",
+ "ed25519-dalek",
+ "identity",
+ "library",
+ "zeroize",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1307,11 +1321,13 @@ dependencies = [
 name = "commonty"
 version = "0.1.0"
 dependencies = [
+ "account",
  "anyhow",
  "auth",
  "directory",
  "identity",
  "media",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
@@ -1858,6 +1874,7 @@ dependencies = [
 name = "dd"
 version = "0.1.0"
 dependencies = [
+ "account",
  "age",
  "anyhow",
  "archive",
@@ -4206,6 +4223,7 @@ dependencies = [
 name = "media"
 version = "0.1.0"
 dependencies = [
+ "account",
  "anyhow",
  "auth",
  "directory",
