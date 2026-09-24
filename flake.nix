@@ -268,6 +268,7 @@
           # The app: the same crates as dd behind a window (app/). Wrapped
           # so the webview finds its schemas and gio modules; the dmabuf
           # renderer is off because on nvidia it draws a blank window.
+          # Jellyfin comes with it: Movies & TV starts it on the device.
           app = (crate "commonty" sources.app "-p commonty").overrideAttrs (old: {
             nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.wrapGAppsHook3 ];
             buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.glib-networking ];
@@ -275,7 +276,9 @@
               (old.postFixup or "")
               + "\n"
               + ''
-                wrapProgram $out/bin/commonty --set WEBKIT_DISABLE_DMABUF_RENDERER 1
+                wrapProgram $out/bin/commonty \
+                  --set WEBKIT_DISABLE_DMABUF_RENDERER 1 \
+                  --set COMMONTY_JELLYFIN ${pkgs.jellyfin}/bin/jellyfin
               '';
           });
           # Our Rust in the browser: the ente account for a person whose key

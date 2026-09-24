@@ -18,7 +18,7 @@ pub fn load_root(keys: &impl KeyStore) -> Result<Option<ed25519_dalek::SigningKe
     }
 }
 
-pub use directory::{fetch, http, names, newest};
+pub use directory::{fetch, http, newest};
 
 /// a library into our entry: the key was sealed already, this signs it in
 pub async fn add_library(

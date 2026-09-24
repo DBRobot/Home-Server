@@ -43,7 +43,49 @@ function render(st) {
     return li;
   }));
   show("home");
+  media();
 }
+
+// Movies & TV: the libraries as folders and jellyfin on them, on this
+// machine, in a window of its own
+async function media(st) {
+  try {
+    st = st || await invoke("media_status");
+  } catch (e) {
+    $("media-text").textContent = String(e);
+    return;
+  }
+  const text = $("media-text");
+  if (st.running) {
+    text.textContent = `Jellyfin is running on this machine with ${st.libraries} librar${st.libraries === 1 ? "y" : "ies"}, ${st.files} file(s), folders at ${st.at}.`;
+  } else if (st.jellyfin) {
+    text.textContent = "Your libraries as folders on this machine, and Jellyfin on them. Nothing is stored here in the clear except while it plays.";
+  } else {
+    text.textContent = "No Jellyfin on this machine: install it, or start the app with COMMONTY_JELLYFIN set.";
+  }
+  $("media-open").textContent = st.running ? "Show" : "Open";
+  $("media-open").disabled = !st.jellyfin;
+  $("media-close").hidden = !st.running;
+}
+
+$("media-open").addEventListener("click", async () => {
+  const b = $("media-open");
+  b.disabled = true;
+  b.textContent = "Starting…";
+  $("media-error").hidden = true;
+  try {
+    media(await invoke("media_open"));
+  } catch (e) {
+    $("media-error").textContent = String(e);
+    $("media-error").hidden = false;
+    b.disabled = false;
+    b.textContent = "Open";
+  }
+});
+$("media-close").addEventListener("click", async () => {
+  await invoke("media_close");
+  media();
+});
 
 async function refresh() {
   try {

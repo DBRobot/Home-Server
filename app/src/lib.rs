@@ -4,6 +4,7 @@
 //! call the commands below; nothing else reaches them.
 
 mod account;
+mod media;
 
 /// the keystore this app keeps its device key in: its own, so an app beside
 /// `dd` on one machine is a device of its own
@@ -13,11 +14,20 @@ const SERVICE: &str = "commonty-app";
 pub fn run() {
     tauri::Builder::default()
         .manage(account::Keys(auth::open(SERVICE)))
+        .manage(media::Media::default())
         .invoke_handler(tauri::generate_handler![
             account::status,
             account::set_name,
-            account::forget
+            account::forget,
+            media::media_status,
+            media::media_open,
+            media::media_close
         ])
-        .run(tauri::generate_context!())
-        .expect("the app window");
+        .build(tauri::generate_context!())
+        .expect("the app window")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                media::stop_all(app);
+            }
+        });
 }

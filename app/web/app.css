@@ -113,3 +113,14 @@ button.quiet { background: transparent; color: var(--ink-2); border-color: var(-
 .devices li .tag { font-family: var(--font); color: var(--ink-2); }
 .ok { color: var(--ok); }
 .error { color: var(--bad); }
+
+.card {
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.card .small { margin: 0 0 10px; }
+.row { display: flex; gap: 8px; align-items: center; }
+button.inline { margin-top: 0; }
+button[disabled] { opacity: .6; cursor: default; }

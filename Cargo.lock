@@ -1311,10 +1311,12 @@ dependencies = [
  "auth",
  "directory",
  "identity",
+ "media",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
 ]
 
 [[package]]
@@ -1871,6 +1873,7 @@ dependencies = [
  "identity",
  "libc",
  "library",
+ "media",
  "release",
  "reqwest 0.12.28",
  "rpassword",
@@ -4197,6 +4200,24 @@ checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
 dependencies = [
  "cfg-if",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auth",
+ "directory",
+ "ed25519-dalek",
+ "fuser",
+ "identity",
+ "libc",
+ "library",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
