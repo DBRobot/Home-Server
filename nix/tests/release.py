@@ -76,3 +76,12 @@ box.succeed("[ $(cat /var/lib/dd-agent/counter) = 2 ]")
 box.succeed("grep -q 'result=\"rollback\"' /var/lib/dd-facts/dd_agent.prom")
 box.succeed("! systemctl is-active dd-agent-guard.service")
 box.succeed("! systemctl is-active dd-agent-guard.timer")
+
+# a release that leaves the box healthy but cut off from the fleet is not a
+# release this box keeps: the switch may not take away what it had
+publish(4, f"{nix['stranded']}")
+agent(expect_ok=False)
+box.succeed(f"[ $(readlink /run/current-system) = {nix['marked']} ]")
+box.succeed("grep -q 'release 2' /etc/dd-marker")
+box.succeed("[ $(cat /var/lib/dd-agent/counter) = 2 ]")
+box.succeed("journalctl -u dd-agent > /tmp/j2 && grep -q 'could no longer reach the fleet' /tmp/j2")

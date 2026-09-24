@@ -491,6 +491,11 @@
                   dd.box.site = box.siteId;
                   dd.box.region = box.regionId;
                   dd.verify.peers = lib.mapAttrsToList directoryOf (lib.filterAttrs (n: _: n != name) boxes);
+                  # the other boxes, as the agent checks a release did not
+                  # cost this box its way off itself
+                  dd.agent.reach = lib.mapAttrsToList (_: b: "${b.tailnet}:22") (
+                    lib.filterAttrs (n: _: n != name) boxes
+                  );
                   # the control box's tailnet address: boxes pin the control
                   # server's name to it (modules/net/box.nix)
                   dd.net.controlAddress = (lib.findFirst (b: b.public) box (builtins.attrValues boxes)).tailnet;

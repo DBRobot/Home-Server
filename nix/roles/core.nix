@@ -3,6 +3,7 @@
   # What every box is, before any role: its identity in the directory, a
   # replica of the directory, its own metrics, and a way in for the admin.
   imports = [
+    ./_sops.nix
     ../modules/box/domain.nix
     ../modules/box/box.nix
     ../modules/gate/verify.nix
@@ -48,8 +49,16 @@
 
   time.timeZone = "America/New_York";
 
+  # A way in at the keyboard when the network is gone. Until now these
+  # boxes had ssh and nothing else, so a box that lost its network could
+  # only be rebooted blind. The passphrase is in secrets/fleet.yaml on the
+  # laptop (`dd secret run -- decrypt --extract '["console-password"]'
+  # secrets/fleet.yaml`); the box holds only its hash.
+  sops.secrets.console-password-hash.neededForUsers = true;
+
   users.users.admin = {
     isNormalUser = true;
+    hashedPasswordFile = config.sops.secrets.console-password-hash.path;
     extraGroups = [ "wheel" ];
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOR0kI8YSFB9JwqTJJMB+h4EJCSscpdnnGGGaBNRqXj david-bascom@david-bascom-Legion-Pro-5-16ADR10"

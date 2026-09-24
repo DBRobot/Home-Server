@@ -46,6 +46,11 @@ in
       type = lib.types.str;
       default = "5m";
     };
+    reach = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "host:port of the other boxes. A release that costs this box its reach to all of them is rolled back, however healthy the box looks from inside. Empty: a fleet of one, nothing to compare.";
+    };
     probeSeconds = lib.mkOption {
       type = lib.types.int;
       default = 600;
@@ -73,6 +78,7 @@ in
         DD_AGENT_KEY_FILE = cfg.publicKeyFile;
         DD_AGENT_PROBE_SECS = toString cfg.probeSeconds;
         DD_AGENT_VERIFY_PORT = "4181";
+        DD_AGENT_REACH = lib.concatStringsSep " " cfg.reach;
       }
       // lib.optionalAttrs (cfg.cache != null) { DD_AGENT_CACHE = cfg.cache; };
       serviceConfig = {
