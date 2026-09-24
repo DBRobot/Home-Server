@@ -6,18 +6,28 @@
     ./_sops.nix
     ../modules/gate/acme.nix
     ../modules/gate/public.nix
+    ../modules/net/headscale.nix
   ];
+  # the fleet's own network is run from here
+  dd.headscale.enable = true;
   # the front door on the open internet: a Cloudflare tunnel this box opens
   # outward (the house line is carrier nat; nothing can be forwarded here).
   # Off, the names point at this box's tailnet address and no outsider is
   # answered; the same unit keeps the records either way.
   dd.public = {
     enable = true;
+    # the gate's own pages and the sign-up flow; modules add their own
+    hosts = [
+      "home"
+      "accounts"
+      "headscale" # the network's control server: a device joins before it is inside
+    ];
     tunnel = "d0534bff-f478-48ab-a949-65e2e3c14c39";
     credentialsFile = config.sops.secrets.cloudflared-credentials.path;
     tokenFile = config.sops.templates."cloudflare.env".path;
   };
   dd.verify.role = "full";
+  dd.verify.oidcSecretFile = config.sops.secrets.jellyfin-oauth-secret.path;
   services.tailscale.permitCertUid = "nginx"; # so nginx can fetch *.ts.net certs without root
 
   sops.secrets.cloudflare-token = { };

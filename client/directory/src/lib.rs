@@ -11,11 +11,44 @@ pub const DEFAULT: [&str; 2] = [
     "http://100.95.10.10:4181/_dd/directory",
 ];
 
+/// a proxy every client this process builds goes through: the app's way
+/// into the fleet's own network (app/src/net.rs). None: straight out.
+#[derive(Clone)]
+pub struct Proxy {
+    pub url: String,
+    pub user: String,
+    pub password: String,
+}
+
+static VIA: std::sync::RwLock<Option<Proxy>> = std::sync::RwLock::new(None);
+
+pub fn via(p: Option<Proxy>) {
+    if let Ok(mut v) = VIA.write() {
+        *v = p;
+    }
+}
+
+pub fn proxy() -> Option<Proxy> {
+    VIA.read().ok().and_then(|v| v.clone())
+}
+
+/// a client: no redirects, a short timeout, through the network's proxy
+/// when this process is on it
 pub fn http() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    builder()?
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(20))
-        .build()?)
+        .build()
+        .map_err(Into::into)
+}
+
+/// the same, for callers that set their own limits
+pub fn builder() -> Result<reqwest::ClientBuilder> {
+    let mut b = reqwest::Client::builder();
+    if let Some(p) = proxy() {
+        b = b.proxy(reqwest::Proxy::all(&p.url)?.basic_auth(&p.user, &p.password));
+    }
+    Ok(b)
 }
 
 /// What each directory has for `name`; a directory that cannot be reached is
@@ -53,7 +86,13 @@ pub fn newest(found: &[(String, Result<Option<SignedEntry>>)]) -> Option<SignedE
 
 /// every name a directory lists
 pub async fn names(dir: &str) -> Result<Vec<String>> {
-    let v: Vec<serde_json::Value> = reqwest::get(dir).await?.error_for_status()?.json().await?;
+    let v: Vec<serde_json::Value> = http()?
+        .get(dir)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     Ok(v.into_iter()
         .filter_map(|l| l["name"].as_str().map(str::to_string))
         .collect())

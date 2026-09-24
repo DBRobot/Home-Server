@@ -44,7 +44,52 @@ function render(st) {
   }));
   show("home");
   media();
+  net();
 }
+
+// the fleet's own network: this device on it, the boxes it can see
+async function net(st) {
+  try {
+    st = st || await invoke("net_status");
+  } catch (e) {
+    $("net-text").textContent = String(e);
+    return;
+  }
+  const text = $("net-text");
+  if (st.running) {
+    text.textContent = `On the network as ${st.name} (${st.ip}). Boxes are reached directly from here.`;
+  } else if (st.joined) {
+    text.textContent = `Joined before; the engine is ${st.state}${st.error ? ": " + st.error : ""}.`;
+  } else {
+    text.textContent = "This device is not on the network yet. Joining asks the gate for a key in your name; from then on boxes are reached directly, not through the public door.";
+  }
+  $("net-join").hidden = st.running;
+  $("net-join").textContent = st.joined ? "Reconnect" : "Join";
+  const ul = $("net-peers");
+  ul.replaceChildren(...(st.peers || []).map((p) => {
+    const li = document.createElement("li");
+    li.append(`${p.name}  ${p.ip}`);
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = p.online ? "online" : "offline";
+    li.append(tag);
+    return li;
+  }));
+}
+
+$("net-join").addEventListener("click", async () => {
+  const b = $("net-join");
+  b.disabled = true;
+  b.textContent = "Joining…";
+  $("net-error").hidden = true;
+  try {
+    net(await invoke("net_join"));
+  } catch (e) {
+    $("net-error").textContent = String(e);
+    $("net-error").hidden = false;
+  }
+  b.disabled = false;
+});
 
 // Movies & TV: the libraries as folders and jellyfin on them, on this
 // machine, in a window of its own

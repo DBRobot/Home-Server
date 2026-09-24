@@ -28,11 +28,7 @@ in
     enable = lib.mkEnableOption "the front door on the open internet";
     hosts = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [
-        "home"
-        "accounts"
-      ];
-      description = "the subdomains that answer a connection from outside the tailnet: the gate's own pages (sign-in, sign-up, the demo) and what they need. Everything else is tailnet-only.";
+      description = "the subdomains that answer a connection from outside the tailnet: the gate's own pages (sign-in, sign-up, the demo), what they need, and the network's control server. Everything else is tailnet-only. Lists from every module add up.";
     };
     tunnel = lib.mkOption {
       type = lib.types.str;
@@ -145,11 +141,15 @@ in
         ${lib.concatMapStringsSep "\n  " (h: ''"~^0:${h}\\.${lib.escapeRegex base}$" 0;'') cfg.hosts}
       }
     '';
+    # every host the gate stands in front of, and every public host that
+    # is not one of those (the network's control server): the same check,
+    # and the tunnel's listener for the public ones
     services.nginx.virtualHosts = lib.mkIf cfg.enable (
-      lib.genAttrs (map (h: "${h}.${base}") config.dd.verify.hosts) (
+      lib.genAttrs (map (h: "${h}.${base}") (lib.unique (config.dd.verify.hosts ++ cfg.hosts))) (
         name:
         let
           isPublic = builtins.elem name (map (h: "${h}.${base}") cfg.hosts);
+          gated = builtins.elem name (map (h: "${h}.${base}") config.dd.verify.hosts);
         in
         {
           extraConfig = lib.mkBefore (
@@ -175,7 +175,7 @@ in
             ''
           );
         }
-        // lib.optionalAttrs isPublic {
+        // lib.optionalAttrs (isPublic && gated) {
           # the ceremonies a stranger may start: sign-up, sign-in, enrol, a
           # code. A person clicks these a few times; a script gets told to
           # wait. The rest of /_dd/ stays unlimited (jellyfin's sso polls it)

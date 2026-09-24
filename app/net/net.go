@@ -1,0 +1,154 @@
+// The fleet's network engine for the app: Tailscale's tsnet behind a C
+// interface of four calls. Nothing here knows what Commonty is; it takes
+// a control server, a key and a state directory, joins, and hands back a
+// loopback proxy that routes into the network and resolves its names.
+// The Rust side does everything else through that proxy.
+package main
+
+/*
+#include <stdlib.h>
+*/
+import "C"
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"time"
+	"unsafe"
+
+	"tailscale.com/tsnet"
+)
+
+var (
+	mu    sync.Mutex
+	srv   *tsnet.Server
+	proxy struct{ addr, cred string }
+)
+
+type started struct {
+	Proxy      string `json:"proxy"`
+	Credential string `json:"credential"`
+	IP         string `json:"ip"`
+	Error      string `json:"error,omitempty"`
+}
+
+type peer struct {
+	Name   string `json:"name"`
+	IP     string `json:"ip"`
+	Online bool   `json:"online"`
+}
+
+type status struct {
+	Running bool   `json:"running"`
+	State   string `json:"state"`
+	IP      string `json:"ip"`
+	Name    string `json:"name"`
+	Peers   []peer `json:"peers"`
+	Error   string `json:"error,omitempty"`
+}
+
+func reply(v any) *C.char {
+	b, _ := json.Marshal(v)
+	return C.CString(string(b))
+}
+
+// commonty_net_start joins the network (or resumes from the state in dir
+// when key is empty) and returns json: the proxy's address and password,
+// this node's address. Idempotent while running.
+//
+//export commonty_net_start
+func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
+	mu.Lock()
+	defer mu.Unlock()
+	if srv != nil {
+		return reply(started{Proxy: proxy.addr, Credential: proxy.cred, IP: ipOf(srv)})
+	}
+	s := &tsnet.Server{
+		Dir:        C.GoString(dir),
+		ControlURL: C.GoString(control),
+		AuthKey:    C.GoString(key),
+		Hostname:   C.GoString(hostname),
+		Ephemeral:  false,
+		Logf:       func(string, ...any) {},
+		UserLogf:   func(string, ...any) {},
+	}
+	addr, cred, _, err := s.Loopback()
+	if err != nil {
+		s.Close()
+		return reply(started{Error: err.Error()})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err := s.Up(ctx); err != nil {
+		s.Close()
+		return reply(started{Error: err.Error()})
+	}
+	srv = s
+	proxy.addr, proxy.cred = addr, cred
+	return reply(started{Proxy: addr, Credential: cred, IP: ipOf(s)})
+}
+
+func ipOf(s *tsnet.Server) string {
+	v4, _ := s.TailscaleIPs()
+	if v4.IsValid() {
+		return v4.String()
+	}
+	return ""
+}
+
+// commonty_net_status returns json: whether the node is up, its address
+// and name, the peers it can see.
+//
+//export commonty_net_status
+func commonty_net_status() *C.char {
+	mu.Lock()
+	defer mu.Unlock()
+	if srv == nil {
+		return reply(status{State: "stopped"})
+	}
+	lc, err := srv.LocalClient()
+	if err != nil {
+		return reply(status{Error: err.Error()})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	st, err := lc.Status(ctx)
+	if err != nil {
+		return reply(status{Error: err.Error()})
+	}
+	out := status{Running: st.BackendState == "Running", State: st.BackendState, IP: ipOf(srv)}
+	if st.Self != nil {
+		out.Name = st.Self.HostName
+	}
+	for _, p := range st.Peer {
+		ip := ""
+		if len(p.TailscaleIPs) > 0 {
+			ip = p.TailscaleIPs[0].String()
+		}
+		out.Peers = append(out.Peers, peer{Name: p.HostName, IP: ip, Online: p.Online})
+	}
+	return reply(out)
+}
+
+// commonty_net_stop leaves the network for this run; the state stays for
+// the next start.
+//
+//export commonty_net_stop
+func commonty_net_stop() {
+	mu.Lock()
+	defer mu.Unlock()
+	if srv != nil {
+		srv.Close()
+		srv = nil
+	}
+}
+
+// commonty_net_free releases a string this library returned.
+//
+//export commonty_net_free
+func commonty_net_free(p *C.char) {
+	C.free(unsafe.Pointer(p))
+}
+
+func main() {}

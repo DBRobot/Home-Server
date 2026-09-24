@@ -33,7 +33,8 @@
     "roles": [
       "core",
       "storage",
-      "runner"
+      "runner",
+      "net"
     ],
     "garage": {
       "capacity": "400G",

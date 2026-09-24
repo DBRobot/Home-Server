@@ -5,6 +5,7 @@
 
 mod account;
 mod media;
+mod net;
 
 /// the keystore this app keeps its device key in: its own, so an app beside
 /// `dd` on one machine is a device of its own
@@ -21,13 +22,21 @@ pub fn run() {
             account::forget,
             media::media_status,
             media::media_open,
-            media::media_close
+            media::media_close,
+            net::net_status,
+            net::net_join
         ])
+        .setup(|_app| {
+            // on the network from the start, if this device has joined before
+            net::resume(&crate::account::control_url());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("the app window")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 media::stop_all(app);
+                net::stop();
             }
         });
 }

@@ -96,6 +96,32 @@ in
       revoked = [ ];
     };
   };
+  options.dd.verify.oidcSecretFile = lib.mkOption {
+    type = lib.types.str;
+    description = "file holding the secret of the per-box oidc client for jellyfin (sops on a real box, a plain file in a test)";
+  };
+  options.dd.verify.network = lib.mkOption {
+    type = lib.types.nullOr (
+      lib.types.submodule {
+        options = {
+          api = lib.mkOption {
+            type = lib.types.str;
+            description = "headscale's api on this box";
+          };
+          url = lib.mkOption {
+            type = lib.types.str;
+            description = "the control server a device is told to join";
+          };
+          keyFile = lib.mkOption {
+            type = lib.types.str;
+            description = "file holding headscale's api key for the gate";
+          };
+        };
+      }
+    );
+    default = null;
+    description = "the network's door: with this, an admitted device gets a join key for the fleet's own network (POST /_dd/network/join)";
+  };
   options.dd.verify.library = lib.mkOption {
     type = lib.types.nullOr (
       lib.types.submodule {
@@ -184,6 +210,11 @@ in
         VERIFY_LIBRARY_S3 = cfg.library.s3;
         VERIFY_LIBRARY_BUCKET = cfg.library.bucket;
       }
+      // lib.optionalAttrs (full && cfg.network != null) {
+        VERIFY_HEADSCALE_API = cfg.network.api;
+        VERIFY_HEADSCALE_URL = cfg.network.url;
+        VERIFY_HEADSCALE_KEY_FILE = cfg.network.keyFile;
+      }
       // lib.optionalAttrs (full && cfg.photos != null) {
         VERIFY_PHOTOS_API = cfg.photos.api;
         VERIFY_PHOTOS_SUFFIX = cfg.photos.emailSuffix;
@@ -207,7 +238,7 @@ in
         # this client on exactly this box.
         VERIFY_OIDC_ISSUER = "https://jellyfin.${base}/_dd/oidc";
         VERIFY_OIDC_CLIENT_ID = "jellyfin";
-        VERIFY_OIDC_CLIENT_SECRET_FILE = config.sops.secrets.jellyfin-oauth-secret.path;
+        VERIFY_OIDC_CLIENT_SECRET_FILE = cfg.oidcSecretFile;
         VERIFY_HOME = builtins.toJSON (
           map (t: {
             inherit (t)
