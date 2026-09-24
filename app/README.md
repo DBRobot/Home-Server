@@ -30,3 +30,11 @@ you as its one user (a random password kept in the keystore, account
 its own Jellyfin (`COMMONTY_JELLYFIN`); a dev build takes the one on PATH.
 Jellyfin dies with the app; a mount left by a crash is cleared on the next
 open.
+
+Network: the fleet's own network (Headscale on the gateway box). Join asks
+the gate for a single-use key in your name and hands it to the engine,
+Tailscale's tsnet as a C archive (`app/net`, the one Go in the tree, built
+by `nix build .#net` and linked by `build.rs` from `COMMONTY_NET_LIB_DIR`).
+From then on every request the app makes goes through the engine's
+loopback proxy, by the box's name, straight to the box; state lives in
+`~/.local/share/commonty/net` and is resumed at the next start.

@@ -60,6 +60,7 @@ async fn main() -> Result<()> {
             Err(_) => None,
         },
         library: verify::library::from_env()?,
+        network: verify::network::from_env()?,
         release_pub: std::env::var("VERIFY_RELEASE_PUB")
             .ok()
             .map(|s| s.trim().to_string())

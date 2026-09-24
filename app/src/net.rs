@@ -1,0 +1,172 @@
+//! The fleet's own network from this device: the engine is Go (app/net,
+//! Tailscale's tsnet) behind four C calls, and what it gives back is a
+//! loopback proxy into the network. Everything the app asks a box is then
+//! asked through that proxy, by the box's name, straight to the box.
+
+use std::ffi::{CStr, CString, c_char};
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use tauri::State;
+
+use crate::account::Keys;
+
+unsafe extern "C" {
+    fn commonty_net_start(
+        dir: *const c_char,
+        control: *const c_char,
+        key: *const c_char,
+        hostname: *const c_char,
+    ) -> *mut c_char;
+    fn commonty_net_status() -> *mut c_char;
+    fn commonty_net_stop();
+    fn commonty_net_free(p: *mut c_char);
+}
+
+/// a string the engine returned, freed when read
+fn take(p: *mut c_char) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
+    unsafe { commonty_net_free(p) };
+    s
+}
+
+#[derive(Deserialize)]
+struct Started {
+    proxy: String,
+    credential: String,
+    ip: String,
+    #[serde(default)]
+    error: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct Peer {
+    pub name: String,
+    pub ip: String,
+    pub online: bool,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct NetStatus {
+    pub running: bool,
+    pub state: String,
+    pub ip: String,
+    pub name: String,
+    #[serde(default)]
+    pub peers: Vec<Peer>,
+    #[serde(default)]
+    pub error: String,
+    /// whether this device has joined before (state on disk)
+    #[serde(default)]
+    pub joined: bool,
+}
+
+fn state_dir() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
+    Ok(PathBuf::from(home).join(".local/share/commonty/net"))
+}
+
+fn hostname() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "device".to_string())
+}
+
+/// bring the engine up, from the state on disk or with a fresh key, and
+/// point every client at its proxy
+fn start(control: &str, key: &str) -> Result<Started, String> {
+    let dir = state_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let c = |s: &str| CString::new(s).map_err(|e| e.to_string());
+    let (dir, control, key, host) = (
+        c(&dir.to_string_lossy())?,
+        c(control)?,
+        c(key)?,
+        c(&hostname())?,
+    );
+    let out = take(unsafe {
+        commonty_net_start(dir.as_ptr(), control.as_ptr(), key.as_ptr(), host.as_ptr())
+    });
+    let st: Started = serde_json::from_str(&out).map_err(|e| format!("engine: {e}: {out}"))?;
+    if !st.error.is_empty() {
+        return Err(st.error);
+    }
+    eprintln!("network: on as {}, proxy at {}", st.ip, st.proxy);
+    directory::via(Some(directory::Proxy {
+        url: format!("http://{}", st.proxy),
+        user: "tsnet".to_string(),
+        password: st.credential.clone(),
+    }));
+    Ok(st)
+}
+
+fn status_now() -> NetStatus {
+    let out = take(unsafe { commonty_net_status() });
+    let mut st: NetStatus = serde_json::from_str(&out).unwrap_or_default();
+    st.joined = state_dir()
+        .map(|d| d.join("tailscaled.state").exists())
+        .unwrap_or(false);
+    st
+}
+
+#[tauri::command]
+pub async fn net_status() -> Result<NetStatus, String> {
+    Ok(status_now())
+}
+
+/// join: the gate vouches for this device and hands it a key; the engine
+/// takes it once, and from then on the state on disk is the membership
+#[tauri::command]
+pub async fn net_join(keys: State<'_, Keys>) -> Result<NetStatus, String> {
+    let (_, user, token) = media::gate::Opener::load(&keys.0).map_err(|e| e.to_string())?;
+    let dirs = crate::account::dirs();
+    let base = media::gate::files_base(&dirs).map_err(|e| e.to_string())?;
+    let r = directory::http()
+        .map_err(|e| e.to_string())?
+        .post(format!("{base}/_dd/network/join"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        return Err(format!(
+            "the gate refused {user}'s device: {} {}",
+            r.status(),
+            r.text().await.unwrap_or_default()
+        ));
+    }
+    let v: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
+    let control = v["control_url"]
+        .as_str()
+        .ok_or("no control url")?
+        .to_string();
+    let key = v["key"].as_str().ok_or("no key")?.to_string();
+    tauri::async_runtime::spawn_blocking(move || start(&control, &key))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(status_now())
+}
+
+/// resume from the state on disk, at app start; nothing if never joined
+pub fn resume(control: &str) {
+    if let Ok(d) = state_dir()
+        && d.join("tailscaled.state").exists()
+    {
+        let control = control.to_string();
+        std::thread::spawn(move || {
+            if let Err(e) = start(&control, "") {
+                eprintln!("network: {e}");
+            }
+        });
+    }
+}
+
+pub fn stop() {
+    unsafe { commonty_net_stop() };
+    directory::via(None);
+}

@@ -52,6 +52,7 @@ async fn commits_are_signed_by_the_device_and_verified_through_the_directory() {
         web_dir: None,
         photos: None,
         library: None,
+        network: None,
         domain: None,
         oidc: None,
     })

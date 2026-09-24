@@ -12,6 +12,7 @@
 
 mod directory;
 pub mod library;
+pub mod network;
 mod oidc;
 pub mod pages;
 mod session;
@@ -56,6 +57,7 @@ struct App {
     demo_rate: Mutex<HashMap<String, (u64, u32)>>,
     /// the encrypted libraries' gate (library.rs), on a box with the bucket
     library: Option<library::Gate>,
+    network: Option<network::Door>,
 }
 
 enum Ceremony {
@@ -107,6 +109,7 @@ pub struct Config {
     pub photos: Option<Photos>,
     /// the library gate, if this box holds the libraries bucket
     pub library: Option<library::Gate>,
+    pub network: Option<network::Door>,
 }
 
 /// What the photos page needs to make or open an ente account for a person:
@@ -1136,6 +1139,7 @@ pub async fn start(
         photos: cfg.photos,
         demo_rate: Mutex::new(HashMap::new()),
         library: cfg.library,
+        network: cfg.network,
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -1158,6 +1162,8 @@ pub async fn start(
         .route("/_dd/static/{file}", get(static_file))
         .route("/_dd/photos", get(photos_page))
         .route("/_dd/photos/config", post(photos_config))
+        // the network's door: a join key for an admitted device
+        .route("/_dd/network/join", post(network::join))
         // the encrypted libraries' gate
         .route("/_dd/library/{lib}/records", get(library::records))
         .route(

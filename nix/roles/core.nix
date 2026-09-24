@@ -12,6 +12,7 @@
     ../modules/box/agent.nix
     ../modules/observe/thanos.nix
     ../modules/box/locate.nix
+    ../modules/net/box.nix
   ];
 
   # the box moves itself to the signed release; the key that signs lives on
@@ -59,6 +60,9 @@
     enable = true;
     openFirewall = true;
   };
+  # and the fleet's own network beside it (modules/net/box.nix); the key
+  # comes from the control box's seed or, elsewhere, the net role
+  dd.net.enable = true;
   # tailscale0 is the trusted side; whatever cable or wifi a box has stays as it is
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
   networking.networkmanager.enable = true;

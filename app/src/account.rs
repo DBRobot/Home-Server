@@ -49,6 +49,16 @@ pub fn dirs() -> Vec<String> {
     }
 }
 
+/// the network's control server: on the gate's host
+pub fn control_url() -> String {
+    format!(
+        "https://headscale.{}",
+        gate_base()
+            .trim_start_matches("https://")
+            .trim_start_matches("files.")
+    )
+}
+
 fn gate_base() -> String {
     dirs()
         .first()

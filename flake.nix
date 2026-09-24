@@ -42,6 +42,7 @@
         "games"
         "forge"
         "transcode"
+        "network"
       ];
       rust =
         let
@@ -165,6 +166,26 @@
             web = crateSrc "web" [ "client/web" ];
             app = crateSrc "app" [ "app" ];
           };
+          # the app's network engine: Tailscale's tsnet behind four C calls
+          # (app/net), a static archive the Rust core links. The one Go in
+          # the tree.
+          appNet = pkgs.buildGoModule {
+            pname = "commonty-net";
+            version = "0.1.0";
+            src = ./app/net;
+            vendorHash = "sha256-n6mcL9euSTEeP2l4gg8A3uMTK2xrIh7xgeuVCsESRFU=";
+            buildPhase = ''
+              runHook preBuild
+              go build -buildmode=c-archive -o libcommontynet.a .
+              runHook postBuild
+            '';
+            installPhase = ''
+              mkdir -p $out/lib $out/include
+              cp libcommontynet.a $out/lib/
+              cp libcommontynet.h $out/include/
+            '';
+            doCheck = false;
+          };
           # what the app's window is made of; the workspace checks compile
           # the app too, so they need it as well
           appLibs = [
@@ -210,6 +231,8 @@
             nativeBuildInputs = [ pkgs.pkg-config ];
             # the cli's mount (dd media) links libfuse; the app its window
             buildInputs = [ pkgs.fuse3 ] ++ appLibs;
+            # and its network engine (app/build.rs links it from here)
+            COMMONTY_NET_LIB_DIR = "${appNet}/lib";
             doCheck = false;
           };
           # the dependencies for the whole workspace: what the checks
@@ -281,6 +304,8 @@
                   --set COMMONTY_JELLYFIN ${pkgs.jellyfin}/bin/jellyfin
               '';
           });
+          # the app's network engine (app/net): `nix build .#net` for the archive
+          net = appNet;
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
@@ -348,6 +373,8 @@
           pkgs.glib-networking
         ];
         RUST_BACKTRACE = "1";
+        # the app's network engine, for `cargo build -p commonty` here
+        COMMONTY_NET_LIB_DIR = "${rust.net}/lib";
         # the webview finds its gio modules (tls) and, on nvidia, draws
         WEBKIT_DISABLE_DMABUF_RENDERER = "1";
         GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";

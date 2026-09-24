@@ -74,7 +74,9 @@ impl Gate {
         Gate {
             base: format!("{}/_dd/library/{lib}", files_base.trim_end_matches('/')),
             token: token.to_string(),
-            http: reqwest::Client::new(),
+            http: directory::builder()
+                .and_then(|b| b.build().map_err(Into::into))
+                .unwrap_or_default(),
         }
     }
     pub async fn json(&self, method: reqwest::Method, path: &str) -> Result<serde_json::Value> {
