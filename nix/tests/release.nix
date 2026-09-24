@@ -32,7 +32,7 @@ in
         enable = true;
         url = "http://forge/current.json";
         publicKeyFile = "/root/release.pub"; # made below, not at build time
-        probeSeconds = 10;
+        probeSeconds = 20;
         # the forge stands in for another box: what this one must still
         # reach after a switch
         reach = [ "forge:80" ];

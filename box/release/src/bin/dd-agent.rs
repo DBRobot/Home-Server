@@ -71,13 +71,21 @@ fn reaches_any(reach: &str) -> bool {
     })
 }
 
-/// the same, given a while: a box that has just switched may need a moment
-/// for its network to settle
+/// The same, given a while, and it has to hold: a box that has just
+/// switched may need a moment for its network to settle, and the network
+/// it is losing may take a moment to go. One answer proves nothing, so
+/// two in a row, seconds apart, are asked for.
 fn reaches_within(reach: &str, window: Duration) -> bool {
     let start = Instant::now();
+    let mut held = 0;
     loop {
         if reaches_any(reach) {
-            return true;
+            held += 1;
+            if held >= 2 {
+                return true;
+            }
+        } else {
+            held = 0;
         }
         if start.elapsed() > window {
             return false;
