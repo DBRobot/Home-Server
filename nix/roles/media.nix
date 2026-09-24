@@ -1,16 +1,17 @@
 { config, ... }:
 {
-  # Media and people's files: jellyfin, the media tier, uploads, per-user
-  # directories, the archive catalog. Plaintext, so owner-trusted only.
+  # The demo's media, people's files, the archive catalog. Members' media
+  # is not here any more: it lives encrypted in their libraries and plays
+  # on their devices (client/media, the app). Jellyfin stays for the demo,
+  # over a plain folder of films that are nobody's.
   imports = [
     ./_sops.nix
-    ../modules/media/media-tier.nix
     ../modules/media/jellyfin.nix
     ../modules/media/archive-catalog.nix
     ../modules/gate/user-accounts.nix
     ../modules/media/webdav-media.nix
   ];
-  users.users.admin.extraGroups = [ "media" ]; # copy files into /srv/media without sudo
+  users.users.admin.extraGroups = [ "media" ]; # copy demo films into /srv/media without sudo
 
   dd.home.services = [
     {
@@ -36,57 +37,10 @@
     }
   ];
 
+  # jellyfin's state is the demo's and is not backed up: nothing in it is
+  # anyone's
   dd.backup.paths = [
     "/srv/users" # people's uploads
     "/srv/images" # archives of old computers, already ciphertext
-    "/var/lib/jellyfin" # watch state, users, plugin config
   ];
-  dd.backup.exclude = [
-    "/var/lib/jellyfin/transcodes"
-    "/var/lib/jellyfin/log"
-    "/var/lib/jellyfin/cache"
-  ];
-  # the media tier's bucket and key; rclone encrypts before it writes
-  sops.templates."garage-media-key.env".content = ''
-    GARAGE_MEDIA_KEY_ID=''${config.sops.placeholder.garage-media-key-id}
-    GARAGE_MEDIA_KEY_SECRET=''${config.sops.placeholder.garage-media-key-secret}
-  '';
-  dd.garage.setupEnvFiles = [ config.sops.templates."garage-media-key.env".path ];
-  # No CORS here: nothing browser-facing touches it, rclone is a
-  # server-side client.
-  dd.garage.buckets.media = {
-    key = {
-      name = "media";
-      envPrefix = "GARAGE_MEDIA_KEY";
-    };
-    allow = [
-      "read"
-      "write"
-      "owner"
-    ];
-  };
-
-  # read only through the rclone template, so root-only is fine
-  sops.secrets = {
-    garage-media-key-id = { };
-    garage-media-key-secret = { };
-    rclone-crypt-password = { };
-    rclone-crypt-salt = { };
-  };
-  # rclone takes its whole config from the environment, so no config file
-  # is written anywhere. PASSWORD/PASSWORD2 are rclone-obscured, which is
-  # obfuscation not encryption - sops is what actually protects them.
-  sops.templates."rclone.env".owner = "media";
-  sops.templates."rclone.env".content = ''
-    RCLONE_CONFIG_GARAGE_TYPE=s3
-    RCLONE_CONFIG_GARAGE_PROVIDER=Other
-    RCLONE_CONFIG_GARAGE_ENDPOINT=http://127.0.0.1:3900
-    RCLONE_CONFIG_GARAGE_REGION=us-east-1
-    RCLONE_CONFIG_GARAGE_ACCESS_KEY_ID=${config.sops.placeholder.garage-media-key-id}
-    RCLONE_CONFIG_GARAGE_SECRET_ACCESS_KEY=${config.sops.placeholder.garage-media-key-secret}
-    RCLONE_CONFIG_COLD_TYPE=crypt
-    RCLONE_CONFIG_COLD_REMOTE=garage:media
-    RCLONE_CONFIG_COLD_PASSWORD=${config.sops.placeholder.rclone-crypt-password}
-    RCLONE_CONFIG_COLD_PASSWORD2=${config.sops.placeholder.rclone-crypt-salt}
-  '';
 }
