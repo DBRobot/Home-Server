@@ -32,9 +32,10 @@
     {
       name = "Files";
       url = "https://files.${config.dd.domain}/_dd/files";
-      # the demo has no library to open: the tile is shown and shut until
-      # it has one (a library with nothing in it is still a key it holds)
-      demo = null;
+      # the demo has a library of its own (modules/library/libraries.nix),
+      # so the tile opens: it reads that one, writes nothing anywhere, and
+      # the gate is what enforces it rather than this line
+      demo = "read";
       icon = "files";
       color = "#2f6fd6";
       rank = 30;

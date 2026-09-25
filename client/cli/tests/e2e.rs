@@ -854,6 +854,7 @@ async fn the_demo_is_an_account_with_a_small_permission_set() {
         color: "#000".into(),
         demo: demo.map(String::from),
         demo_url: None,
+        menu_only: false,
     };
     // no tile lets the demo do anything: there is no demo
     let plain = Box_::start_home(

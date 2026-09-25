@@ -967,6 +967,12 @@ async fn page_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
 async fn files_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
+        // the demo comes here too when the box keeps a library for it: it
+        // reads that one and nothing else, and the page hides every
+        // control a reader has no use for
+        Some(user) if user == pages::DEMO_USER && app.demo_library.is_some() => {
+            Html(pages::files(&user, &app.home)).into_response()
+        }
         Some(user) if app.member(&user) && user != pages::DEMO_USER => {
             Html(pages::files(&user, &app.home)).into_response()
         }
@@ -979,6 +985,9 @@ async fn files_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response
 async fn media_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
+        Some(user) if user == pages::DEMO_USER && app.demo_library.is_some() => {
+            Html(pages::media(&user, &app.home)).into_response()
+        }
         Some(user) if app.member(&user) && user != pages::DEMO_USER => {
             Html(pages::media(&user, &app.home)).into_response()
         }
@@ -1311,13 +1320,19 @@ pub async fn start(
         .route("/verify", get(verify))
         .route("/health", get(|| async { "ok" }))
         // the browser side, served under /_dd/ on every vhost
-        .route("/_dd/login", get(|| async { Html(pages::login()) }))
+        .route(
+            "/_dd/login",
+            get(|State(a): State<Arc<App>>| async move { Html(pages::login(&a.domain)) }),
+        )
         .route("/_dd/login/start", post(login_start))
         .route("/_dd/login/finish", post(login_finish))
         .route("/_dd/logout", get(logout))
         .route("/_dd/home", get(home_page))
         .route("/_dd/enrol", get(|| async { Html(pages::enrol()) }))
-        .route("/_dd/join", get(|| async { Html(pages::join()) }))
+        .route(
+            "/_dd/join",
+            get(|State(a): State<Arc<App>>| async move { Html(pages::join(&a.domain)) }),
+        )
         .route("/_dd/join/start", post(join_start))
         .route("/_dd/join/finish", post(join_finish))
         .route("/_dd/join/sign", post(join_sign))
@@ -1405,6 +1420,7 @@ mod tests {
                 color: String::new(),
                 demo: demo.map(str::to_string),
                 demo_url: demo_url.map(str::to_string),
+                menu_only: false,
             };
         let home = [
             // members watch their own library here; the demo is sent to

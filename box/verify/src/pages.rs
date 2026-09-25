@@ -23,6 +23,15 @@ pub struct Service {
     /// library; the demo has none, and gets the box's own films.
     #[serde(rename = "demoUrl", default, skip_serializing_if = "Option::is_none")]
     pub demo_url: Option<String>,
+    /// In the bar's menu and not on the home page. Looking at the fleet
+    /// is not a service the way photos and films are, and a tile for it
+    /// sits oddly beside them.
+    #[serde(
+        rename = "menuOnly",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub menu_only: bool,
 }
 
 /// The account that needs no invite and no key: a look at what a member
@@ -101,19 +110,11 @@ impl Menu {
         // The tile's url, where a tile says. A library page belongs on the
         // gate's own host: that is the only one serving /_dd/transcode, so
         // a relative link followed from another host plays nothing.
-        let tile = |mark: &str, fallback: &'static str| {
-            services
-                .iter()
-                .find(|s| s.icon == mark)
-                .map(|s| s.url.clone())
-                .unwrap_or_else(|| fallback.to_string())
-        };
+        let demo = user == DEMO_USER;
         let mut groups = Vec::new();
-        if user != DEMO_USER {
-            groups.push(vec![
-                item("Files", &tile("files", "/_dd/files")),
-                item("Movies & TV", &tile("videos", "/_dd/media")),
-            ]);
+        if !demo {
+            // Files and Movies & TV are tiles on the home page; repeating
+            // them here would be the same door twice
             let mut fleet = vec![
                 item("Backups", "/_dd/backups"),
                 item("Devices", "/_dd/devices"),
@@ -123,6 +124,8 @@ impl Menu {
             fleet.extend(metrics);
             groups.push(fleet);
         } else if let Some(m) = metrics {
+            // the fleet's pages mean nothing to an account with no
+            // devices, no backups and no boxes of its own
             groups.push(vec![m]);
         }
         groups.push(vec![item("Sign out", "/_dd/logout")]);
@@ -132,7 +135,9 @@ impl Menu {
 
 #[derive(Template)]
 #[template(path = "login.html")]
-struct Login;
+struct Login<'a> {
+    domain: &'a str,
+}
 
 #[derive(Template)]
 #[template(path = "enrol.html")]
@@ -140,7 +145,9 @@ struct Enrol;
 
 #[derive(Template)]
 #[template(path = "join.html")]
-struct Join;
+struct Join<'a> {
+    domain: &'a str,
+}
 
 #[derive(Template)]
 #[template(path = "waiting.html")]
@@ -305,21 +312,22 @@ pub fn boxes(user: &str, services: &[Service]) -> String {
         services,
         "Boxes",
         "Asking every box…",
-        "Each box answers for itself, over the fleet's own network. A box that says nothing is off or unreachable, not gone.",
+        "Each box answers for itself, over the fleet's own network, and says when it last backed itself up. A box that says nothing is off or unreachable, not gone.",
         "boxes.js",
     )
 }
 
-/// What has been backed up and how far back it goes. Reading one back is
-/// not something a browser does: it is `restic restore` on the box, with
-/// the password only that box holds.
+/// The disks people have archived here: `dd image` writes an old
+/// computer into their own folder, in restic's format, with a password
+/// that never leaves the machine that made it. The box's own backups are
+/// fleet health and live on the Boxes page.
 pub fn backups(user: &str, services: &[Service]) -> String {
     panel(
         user,
         services,
         "Backups",
-        "Asking every box…",
-        "A box backs itself up, encrypted with a password only it holds, into the cluster. This page says what happened; restoring is done on the box.",
+        "Looking for your archives…",
+        "Disks you have put here with `dd image`. The box stores them and cannot read them: the password never left the machine that made the archive, so listing what is inside is `dd image list` there.",
         "backups.js",
     )
 }
@@ -370,9 +378,10 @@ fn render<T: Template>(t: T) -> String {
     t.render().unwrap_or_default()
 }
 
-/// Sign in: username, then the passkey.
-pub fn login() -> String {
-    render(Login)
+/// Sign in: username, then the passkey. Carries the domain so it can
+/// point at the downloads page, which lives on the bare name.
+pub fn login(domain: &str) -> String {
+    render(Login { domain })
 }
 
 /// Set up a passkey, from a link a device signed.
@@ -381,8 +390,8 @@ pub fn enrol() -> String {
 }
 
 /// An account, from nothing, in the browser: a name and a passkey.
-pub fn join() -> String {
-    render(Join)
+pub fn join(domain: &str) -> String {
+    render(Join { domain })
 }
 
 /// Signed in but not on the member list: the account exists, nothing is
@@ -431,6 +440,7 @@ pub fn home(user: &str, services: &[Service]) -> String {
         demo,
         tiles: services
             .iter()
+            .filter(|s| !s.menu_only)
             .map(|s| Tile {
                 name: &s.name,
                 url: match (demo, &s.demo_url) {
@@ -459,24 +469,32 @@ mod tests {
             color: "#123456".into(),
             demo: None,
             demo_url: None,
+            menu_only: false,
         }
     }
 
     #[test]
     fn auth_pages_are_one_shell_one_script() {
-        for page in [login(), enrol(), join()] {
+        for page in [login("commonty.org"), enrol(), join("commonty.org")] {
             assert!(page.starts_with("<!doctype html>"));
             assert!(page.trim_end().ends_with("</html>"));
             assert_eq!(page.matches("<script").count(), 1);
             assert_eq!(page.matches("</header>").count(), 1);
             assert!(page.contains("/_dd/static/home.css"));
         }
-        assert!(login().contains("dd enrol"));
+        assert!(login("commonty.org").contains("dd enrol"));
         assert!(enrol().contains("dd enrol"));
-        assert!(login().contains("/_dd/static/login.js"));
-        assert!(login().contains("href=\"/_dd/join\""));
+        assert!(login("commonty.org").contains("/_dd/static/login.js"));
+        assert!(login("commonty.org").contains("href=\"/_dd/join\""));
+        // somebody signing in on a phone needs the app before any of this
+        for html in [login("commonty.org"), join("commonty.org")] {
+            assert!(
+                html.contains("https://commonty.org/download"),
+                "no way to the app from a page a stranger lands on"
+            );
+        }
         assert!(enrol().contains("/_dd/static/enrol.js"));
-        assert!(join().contains("/_dd/static/join.js"));
+        assert!(join("commonty.org").contains("/_dd/static/join.js"));
         for f in ["login.js", "join.js", "enrol.js", "redeem.js", "photos.js"] {
             assert!(static_file(f).is_some(), "{f}");
         }
@@ -534,27 +552,19 @@ mod tests {
     fn the_menu_offers_a_member_their_own_pages_and_the_demo_none_of_them() {
         let svcs = [svc("Metrics", "metrics"), svc("Chat", "chat")];
         let html = home("tom", &svcs);
-        for page in [
-            "/_dd/files",
-            "/_dd/media",
-            "/_dd/backups",
-            "/_dd/devices",
-            "/_dd/network",
-            "/_dd/boxes",
-        ] {
+        for page in ["/_dd/backups", "/_dd/devices", "/_dd/network", "/_dd/boxes"] {
             assert!(html.contains(page), "member's menu is missing {page}");
+        }
+        // and these are tiles, so the menu must not repeat them
+        for page in ["/_dd/files", "/_dd/media"] {
+            assert!(!html.contains(page), "the menu repeats the {page} tile");
         }
         assert!(html.contains("https://metrics.example/"));
         assert!(html.contains("/_dd/logout"));
+        // the demo opens the library the box keeps for it, and nothing
+        // that belongs to an account with devices and boxes of its own
         let html = home(DEMO_USER, &svcs);
-        for page in [
-            "/_dd/files",
-            "/_dd/media",
-            "/_dd/backups",
-            "/_dd/devices",
-            "/_dd/network",
-            "/_dd/boxes",
-        ] {
+        for page in ["/_dd/backups", "/_dd/devices", "/_dd/network", "/_dd/boxes"] {
             assert!(!html.contains(page), "the demo was offered {page}");
         }
         assert!(html.contains("https://metrics.example/") && html.contains("/_dd/logout"));
@@ -623,7 +633,44 @@ mod tests {
         assert!(!html.contains("jellyfin"));
         let html = home(DEMO_USER, &[tv]);
         assert!(html.contains("href=\"https://jellyfin.x/sso\""));
-        assert!(!html.contains("/_dd/media"));
+        assert!(!html.contains("files.x/_dd/media"));
+    }
+
+    #[test]
+    fn the_name_is_what_opens_the_menu() {
+        let html = home("tom", &[svc("Chat", "chat")]);
+        // the name and the avatar are inside the control, not beside it
+        let s = html.split("<summary>").nth(1).unwrap_or_default();
+        let s = s.split("</summary>").next().unwrap_or_default();
+        assert!(
+            s.contains("<span>tom</span>"),
+            "the name is not the control: {s}"
+        );
+        assert!(s.contains("class=\"avatar\""));
+        // and nothing else in the bar competes with it
+        assert!(!html.contains("aria-label=\"Menu\""));
+    }
+
+    #[test]
+    fn a_menu_only_service_is_in_the_menu_and_not_a_tile() {
+        let mut m = svc("Metrics", "metrics");
+        m.menu_only = true;
+        let html = home("tom", &[svc("Photos", "photos"), m.clone()]);
+        assert_eq!(
+            html.matches("class=\"tile\"").count(),
+            1,
+            "metrics got a tile"
+        );
+        assert!(
+            html.contains("https://metrics.example/"),
+            "metrics left the menu too"
+        );
+        // the name it is given comes from the service, so the json the
+        // module emits and the field here have to agree
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("menuOnly"), "{json}");
+        let back: Service = serde_json::from_str(&json).unwrap();
+        assert!(back.menu_only);
     }
 
     #[test]

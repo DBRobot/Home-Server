@@ -1,11 +1,11 @@
-{# who is signed in, and everything that is not a service: the account's
-   own pages and the way out #}
+{# who is signed in, and everything that is not a service: the name is
+   the control, so there is no second thing in the bar to explain #}
 <div class="me">
-  <span class="avatar" aria-hidden="true">{{ initial }}</span>
-  <span>{{ user }}</span>
   <details class="menu">
-    <summary aria-label="Menu">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <summary>
+      <span class="avatar" aria-hidden="true">{{ initial }}</span>
+      <span>{{ user }}</span>
+      <span class="chev" aria-hidden="true"></span>
     </summary>
     <nav>
       {% for g in menu.groups %}{% if !loop.first %}<hr>{% endif %}

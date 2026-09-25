@@ -72,9 +72,7 @@ header {
   color: var(--brand-ink);
 }
 .bar {
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 16px 24px;
+  padding: 16px 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -307,6 +305,32 @@ button:focus-visible {
   font-size: 13px;
 }
 .note a { text-decoration: underline; }
+
+/* the way to the app, on the two pages a stranger lands on: a step up
+   from the small print around it without becoming a second call to
+   action beside the passkey button */
+.getapp {
+  margin-top: 18px;
+  padding-top: 16px;
+  color: var(--ink);
+  font-size: 13.5px;
+}
+.getapp a {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--ink);
+  font-weight: 500;
+  text-decoration: none;
+}
+.getapp a:hover {
+  background: var(--brand);
+  color: var(--brand-ink);
+  border-color: var(--brand);
+}
 code {
   font-family: var(--mono);
   font-size: 12.5px;
@@ -415,19 +439,29 @@ button.inline { margin: 0; padding: 4px 10px; font-size: 12.5px; }
 
 /* the menu in the bar: everything that is not a service */
 .menu { position: relative; }
+/* the name is the control: click it and the menu opens */
 .menu summary {
   list-style: none;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .12);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 20px;
   cursor: pointer;
+  font-size: 14px;
 }
 .menu summary::-webkit-details-marker { display: none; }
-.menu summary:hover { background: rgba(255, 255, 255, .22); }
-.menu summary svg { width: 18px; height: 18px; }
+.menu summary:hover { background: rgba(255, 255, 255, .14); }
+.menu[open] summary { background: rgba(255, 255, 255, .18); }
+.menu summary .chev {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: .7;
+}
+.menu[open] summary .chev { transform: rotate(180deg); }
 .menu nav {
   position: absolute;
   right: 0;
