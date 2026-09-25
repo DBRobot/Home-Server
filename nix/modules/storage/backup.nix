@@ -26,9 +26,6 @@ let
       printf 'dd_backup_%s{box="${box}"} %s\n' "$1" "$2" >> $f
     }
     num last_success_seconds "$(date +%s)"
-    ${lib.concatMapStrings (p: ''
-      printf 'dd_backup_path{box="${box}",path="${p}"} 1\n' >> $f
-    '') cfg.paths}
     if snaps=$(${pkgs.restic}/bin/restic snapshots --json 2>/dev/null); then
       jq=${pkgs.jq}/bin/jq
       num snapshots "$(echo "$snaps" | $jq 'length' 2>/dev/null)"
@@ -118,6 +115,22 @@ in
       };
     }
     (lib.mkIf (cfg.paths != [ ]) {
+      # What this box covers, from boot, whether or not a run has ever
+      # worked. Written by the backup only, it would say "nothing here is
+      # backed up" about a box whose backups have never once succeeded,
+      # which is the one case worth seeing.
+      # the directory itself belongs to modules/observe/metrics.nix, which
+      # owns it as node-exporter; a second `d` rule here would fight it
+      # over the owner on every boot. L+ makes what parents it needs.
+      systemd.tmpfiles.rules = [
+        "L+ ${facts}/backup-paths.prom - - - - ${
+          pkgs.writeText "backup-paths.prom" (
+            "# HELP dd_backup_path A path this box backs up.\n# TYPE dd_backup_path gauge\n"
+            + lib.concatMapStrings (p: "dd_backup_path{box=\"${box}\",path=\"${p}\"} 1\n") cfg.paths
+          )
+        }"
+      ];
+
       services.restic.backups.dd = {
         repository = "s3:${cfg.endpoint}/backups-${box}";
         environmentFile = toString cfg.envFile;
