@@ -1,5 +1,7 @@
 {# The one page a stranger is meant to see. No session, no gate: someone
-   who has been invited needs the app before they can sign in to anything. #}
+   who has been invited needs the app before they can sign in to anything.
+   A platform with nothing to download is shown anyway, greyed, so the
+   page says what is coming instead of pretending it does not exist. #}
 {% extends "base.html" %}
 {% block title %}Get Commonty{% endblock %}
 {% block main %}
@@ -10,41 +12,47 @@
     owns, encrypted on your own device before they leave it. The app is how
     you reach them.</p>
 
+    {% for g in groups %}
     <section class="shelf">
-      <h2>Linux</h2>
-      <ul class="rows">
-        <li>
-          <span class="rowname">Debian, Ubuntu and anything that takes a .deb</span>
-          <a class="quiet inline" href="{{ deb }}">Download</a>
+      <h2>{{ g.title }}</h2>
+      <ul class="oses">
+        {% for p in g.platforms %}
+        <li class="os{% if p.files.is_empty() %} off{% endif %}">
+          <span class="oslogo" aria-hidden="true">
+            <svg viewBox="0 0 24 24">{{ p.icon|safe }}</svg>
+          </span>
+          <h3>{{ p.name }}</h3>
+          {% if p.files.is_empty() %}
+          <p class="note">{{ p.soon }}</p>
+          {% else if p.files.len() == 1 %}
+          <a class="get" href="{{ p.files[0].1 }}">Download</a>
+          {% else %}
+          {# a split button: the first format is what most people want and
+             the button gets it, the arrow is for everyone else #}
+          <div class="split">
+            <a class="get" href="{{ p.files[0].1 }}">Download {{ p.files[0].0 }}</a>
+            <details>
+              <summary aria-label="Other formats"><span class="chev" aria-hidden="true"></span></summary>
+              <div class="formats">
+                {% for f in p.files %}<a href="{{ f.1 }}">{{ f.0 }}</a>{% endfor %}
+              </div>
+            </details>
+          </div>
+          {% endif %}
         </li>
-        <li>
-          <span class="rowname">AppImage, for everything else</span>
-          <a class="quiet inline" href="{{ appimage }}">Download</a>
-        </li>
+        {% endfor %}
       </ul>
-      <p class="note">The AppImage needs no install: make it executable and run it.</p>
     </section>
+    {% endfor %}
 
-    <section class="shelf">
-      <h2>Android</h2>
-      <ul class="rows">
-        <li>
-          <span class="rowname">APK, installed by hand</span>
-          <a class="quiet inline" href="{{ apk }}">Download</a>
-        </li>
-      </ul>
-      <p class="note">Android asks you to allow installing from outside its
-      store, once. There is no listing to install from: this is not a product.</p>
-    </section>
-
-    <section class="shelf">
-      <h2>Or build it yourself</h2>
-      <p class="note">Everything here is built from
-      <a href="{{ repo }}">the source</a>, in the open, by the same commands
-      you can run. Nothing in the app is a secret: it makes its own key on
-      your device the first time you open it, and that key never leaves.</p>
-    </section>
-
+    <p class="note">The AppImage needs no install: make it executable and
+    run it. Android asks you to allow installing from outside its store,
+    once; there is no listing to install from, because this is not a
+    product.</p>
+    <p class="note">Everything here is built from <a href="{{ repo }}">the
+    source</a>, by the same commands you can run. Nothing in the app is a
+    secret: it makes its own key on your device the first time you open
+    it, and that key never leaves.</p>
     <p class="note">Already have it? <a href="https://home.{{ domain }}/">Sign in</a>.</p>
   </div>
 </main>

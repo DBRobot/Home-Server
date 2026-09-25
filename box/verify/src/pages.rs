@@ -174,34 +174,96 @@ struct Photos<'a> {
     menu: Menu,
 }
 
+/// one platform's card on the downloads page
+struct Platform {
+    name: &'static str,
+    icon: &'static str,
+    /// what to call the file, and where it is; empty means not yet
+    files: Vec<(&'static str, String)>,
+    /// shown under the name when there is nothing to download
+    soon: &'static str,
+}
+
+struct Group {
+    title: &'static str,
+    platforms: Vec<Platform>,
+}
+
 #[derive(Template)]
 #[template(path = "download.html")]
 struct Download<'a> {
     domain: &'a str,
     repo: &'a str,
-    deb: String,
-    appimage: String,
-    apk: String,
+    groups: Vec<Group>,
+}
+
+/// the logo on a platform's card, from web/icons/os/
+fn os_icon(key: &str) -> &'static str {
+    match key {
+        "linux" => include_str!("../web/icons/os/linux.svg"),
+        "android" => include_str!("../web/icons/os/android.svg"),
+        "apple" => include_str!("../web/icons/os/apple.svg"),
+        _ => include_str!("../web/icons/os/windows.svg"),
+    }
 }
 
 /// Where a stranger gets the app. Public: someone invited has nothing to
-/// sign in with until they have it. The artifacts are built after a merge
+/// sign in with until they have it. The artifacts are built after a tag
 /// and published as a release on the mirror, so the links point there by
-/// the tag the release carries, not at a file this box holds.
+/// that tag, not at a file this box holds. A platform with no files is
+/// shown anyway, so the page says what is coming rather than hiding it.
 pub fn download(domain: &str, repo: &str, version: &str) -> String {
-    let at = |name: &str| format!("{repo}/releases/download/{version}/{name}");
+    let at = |name: String| format!("{repo}/releases/download/{version}/{name}");
+    let v = version.trim_start_matches('v');
+    let groups = vec![
+        Group {
+            title: "Desktop",
+            platforms: vec![
+                Platform {
+                    name: "Linux",
+                    icon: os_icon("linux"),
+                    files: vec![
+                        (".deb", at(format!("commonty_{v}_amd64.deb"))),
+                        ("AppImage", at(format!("commonty_{v}_amd64.AppImage"))),
+                    ],
+                    soon: "",
+                },
+                Platform {
+                    name: "Windows",
+                    icon: os_icon("windows"),
+                    files: vec![],
+                    soon: "Not built yet",
+                },
+                Platform {
+                    name: "macOS",
+                    icon: os_icon("apple"),
+                    files: vec![],
+                    soon: "Not built yet",
+                },
+            ],
+        },
+        Group {
+            title: "Mobile",
+            platforms: vec![
+                Platform {
+                    name: "Android",
+                    icon: os_icon("android"),
+                    files: vec![("APK", at("commonty.apk".into()))],
+                    soon: "",
+                },
+                Platform {
+                    name: "iOS",
+                    icon: os_icon("apple"),
+                    files: vec![],
+                    soon: "Not built yet",
+                },
+            ],
+        },
+    ];
     render(Download {
         domain,
         repo,
-        deb: at(&format!(
-            "commonty_{}_amd64.deb",
-            version.trim_start_matches('v')
-        )),
-        appimage: at(&format!(
-            "commonty_{}_amd64.AppImage",
-            version.trim_start_matches('v')
-        )),
-        apk: at("commonty.apk"),
+        groups,
     })
 }
 
@@ -446,6 +508,23 @@ mod tests {
         assert!(html.contains("https://github.com/x/y/releases/download/v0.2.0/commonty.apk"));
         assert!(html.contains("commonty_0.2.0_amd64.deb"));
         assert!(html.contains("commonty_0.2.0_amd64.AppImage"));
+        // desktop and mobile, each with what is there and what is not
+        assert!(html.contains("Desktop") && html.contains("Mobile"));
+        for os in ["Linux", "macOS", "Windows", "Android", "iOS"] {
+            assert!(html.contains(os), "no card for {os}");
+        }
+        // a platform with nothing to download says so and offers no link
+        assert_eq!(html.matches("class=\"os off\"").count(), 3);
+        // two formats collapse into one control, one format is a button
+        // the button takes the first format; the arrow offers every one
+        assert_eq!(html.matches("class=\"split\"").count(), 1);
+        assert!(
+            html.contains("Download .deb"),
+            "the default is not on the button"
+        );
+        assert!(html.contains(">.deb<") && html.contains(">AppImage<"));
+        // and a platform with one format is a plain button, no arrow
+        assert_eq!(html.matches("class=\"get\"").count(), 2);
         // a stranger is who this is for: no name, no avatar, no menu
         assert!(!html.contains("class=\"me\"") && !html.contains("/_dd/logout"));
         assert!(html.contains("https://home.commonty.org/"));
