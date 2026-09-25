@@ -3,7 +3,7 @@
 // with its episodes inside. The same passkey, the same gate, the same
 // ciphertext: only the shape of the listing is different (library.js).
 
-import { unlock, list, fetchPlain, save, put, trash, mkdir, transcode, playsPlaylists, playlistPlayer, human } from './library.js';
+import { unlock, list, fetchPlain, save, put, trash, mkdir, transcode, stopTranscode, playsPlaylists, playlistPlayer, human } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const user = document.querySelector('[data-user]').dataset.user;
@@ -14,6 +14,7 @@ const INLINE = 256 * 1024 * 1024;
 let lib = null;
 let show = null;                 // the programme being looked at, or null
 let hls = null;                  // the player, where the browser needs one
+let session = null;              // the box's playlist, while a film is open
 
 function tile(label, sub, onclick) {
   const li = document.createElement('li');
@@ -91,7 +92,9 @@ async function play(it) {
   // itself; everywhere else the page loads a player from the box.
   $('note').textContent = 'Asking the box to play it…';
   try {
+    await close();
     const url = await transcode(lib, it.path, it.sealed);
+    session = url;
     if (playsPlaylists()) {
       v.src = url;
     } else {
@@ -125,6 +128,19 @@ async function play(it) {
     v.play().catch(() => {});
   } catch (e) {
     $('note').textContent = e.message;
+  }
+}
+
+/// stop the film and tell the box to stop making it
+async function close() {
+  $('video').pause();
+  $('video').removeAttribute('src');
+  hls?.destroy();
+  hls = null;
+  if (session) {
+    const gone = session;
+    session = null;
+    await stopTranscode(gone);
   }
 }
 
@@ -180,13 +196,11 @@ async function start() {
     await episodes(name);
   };
   $('close').onclick = () => {
-    $('video').pause();
-    // the player holds the box's session open until it is told to stop
-    hls?.destroy();
-    hls = null;
-    $('video').removeAttribute('src');
+    close();
     $('playing').hidden = true;
   };
+  // a tab closed mid-film should not leave the box transcoding either
+  addEventListener('pagehide', () => { if (session) stopTranscode(session, true); });
   await Promise.all([films(), programmes()]);
 }
 

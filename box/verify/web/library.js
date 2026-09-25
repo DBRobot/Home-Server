@@ -139,6 +139,19 @@ export async function transcode(lib, path, sealedSize) {
   return `/_dd/transcode${playlist}`;
 }
 
+/// Tell the box it can stop. Without this the ffmpeg behind a film the
+/// viewer closed after a minute keeps going until the session times out
+/// ten minutes later, which on a box with one job at a time is the
+/// difference between the next film starting now and starting then.
+export async function stopTranscode(url, leaving) {
+  const at = url.replace(/\/index\.m3u8$/, '');
+  try {
+    // keepalive so it still goes when the tab is on its way out; a beacon
+    // would not, since that is a POST and this route takes DELETE
+    await fetch(at, { method: 'DELETE', keepalive: !!leaving });
+  } catch { /* it times out by itself; this is only sooner */ }
+}
+
 /// whether this browser plays a playlist by itself (Safari, every iPhone)
 export function playsPlaylists() {
   const v = document.createElement('video');
