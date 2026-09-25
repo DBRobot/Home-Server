@@ -2,3 +2,12 @@ target/
 result
 result-*
 __pycache__/
+
+# the app's generated Android project: sources are ours, builds and the
+# engine libraries (nix build .#net-android) are not
+app/gen/android/app/build/
+app/gen/android/.gradle/
+app/gen/android/build/
+app/gen/android/buildSrc/build/
+app/gen/android/app/src/main/jniLibs/
+app/gen/android/local.properties

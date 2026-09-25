@@ -5,9 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# The OS credential store: secret service on linux, keychain on macos,
-# credential manager on windows. Nothing bespoke, no crypto of ours.
-keyring = "4"
 zeroize = "1"
 thiserror = "2"
 # The user-held key. A device signs its own short-lived tokens with an ed25519
@@ -16,3 +13,10 @@ thiserror = "2"
 biscuit-auth = "6"
 base64 = "0.22"
 serde_json = "1"
+
+# The OS credential store: secret service on linux, keychain on macos,
+# credential manager on windows. Nothing bespoke, no crypto of ours. Android
+# has none of these; there the app keeps a file in its private storage
+# (FileStore), which the system keeps from other apps.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+keyring = "4"
