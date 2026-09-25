@@ -231,8 +231,8 @@ pub fn download(domain: &str, repo: &str, version: &str) -> String {
                 Platform {
                     name: "Windows",
                     icon: os_icon("windows"),
-                    files: vec![],
-                    soon: "Not built yet",
+                    files: vec![("Installer", at("commonty-setup.exe".into()))],
+                    soon: "",
                 },
                 Platform {
                     name: "macOS",
@@ -514,7 +514,11 @@ mod tests {
             assert!(html.contains(os), "no card for {os}");
         }
         // a platform with nothing to download says so and offers no link
-        assert_eq!(html.matches("class=\"os off\"").count(), 3);
+        // only the two nobody has built yet are greyed
+        assert_eq!(html.matches("class=\"os off\"").count(), 2);
+        assert!(html.contains("commonty-setup.exe"));
+        // what WinFsp's licence asks of us, in the interface
+        assert!(html.contains("Bill Zissimopoulos") && html.contains("winfsp"));
         // two formats collapse into one control, one format is a button
         // the button takes the first format; the arrow offers every one
         assert_eq!(html.matches("class=\"split\"").count(), 1);
@@ -523,8 +527,8 @@ mod tests {
             "the default is not on the button"
         );
         assert!(html.contains(">.deb<") && html.contains(">AppImage<"));
-        // and a platform with one format is a plain button, no arrow
-        assert_eq!(html.matches("class=\"get\"").count(), 2);
+        // one format is a plain button; only Linux has two
+        assert_eq!(html.matches("class=\"get\"").count(), 3);
         // a stranger is who this is for: no name, no avatar, no menu
         assert!(!html.contains("class=\"me\"") && !html.contains("/_dd/logout"));
         assert!(html.contains("https://home.commonty.org/"));

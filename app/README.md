@@ -85,3 +85,21 @@ builds and the copied libraries are not. An emulator:
 Not in ci: a phone build is made here. Proven 2026-09-24 on the emulator:
 recovery of an account, sign-in, joining the network through the bridge,
 node1 as a peer.
+
+## Windows
+
+The same app again. The engine is a dll rather than a static archive,
+because cgo builds with mingw and Rust links with msvc and neither will
+take the other's archive; a dll is loaded by name and the question does
+not arise. The drive is rclone over WinFsp instead of FUSE, and killing
+rclone is enough to tear it down, so there is no `fusermount` there.
+
+The installer is built by `.github/workflows/release.yml` on a tag and
+carries the app, `rclone.exe`, and WinFsp's own unmodified installer.
+WebView2 is **not** bundled: the installer fetches it from Microsoft if
+the machine lacks it, because embedding it would mean shipping
+proprietary software beside WinFsp, which its FLOSS exception forbids.
+
+WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos,
+<https://github.com/winfsp/winfsp>. Bundled under the exception it grants
+to software under an OSI licence; Commonty is AGPL-3.0-or-later.
