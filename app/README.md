@@ -85,3 +85,39 @@ builds and the copied libraries are not. An emulator:
 Not in ci: a phone build is made here. Proven 2026-09-24 on the emulator:
 recovery of an account, sign-in, joining the network through the bridge,
 node1 as a peer.
+
+## Windows
+
+The same app again. The engine is a dll rather than a static archive,
+because cgo builds with mingw and Rust links with msvc and neither will
+take the other's archive; a dll is loaded by name and the question does
+not arise. The drive is rclone over WinFsp instead of FUSE, and killing
+rclone is enough to tear it down, so there is no `fusermount` there.
+
+The installer is built by `.github/workflows/release.yml` on a tag and
+carries the app, `rclone.exe`, and WinFsp's own unmodified installer.
+WebView2 is **not** bundled: the installer fetches it from Microsoft if
+the machine lacks it, because embedding it would mean shipping
+proprietary software beside WinFsp, which its FLOSS exception forbids.
+
+WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos,
+<https://github.com/winfsp/winfsp>. Bundled under the exception it grants
+to software under an OSI licence; Commonty is AGPL-3.0-or-later.
+
+### Cross-building Windows from Linux, and what it proves
+
+`dd.exe` cross-compiles with mingw and runs under wine: it makes an
+identity, signs the entry, publishes it to a box over tls and mints a
+device token, and the box verifies that signature. The whole client
+stack works on Windows and is not a guess.
+
+The app cross-compiles too, but only with `crate-type = ["lib"]`. With
+the `cdylib` that Android needs, `ld.bfd` fails with `export ordinal too
+large` - a limit of the GNU linker, not of the code. GitHub builds on
+real Windows with msvc, which has no such limit, so leave the crate
+types alone; if that build ever fails the same way, this is why and
+dropping cdylib for the desktop target is the fix.
+
+The window itself cannot be tested here at all. Tauri renders through
+WebView2, wine has none, and the app starts and then waits with a blank
+screen. Proving the window needs Windows.

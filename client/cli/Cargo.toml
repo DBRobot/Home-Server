@@ -12,7 +12,6 @@ directory = { path = "../directory" }
 account = { path = "../account" }
 media = { path = "../media" }
 library = { path = "../library" }
-fuser = "0.18"
 libc = "0.2"
 release = { path = "../../box/release" }
 ed25519-dalek = "2"
