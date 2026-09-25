@@ -98,11 +98,21 @@ impl Menu {
             .iter()
             .find(|s| s.icon == "metrics")
             .map(|s| item("Metrics", &s.url));
+        // The tile's url, where a tile says. A library page belongs on the
+        // gate's own host: that is the only one serving /_dd/transcode, so
+        // a relative link followed from another host plays nothing.
+        let tile = |mark: &str, fallback: &'static str| {
+            services
+                .iter()
+                .find(|s| s.icon == mark)
+                .map(|s| s.url.clone())
+                .unwrap_or_else(|| fallback.to_string())
+        };
         let mut groups = Vec::new();
         if user != DEMO_USER {
             groups.push(vec![
-                item("Files", "/_dd/files"),
-                item("Movies & TV", "/_dd/media"),
+                item("Files", &tile("files", "/_dd/files")),
+                item("Movies & TV", &tile("videos", "/_dd/media")),
             ]);
             let mut fleet = vec![
                 item("Backups", "/_dd/backups"),
