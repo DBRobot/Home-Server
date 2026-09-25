@@ -55,6 +55,13 @@
   # laptop (`dd secret run -- decrypt --extract '["console-password"]'
   # secrets/fleet.yaml`); the box holds only its hash.
   sops.secrets.console-password-hash.neededForUsers = true;
+  # and it has to be false for that hash to reach /etc/shadow: with
+  # mutable users nixos writes a declarative password only for a user it
+  # is creating, so on these boxes admin kept the `!` it was made with and
+  # the keyboard way in did not exist. Nobody has ever set a password or
+  # made a user by hand here (checked on both boxes); users are what the
+  # repo says they are.
+  users.mutableUsers = false;
 
   users.users.admin = {
     isNormalUser = true;
