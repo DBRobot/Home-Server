@@ -183,7 +183,9 @@ impl Gate {
         Ok(out)
     }
 
-    /// everything under a plain folder, all levels, files only
+    /// Everything under a plain folder, all levels. Folders come too: a
+    /// library that holds only folders is not an empty library, and
+    /// listing it as one is how it looks broken.
     pub async fn walk(&self, plain_dir: &str) -> Result<Vec<Item>> {
         let mut out = Vec::new();
         let mut todo = vec![plain_dir.to_string()];
@@ -191,9 +193,8 @@ impl Gate {
             for it in self.list(&d).await? {
                 if it.dir {
                     todo.push(it.path.clone());
-                } else {
-                    out.push(it);
                 }
+                out.push(it);
             }
         }
         out.sort_by(|a, b| a.path.cmp(&b.path));

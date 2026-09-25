@@ -12,6 +12,13 @@ crate-type = ["cdylib", "rlib"]
 # ente's own account protocol and crypto, the same pinned commit as crate ente
 ente-accounts = { git = "https://github.com/ente-io/ente", rev = "d28c3462e70bf63f8323700ce77797237a0fd1b4" }
 ente-core = { git = "https://github.com/ente-io/ente", rev = "d28c3462e70bf63f8323700ce77797237a0fd1b4" }
+# a member's libraries in the browser (library.rs): the same crates the
+# app and dd use, compiled to wasm
+identity = { path = "../identity" }
+library = { path = "../library" }
+ed25519-dalek = "2"
+sha2 = "0.10"
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zeroize = "1"
@@ -19,3 +26,6 @@ zeroize = "1"
 wasm-bindgen = "=0.2.121"
 wasm-bindgen-futures = "0.4"
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# identity pulls webauthn's rand, whose getrandom needs telling that a
+# browser is where its randomness comes from (the cfg flag is in flake.nix)
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }

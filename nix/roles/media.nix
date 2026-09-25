@@ -16,11 +16,14 @@
   dd.home.services = [
     {
       name = "Movies & TV";
-      # straight into the sso plugin: jellyfin's own login page is for
-      # nobody here, and a first-time person landing on it is lost
-      url = "https://jellyfin.${config.dd.domain}/sso/OID/p/dd";
-      # the demo is a jellyfin user like any other, made on first visit,
-      # with jellyfin's defaults: watch, no admin. jellyfin is the limit
+      # a member's films are their own library, opened by their passkey
+      url = "https://files.${config.dd.domain}/_dd/media";
+      # the demo has no library and no passkey: it gets the box's own
+      # films, through jellyfin, straight into the sso plugin because
+      # jellyfin's own login page is for nobody here
+      demoUrl = "https://jellyfin.${config.dd.domain}/sso/OID/p/dd";
+      # a jellyfin user like any other, made on first visit, with
+      # jellyfin's defaults: watch, no admin. jellyfin is the limit
       demo = "full";
       icon = "videos";
       color = "#b4457a";
@@ -28,9 +31,10 @@
     }
     {
       name = "Files";
-      url = "https://files.${config.dd.domain}/";
-      # a folder of samples; the gate refuses its writing methods
-      demo = "read";
+      url = "https://files.${config.dd.domain}/_dd/files";
+      # the demo has no library to open: the tile is shown and shut until
+      # it has one (a library with nothing in it is still a key it holds)
+      demo = null;
       icon = "files";
       color = "#2f6fd6";
       rank = 30;

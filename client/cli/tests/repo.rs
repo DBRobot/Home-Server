@@ -109,6 +109,9 @@ async fn encrypted_remote_end_to_end() {
     let dir = scratch("box").join("keys");
     let (addr, _task) = verify::start(verify::Config {
         home: vec![],
+        fleet: Default::default(),
+        demo_library: None,
+        app_release: None,
         bind: "127.0.0.1:0".parse().unwrap(),
         dir,
         peers: vec![],

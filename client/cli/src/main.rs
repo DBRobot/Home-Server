@@ -267,6 +267,10 @@ enum IdentityCmd {
 
 #[derive(Subcommand)]
 enum PasskeyCmd {
+    /// Give a passkey already in your entry the key a browser derived
+    /// from it, so that browser can open your libraries. The browser
+    /// prints the key; this signs it in.
+    Link { id: String, library_key: String },
     /// Every passkey in your entry, by id.
     List,
     /// Drop one; the browser that holds it stops working everywhere at once.
@@ -610,6 +614,16 @@ async fn main() -> Result<()> {
                 let signed = who::remove_passkey(&directories, &name, &root, &id).await?;
                 println!("passkey {id} removed; version {}", signed.entry.version);
             }
+            PasskeyCmd::Link { id, library_key } => {
+                let root = who::load_root(&keys)?.context("no root key on this machine")?;
+                let name = keys.get(USER)?.context("no name here")?.to_string();
+                let signed =
+                    account::link_passkey(&directories, &name, &root, &id, &library_key).await?;
+                println!(
+                    "passkey {id} can open your libraries; version {}",
+                    signed.entry.version
+                );
+            }
             PasskeyCmd::Add { file } => {
                 let root = who::load_root(&keys)?.context("no root key on this machine")?;
                 let name = keys.get(USER)?.context("no name here")?.to_string();
@@ -624,6 +638,12 @@ async fn main() -> Result<()> {
                         .and_then(|x| x.as_str())
                         .context("no cred.cred_id in that record")?
                         .to_string();
+                    // a record the browser made carries the key it derived
+                    // from this passkey; one from elsewhere does not
+                    let library_key = cred
+                        .get("library_key")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string);
                     let signed = who::admit_passkey(
                         &directories,
                         &name,
@@ -632,6 +652,7 @@ async fn main() -> Result<()> {
                             id: id.clone(),
                             cred,
                             added: identity::now(),
+                            library_key,
                         },
                     )
                     .await?;

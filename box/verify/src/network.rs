@@ -94,6 +94,35 @@ impl Door {
         id_of(&v["user"])
     }
 
+    /// The machines this member has on the network, as the control
+    /// server has them. Read only: a page shows them, nothing here takes
+    /// one away.
+    pub async fn mine(&self, name: &str) -> Result<Vec<serde_json::Value>> {
+        let v = self
+            .call(
+                reqwest::Method::GET,
+                &format!("/api/v1/node?user={name}"),
+                None,
+            )
+            .await?;
+        Ok(v["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            // headscale's filter is not trusted to: match the owner here
+            .filter(|n| n["user"]["name"].as_str() == Some(name))
+            .map(|n| {
+                serde_json::json!({
+                    "name": n["givenName"].as_str().or(n["name"].as_str()),
+                    "addresses": n["ipAddresses"],
+                    "lastSeen": n["lastSeen"],
+                    "online": n["online"],
+                    "os": n["hostinfo"]["OS"],
+                })
+            })
+            .collect())
+    }
+
     /// one key, one device, ten minutes
     pub async fn join_key(&self, name: &str) -> Result<(String, u64)> {
         let user = self.user_id(name).await?;

@@ -1,16 +1,14 @@
-{ config, pkgs, ... }:
+{ config, ... }:
 let
   base = config.dd.domain;
   host = "files.${base}";
-  root = "/srv/users";
   images = "/srv/images";
 
-  # One dav block, parameterised on where it writes. Both locations share the
-  # auth and the $dav_dir whitelist; they differ only in the root - and in what
-  # reads the result afterwards. /srv/users is media, so jellyfin has an acl on
-  # it. /srv/images is per-user archives that arrive already encrypted (rclone
-  # crypt on the client), so nothing on this host can read them and nothing
-  # gets an acl. See modules/user-accounts.nix for the directories.
+  # The dav block, on the one root that is left: /srv/images, per-user
+  # archives that arrive already encrypted (rclone crypt on the client),
+  # so nothing on this host can read them and nothing gets an acl. The
+  # $dav_dir whitelist below keeps a request inside its own name's
+  # directory. See modules/gate/user-accounts.nix for the directories.
   dav = dir: listing: ''
     auth_request /_dd/verify;
     auth_request_set $dav_user $upstream_http_x_auth_request_preferred_username;
@@ -34,24 +32,23 @@ let
   '';
 in
 {
-  # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
-  dd.box.plaintext = [ "webdav (/srv/users)" ];
-  # Authenticated upload with no new service: nginx already ships the dav
-  # modules, and the verifier (modules/verify.nix) says whose request it is.
-  # This is the only way files reach /srv/users - samba was retired with
-  # modules/smb-media.nix, having never carried a file.
+  # /srv/users is retired. A member's files are their library now: named
+  # and encrypted on their own machine, stored as ciphertext under
+  # /_dd/dav (modules/gate/verify.nix, box/verify/src/dav.rs), opened in
+  # the browser at /_dd/files or mounted with `dd media`. This host keeps
+  # /images/, which is the same idea by hand: archives that arrive
+  # already encrypted by rclone crypt on the client, for `dd image`.
   #
-  # Not mountable in Finder or Explorer: those speak basic auth only and
-  # cannot present a bearer token. Use rclone with `dd token`, or `dd image`.
+  # Nothing under /srv/users is deleted here. It is still backed up and
+  # still on the disk; it is only no longer served. Removing it is a
+  # decision for whoever owns the box, once they have looked.
   services.nginx.virtualHosts.${host} = {
     useACMEHost = base;
     forceSSL = true;
 
-    locations."/".extraConfig = dav root "html" + ''
-      error_page 401 = @login;
-      error_page 403 = @waiting;
-      # the demo reads its folder of samples and writes nothing: the gate
-      # refuses its writing methods
+    # the door a person lands on: their library, not a folder on this box
+    locations."/".extraConfig = ''
+      return 302 https://files.${base}/_dd/files;
     '';
     # Verified with rclone crypt -> chunker -> webdav: an unknown-size stream
     # (`dd if=/dev/sdX | zstd | rclone rcat`) arrives as fixed-size chunk PUTs,
@@ -60,7 +57,7 @@ in
 
   };
 
-  # An empty $dav_user would make the alias /srv/users/ - the root itself,
+  # An empty $dav_user would make the alias /srv/images/ - the root itself,
   # shared by everyone - and create_full_put_path would happily mkdir in it.
   # Kanidm will not issue a name with a slash in it, but the directory name
   # here comes from a header, so it gets whitelisted rather than trusted.
@@ -85,45 +82,10 @@ in
 
   # nginx's unit is sandboxed with a read-only /srv, so every PUT failed
   # with "mkdir() ... (30: Read-only file system)" despite correct auth.
-  systemd.services.nginx.serviceConfig.ReadWritePaths = [
-    root
-    images
-  ];
+  systemd.services.nginx.serviceConfig.ReadWritePaths = [ images ];
 
   # nginx writes the upload here before moving it into place; without a
   # temp path on the same filesystem every PUT is a cross-device copy
-  systemd.tmpfiles.rules = [
-    "d /srv/upload-tmp 0700 nginx nginx -"
-    # the demo's folder: what a visitor gets to browse
-    "d ${root}/demo 0755 nginx nginx -"
-    "L+ ${root}/demo/README.txt - - - - ${pkgs.writeText "demo-readme" ''
-      This is the demo's folder. A member's folder looks like this, with
-      their own files in it, reachable from the browser, a phone, or any
-      program that speaks WebDAV. The demo can look; only a member writes.
-    ''}"
-  ];
+  systemd.tmpfiles.rules = [ "d /srv/upload-tmp 0700 nginx nginx -" ];
 
-  # A folder for every name in the directory, the moment the entry lands:
-  # without it a new person's first PROPFIND is a 404. nginx owns it, as it
-  # owns what it writes there. An existing folder is left as it is.
-  systemd.services.dd-user-dirs = {
-    description = "A folder under ${root} for every name in the directory";
-    serviceConfig.Type = "oneshot";
-    script = ''
-      for f in /var/lib/dd-verify/keys/*.json; do
-        [ -e "$f" ] || continue
-        n=$(basename "$f" .json)
-        case "$n" in *[!a-zA-Z0-9._-]*|.*) continue ;; esac
-        [ -d "${root}/$n" ] || install -d -o nginx -g nginx -m 0750 "${root}/$n"
-      done
-    '';
-    wantedBy = [ "multi-user.target" ];
-  };
-  systemd.paths.dd-user-dirs = {
-    wantedBy = [ "multi-user.target" ];
-    pathConfig = {
-      PathChanged = "/var/lib/dd-verify/keys";
-      Unit = "dd-user-dirs.service";
-    };
-  };
 }

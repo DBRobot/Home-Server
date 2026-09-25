@@ -1,0 +1,102 @@
+# What a stranger downloads. Nothing here gates a merge: it runs after
+# one, on the mirror, because building an apk to hold up a pull request
+# spends seven minutes making something nobody fetches until a release
+# exists. The fleet's own releases are a different thing entirely and are
+# signed on a laptop with a key no runner has (box/release): this builds
+# the client, and only the client.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "the tag to build and publish"
+        required: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: what tauri needs on ubuntu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: the engine the app links
+        run: |
+          cd app/net
+          go build -buildmode=c-archive -o libcommontynet.a .
+          mkdir -p "$RUNNER_TEMP/netlib"
+          cp libcommontynet.a libcommontynet.h "$RUNNER_TEMP/netlib/"
+      - name: build the bundles
+        env:
+          COMMONTY_NET_LIB_DIR: ${{ runner.temp }}/netlib
+        run: |
+          cargo install tauri-cli --version '^2' --locked
+          cd app && cargo tauri build --bundles deb,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable" }
+      - name: the engine, one shared library per abi
+        run: |
+          NDK=$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | head -1)
+          T=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          cd app/net
+          mkdir -p "$RUNNER_TEMP/jni/arm64-v8a" "$RUNNER_TEMP/jni/x86_64"
+          CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC=$T/aarch64-linux-android34-clang \
+            go build -buildmode=c-shared -o "$RUNNER_TEMP/jni/arm64-v8a/libcommontynet.so" .
+          CGO_ENABLED=1 GOOS=android GOARCH=amd64 CC=$T/x86_64-linux-android34-clang \
+            go build -buildmode=c-shared -o "$RUNNER_TEMP/jni/x86_64/libcommontynet.so" .
+      - name: build the apk
+        env:
+          COMMONTY_NET_LIB_DIR: ${{ runner.temp }}/jni
+        run: |
+          cargo install tauri-cli --version '^2' --locked
+          mkdir -p app/gen/android/app/src/main/jniLibs
+          cp -r "$RUNNER_TEMP/jni/." app/gen/android/app/src/main/jniLibs/
+          cd app && cargo tauri android build --apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: app/gen/android/app/build/outputs/apk/**/*.apk
+
+  publish:
+    needs: [linux, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out }
+      - name: one name per artifact, as the downloads page asks for them
+        run: |
+          mkdir -p rel
+          cp out/linux/deb/*.deb rel/ 2>/dev/null || cp out/linux/*.deb rel/
+          cp out/linux/appimage/*.AppImage rel/ 2>/dev/null || cp out/linux/*.AppImage rel/
+          find out/android -name '*.apk' | head -1 | xargs -I{} cp {} rel/commonty.apk
+          ls -la rel/
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: rel/*
+          fail_on_unmatched_files: true

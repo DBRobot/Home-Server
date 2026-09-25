@@ -1918,11 +1918,17 @@ dependencies = [
 name = "dd-web"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
  "ente-accounts",
  "ente-core",
+ "getrandom 0.3.4",
  "getrandom 0.4.3",
+ "identity",
+ "library",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "zeroize",
@@ -2967,9 +2973,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -15,6 +15,14 @@ box.succeed(f"{env} {nix['dd']} identity new --name sarah {dirs}")
 out = box.succeed(f"{env} {nix['dd']} library new {dirs}")
 lib = out.split("library ")[1].split(":")[0].strip()
 assert len(lib) == 32, out
+# a new library opens on something: the pages and the mount expect these,
+# and a listing that hid folders is how an empty-looking library happens
+listing = box.succeed(f"{env} {nix['dd']} library ls {lib} {dirs}")
+for folder in ["Files/", "Movies/", "Shows/"]:
+    assert folder in listing, (folder, listing)
+
+# a folder made from the terminal, in a library that already exists
+box.succeed(f"{env} {nix['dd']} library mkdir {lib} Archive {dirs}")
 
 # what rclone needs: the library key as password, the id as salt, the gate
 # as a webdav remote with the device token. dd prints the key here for
@@ -64,6 +72,31 @@ assert "Files/note.txt" not in box.succeed(f"{rc} lsf -R lib:")
 keys_after = json.loads(box.succeed(aws).strip() or "[]")
 assert any(k.startswith(f"{lib}/trash/") for k in keys_after), keys_after
 assert len(keys_after) == len(keys), (keys, keys_after)
+
+# A browser has a cookie and no device token, and the gate takes it:
+# without this the Files and Movies pages could not read a single name.
+# The demo is the account that signs in without a passkey, so it is the
+# one a test can be. The cookie is Secure and domain-scoped, which curl
+# will not store for a plain http call to a loopback address, so it is
+# read off the response and sent back by hand.
+demo_lib = "e14dbb2a30e3096a5a9bc42ace4599b1"
+head = box.succeed("curl -s -D - -o /dev/null http://127.0.0.1:4181/_dd/demo")
+cookie = [l for l in head.splitlines() if l.lower().startswith("set-cookie:")]
+assert cookie, head
+jar = cookie[0].split(":", 1)[1].split(";")[0].strip()
+assert jar.startswith("dd_session="), jar
+as_demo = f"-H 'Cookie: {jar}'"
+
+cfg = json.loads(box.succeed(f"curl -s {as_demo} http://127.0.0.1:4181/_dd/config"))
+assert cfg["demoLibrary"]["id"] == demo_lib, cfg
+# its own library opens with that cookie
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_demo} -X PROPFIND http://127.0.0.1:4181/_dd/dav/{demo_lib}/ | grep -q 207")
+# a member's does not
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_demo} -X PROPFIND http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 403")
+# and the demo writes nothing, even in its own
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_demo} -X MKCOL http://127.0.0.1:4181/_dd/dav/{demo_lib}/x | grep -q 403")
+# the config says nothing about a library to anyone who is not the demo
+assert "demoLibrary" not in json.loads(box.succeed("curl -s http://127.0.0.1:4181/_dd/config"))
 
 # a stranger's token opens nothing; no token, nothing
 box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} identity new --name tom {dirs}")

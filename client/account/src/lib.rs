@@ -261,6 +261,43 @@ pub async fn remove_device(
     Ok(signed)
 }
 
+/// A passkey in the entry gains the key a browser derived from it, and
+/// every library key is sealed to that key as well: from then on any
+/// browser holding that passkey opens the member's libraries.
+pub async fn link_passkey(
+    dirs: &[String],
+    name: &str,
+    root: &ed25519_dalek::SigningKey,
+    id: &str,
+    library_key: &str,
+) -> Result<SignedEntry> {
+    identity::decode_public(library_key).context("that is not an ed25519 public key")?;
+    let cur = ours(dirs, name, root).await?;
+    let mut entry = cur.entry.clone();
+    let Some(p) = entry.passkeys.iter_mut().find(|p| p.id == id) else {
+        bail!("no passkey {id} in the entry");
+    };
+    if p.library_key.as_deref() == Some(library_key) {
+        bail!("that passkey already has this key");
+    }
+    p.library_key = Some(library_key.to_string());
+    let sealed_to = format!("passkey:{id}");
+    for lib in &mut entry.libraries {
+        let key = library::open_library(lib, None, Some(root))
+            .with_context(|| format!("library {}: the root does not open it", lib.id))?;
+        lib.keys.retain(|k| k.to != sealed_to);
+        lib.keys.push(library::SealedKey {
+            to: sealed_to.clone(),
+            sealed: library::seal_to(library_key, &key[..])?,
+        });
+    }
+    entry.version += 1;
+    entry.updated = identity::now();
+    let signed = identity::sign(entry, root)?;
+    publish(dirs, &signed).await?;
+    Ok(signed)
+}
+
 /// Recovery: the paper key installs a new root and a new recovery key, and
 /// the device list starts over with this device alone. Everything a lost or
 /// stolen device could sign is dead the moment a directory takes this.

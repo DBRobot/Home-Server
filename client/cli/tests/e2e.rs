@@ -78,6 +78,9 @@ impl Box_ {
             web_dir: None,
             photos: None,
             library: None,
+            fleet: Default::default(),
+            demo_library: None,
+            app_release: None,
             network: None,
             bind: "127.0.0.1:0".parse().unwrap(),
             dir: dir.clone(),
@@ -555,6 +558,23 @@ async fn an_account_made_in_a_browser_is_a_passkey_root_and_waits_for_membership
     assert_eq!(st, 200);
     assert!(body.contains("Your account is made"), "{body}");
     assert_eq!(get_with_cookie(&a, "/verify", &cookie).await.0, 403);
+    // and none of a member's own pages open to an account that is not one
+    for page in [
+        "/_dd/files",
+        "/_dd/media",
+        "/_dd/boxes",
+        "/_dd/backups",
+        "/_dd/devices",
+        "/_dd/network",
+    ] {
+        let (st, _) = get_with_cookie(&a, page, &cookie).await;
+        assert_eq!(st, 303, "{page} opened to a non-member");
+    }
+    assert_eq!(get_with_cookie(&a, "/_dd/fleet.json", &cookie).await.0, 403);
+    assert_eq!(
+        get_with_cookie(&a, "/_dd/network/mine", &cookie).await.0,
+        403
+    );
 
     // the name is taken now, by a different passkey too
     let mut mallory = SoftPasskey::new(true);
@@ -833,6 +853,7 @@ async fn the_demo_is_an_account_with_a_small_permission_set() {
         icon: "".into(),
         color: "#000".into(),
         demo: demo.map(String::from),
+        demo_url: None,
     };
     // no tile lets the demo do anything: there is no demo
     let plain = Box_::start_home(
@@ -1271,6 +1292,9 @@ async fn start_at(
 ) -> anyhow::Result<Box_> {
     let (addr, _task) = verify::start(verify::Config {
         home: vec![],
+        fleet: Default::default(),
+        demo_library: None,
+        app_release: None,
         members: None,
         release_pub: None,
         web_dir: None,

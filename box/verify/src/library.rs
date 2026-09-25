@@ -307,13 +307,22 @@ pub(crate) fn allowed(
     if !lib.chars().all(|c| c.is_ascii_hexdigit()) || lib.len() != 32 {
         return refused(StatusCode::BAD_REQUEST, "not a library id");
     }
-    let Some(token) = crate::bearer(headers) else {
-        return refused(StatusCode::UNAUTHORIZED, "a device token is required");
+    // a device's token or this box's own session cookie: `dd` and rclone
+    // bring the first, the Files and Movies pages in a browser the second
+    let Some(user) = app.identify(headers, "access") else {
+        return refused(
+            StatusCode::UNAUTHORIZED,
+            "a device token or a signed-in browser is required",
+        );
     };
-    let user = match app.verify_biscuit(token, "access") {
-        Ok(u) => u,
-        Err(e) => return refused(StatusCode::UNAUTHORIZED, &e.to_string()),
-    };
+    // the demo reads the one library the box keeps for it, and nothing
+    // else: it owns no entry and no key of its own
+    if user == crate::pages::DEMO_USER {
+        return match &app.demo_library {
+            Some((id, _)) if id == lib => Ok((user, Role::Reader)),
+            _ => refused(StatusCode::FORBIDDEN, "not your library"),
+        };
+    }
     // the owner: the library is in their entry
     if let Ok(Some(e)) = app.directory.entry(&user)
         && e.entry.libraries.iter().any(|l| l.id == lib)

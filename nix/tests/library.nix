@@ -39,6 +39,16 @@ in
     };
     # the gate reaches the bucket on this box directly (no nginx in here)
     dd.verify.library.s3 = pkgs.lib.mkForce "http://127.0.0.1:3900";
+    # a tile the demo may use is what makes the demo account exist at all
+    dd.home.services = [
+      {
+        name = "Files";
+        url = "https://files.test.invalid/_dd/files";
+        icon = "files";
+        color = "#2f6fd6";
+        demo = "read";
+      }
+    ];
     environment.systemPackages = [
       pkgs.curl
       pkgs.jq

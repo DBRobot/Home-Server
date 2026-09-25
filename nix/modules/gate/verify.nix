@@ -58,6 +58,14 @@ in
     default = [ ];
     description = "Directory urls of the other boxes, e.g. https://files.example/_dd/directory.";
   };
+  # Every box in the fleet and the address its prometheus answers on. The
+  # Boxes and Backups pages ask each box for its own facts; nothing about
+  # another box is kept here.
+  options.dd.verify.fleet = lib.mkOption {
+    type = lib.types.attrsOf lib.types.str;
+    default = { };
+    description = "Box name -> the address its prometheus answers on, e.g. node1 = \"100.95.31.105\".";
+  };
   # the front door: one tile per service this box offers, declared by the
   # roles that run them, shown at home.<domain> to whoever is signed in
   options.dd.home.services = lib.mkOption {
@@ -76,6 +84,11 @@ in
             type = lib.types.int;
             default = 50;
             description = "tiles are shown in rank order";
+          };
+          demoUrl = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Where the demo goes instead, when a member's door and the demo's are not the same one. Null: the same url.";
           };
           demo = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
@@ -121,6 +134,47 @@ in
     );
     default = null;
     description = "the network's door: with this, an admitted device gets a join key for the fleet's own network (POST /_dd/network/join)";
+  };
+  # The demo's library: an id and its key, both plain. This is not a
+  # secret and must not be dressed as one. A passkey lives in one browser
+  # on one device and the demo is one account every visitor shares, so the
+  # demo cannot hold a key of its own; the box hands this one to the
+  # demo's page, exactly as it already hands over the demo's photos
+  # password. Nothing private is in that library, and anyone at all may
+  # sign in as the demo and be given the same key.
+  # Where the app is built and published, and which release to offer. The
+  # downloads page links at the mirror's release, not at a file this box
+  # holds: artifacts are built after a merge, by the runner, and a box
+  # that stores none of them cannot serve a stale one.
+  options.dd.verify.appRelease = lib.mkOption {
+    type = lib.types.nullOr (
+      lib.types.submodule {
+        options = {
+          repo = lib.mkOption {
+            type = lib.types.str;
+            description = "the mirror the app is released on, e.g. https://github.com/you/commonty";
+          };
+          version = lib.mkOption {
+            type = lib.types.str;
+            description = "the release tag whose artifacts the page offers";
+          };
+        };
+      }
+    );
+    default = null;
+    description = "the app release the downloads page sends people to; null: no page";
+  };
+  options.dd.verify.demoLibrary = lib.mkOption {
+    type = lib.types.nullOr (
+      lib.types.submodule {
+        options = {
+          id = lib.mkOption { type = lib.types.str; };
+          key = lib.mkOption { type = lib.types.str; };
+        };
+      }
+    );
+    default = null;
+    description = "the library the demo account reads; not a secret, see the comment above";
   };
   options.dd.verify.library = lib.mkOption {
     type = lib.types.nullOr (
@@ -204,7 +258,16 @@ in
         VERIFY_BIND = if full then "127.0.0.1:${toString port}" else "0.0.0.0:${toString port}";
         VERIFY_DIR = "/var/lib/dd-verify/keys";
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
+        VERIFY_FLEET = builtins.toJSON cfg.fleet;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
+      }
+      // lib.optionalAttrs (full && cfg.appRelease != null) {
+        VERIFY_APP_REPO = cfg.appRelease.repo;
+        VERIFY_APP_VERSION = cfg.appRelease.version;
+      }
+      // lib.optionalAttrs (full && cfg.demoLibrary != null) {
+        VERIFY_DEMO_LIBRARY_ID = cfg.demoLibrary.id;
+        VERIFY_DEMO_LIBRARY_KEY = cfg.demoLibrary.key;
       }
       // lib.optionalAttrs (full && cfg.library != null) {
         VERIFY_LIBRARY_S3 = cfg.library.s3;
@@ -247,6 +310,7 @@ in
               icon
               color
               demo
+              demoUrl
               ;
           }) (lib.sort (a: b: a.rank < b.rank) config.dd.home.services)
         );

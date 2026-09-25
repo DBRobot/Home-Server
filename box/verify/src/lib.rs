@@ -12,6 +12,7 @@
 
 pub mod dav;
 mod directory;
+pub mod fleet;
 pub mod library;
 pub mod network;
 mod oidc;
@@ -59,6 +60,9 @@ struct App {
     /// the encrypted libraries' gate (library.rs), on a box with the bucket
     library: Option<library::Gate>,
     network: Option<network::Door>,
+    demo_library: Option<(String, String)>,
+    app_release: Option<(String, String)>,
+    fleet: fleet::Fleet,
 }
 
 enum Ceremony {
@@ -111,6 +115,16 @@ pub struct Config {
     /// the library gate, if this box holds the libraries bucket
     pub library: Option<library::Gate>,
     pub network: Option<network::Door>,
+    /// The library the demo account reads: an id and its key, both in the
+    /// open on purpose (see the option in modules/library/libraries.nix).
+    pub demo_library: Option<(String, String)>,
+    /// Where the app is built and published, and the release to offer:
+    /// the downloads page links there rather than at a file this box
+    /// holds. None: no page, because there is nothing to send anyone to.
+    pub app_release: Option<(String, String)>,
+    /// Every box in the fleet and the address its prometheus answers on,
+    /// for the Boxes and Backups pages. Empty on a box that is not told.
+    pub fleet: fleet::Fleet,
 }
 
 /// What the photos page needs to make or open an ente account for a person:
@@ -124,6 +138,20 @@ pub struct Photos {
     /// the demo account's password: a member's comes from their passkey,
     /// the demo has none, so the box holds one. None: no demo photos.
     pub demo_password: Option<String>,
+}
+
+/// What the demo may do on one host, by the tile whose door that host is.
+/// The demo's door is not always the member's: a tile that sends the demo
+/// somewhere else is a permission for THAT host and for nothing on the
+/// one members go to.
+fn demo_allowance(home: &[pages::Service], host: &str) -> Option<String> {
+    home.iter().find_map(|s| {
+        let door = s.demo_url.as_ref().unwrap_or(&s.url);
+        let h = door.split("//").nth(1)?.split('/').next()?;
+        h.eq_ignore_ascii_case(host)
+            .then(|| s.demo.clone())
+            .flatten()
+    })
 }
 
 /// fleet/members.json: ids let in, ids shut out. The file is either a bare
@@ -188,7 +216,7 @@ impl App {
         self.home.iter().any(|s| s.demo.is_some())
     }
 
-    /// What the demo may do, by the tile whose host the request is for:
+    /// What the demo may do, by the tile whose door the request is for:
     /// `full`, `read`, `rate:N`, or nothing. nginx passes the original
     /// method and host with the gate's subrequest. This is the permission
     /// set of one account; the services' own permissions do the rest.
@@ -204,12 +232,7 @@ impl App {
             .and_then(|v| v.to_str().ok())
             .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
             .unwrap_or_default();
-        let Some(allow) = self.home.iter().find_map(|s| {
-            let h = s.url.split("//").nth(1)?.split('/').next()?;
-            h.eq_ignore_ascii_case(&host)
-                .then(|| s.demo.clone())
-                .flatten()
-        }) else {
+        let Some(allow) = demo_allowance(&self.home, &host) else {
             return false;
         };
         match allow.as_str() {
@@ -441,11 +464,32 @@ async fn enrol_start(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
     }
 }
 
+/// what the browser sends when it has finished making a passkey: the
+/// credential, and the public half of the key it derived from that
+/// passkey's own PRF secret, so libraries can be sealed to it
+#[derive(Deserialize)]
+struct Enrolled {
+    #[serde(flatten)]
+    credential: RegisterPublicKeyCredential,
+    /// base64 ed25519 public key; absent where the browser has no PRF
+    #[serde(default)]
+    library_key: Option<String>,
+}
+
 async fn enrol_finish(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Json(reg): Json<RegisterPublicKeyCredential>,
+    Json(body): Json<Enrolled>,
 ) -> Response {
+    let Enrolled {
+        credential: reg,
+        library_key,
+    } = body;
+    if let Some(k) = &library_key
+        && identity::decode_public(k).is_err()
+    {
+        return (StatusCode::BAD_REQUEST, "that is not a public key").into_response();
+    }
     let Some(Ceremony::Enrol { user, state }) = headers
         .get("x-dd-ceremony")
         .and_then(|v| v.to_str().ok())
@@ -483,6 +527,7 @@ async fn enrol_finish(
                 id: id.clone(),
                 cred,
                 added: identity::now(),
+                library_key: library_key.clone(),
             },
         ),
     );
@@ -573,8 +618,17 @@ async fn join_start(
 async fn join_finish(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
-    Json(reg): Json<RegisterPublicKeyCredential>,
+    Json(body): Json<Enrolled>,
 ) -> Response {
+    let Enrolled {
+        credential: reg,
+        library_key,
+    } = body;
+    if let Some(k) = &library_key
+        && identity::decode_public(k).is_err()
+    {
+        return (StatusCode::BAD_REQUEST, "that is not a public key").into_response();
+    }
     let Some(Ceremony::Join { user, state }) = headers
         .get("x-dd-ceremony")
         .and_then(|v| v.to_str().ok())
@@ -613,6 +667,7 @@ async fn join_finish(
             id: id.clone(),
             cred,
             added: now,
+            library_key: library_key.clone(),
         }],
         grant,
         libraries: vec![],
@@ -836,7 +891,7 @@ async fn login_finish(
 async fn home_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
-        Some(user) if !app.member(&user) => Html(pages::waiting(&user)).into_response(),
+        Some(user) if !app.member(&user) => Html(pages::waiting(&user, &app.home)).into_response(),
         Some(user) => Html(pages::home(&user, &app.home)).into_response(),
         None => Redirect::to("/_dd/login?rd=/").into_response(),
     }
@@ -889,17 +944,124 @@ async fn web_file(
     }
 }
 
+/// The one thing every page needs to talk to a passkey: which domain the
+/// credentials belong to. Public, and true of the box either way.
+async fn page_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let mut cfg = serde_json::json!({ "rpId": app.domain.clone() });
+    // The demo has no passkey, because a passkey lives in one browser on
+    // one device and the demo is one account every visitor shares. Its
+    // library key comes from the box instead, the way the demo's photos
+    // password already does. Nothing is given away: the library holds
+    // nothing private, and anyone at all may be the demo.
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    if app.sessions.user(cookie).as_deref() == Some(pages::DEMO_USER)
+        && let Some((id, key)) = &app.demo_library
+    {
+        cfg["demoLibrary"] = serde_json::json!({ "id": id, "key": key });
+    }
+    Json(cfg).into_response()
+}
+
+/// Files: a member's library, opened in the browser by their passkey. The
+/// demo has no passkey and no library, so it does not come here.
+async fn files_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Html(pages::files(&user, &app.home)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to("/_dd/login?rd=/_dd/files").into_response(),
+    }
+}
+
+/// Movies & TV: the library's Movies and Shows, opened by the passkey.
+async fn media_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Html(pages::media(&user, &app.home)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to("/_dd/login?rd=/_dd/media").into_response(),
+    }
+}
+
+/// Boxes, Backups, Devices, Network: the pages behind the bar's menu.
+/// Each is a member's own view of the fleet; the demo gets none of them.
+async fn member_page(
+    app: &App,
+    headers: &HeaderMap,
+    page: fn(&str, &[pages::Service]) -> String,
+    at: &str,
+) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Html(page(&user, &app.home)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to(&format!("/_dd/login?rd={at}")).into_response(),
+    }
+}
+
+/// What every box is running and how its last backup went. Read from each
+/// box's own prometheus when the page asks, never stored here.
+async fn fleet_json(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Json(fleet::look(&app.fleet).await).into_response()
+        }
+        _ => StatusCode::FORBIDDEN.into_response(),
+    }
+}
+
+/// Where a stranger gets the app. The only page here that asks for
+/// nothing: an invited person has no way in until they have it.
+async fn download_page(State(app): State<Arc<App>>) -> Response {
+    match &app.app_release {
+        Some((repo, version)) => Html(pages::download(&app.domain, repo, version)).into_response(),
+        None => (StatusCode::NOT_FOUND, "nothing to download yet").into_response(),
+    }
+}
+
+/// The member's own machines on the fleet's network.
+async fn network_mine(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    let Some(user) = app.sessions.user(cookie) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    if !app.member(&user) || user == pages::DEMO_USER {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match &app.network {
+        // the control server is on one box; elsewhere the page says so
+        None => Json(serde_json::json!({ "here": false, "machines": [] })).into_response(),
+        Some(door) => match door.mine(&user).await {
+            Ok(m) => Json(serde_json::json!({ "here": true, "machines": m })).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+    }
+}
+
 /// Photos, opened with the passkey: the page runs our wasm against ente.
 async fn photos_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
         // the demo has no passkey: the page gets its password from the config
         Some(user) if user == pages::DEMO_USER => match &app.photos {
-            Some(p) if p.demo_password.is_some() => Html(pages::photos(&user)).into_response(),
+            Some(p) if p.demo_password.is_some() => {
+                Html(pages::photos(&user, &app.home)).into_response()
+            }
             _ => Redirect::to("/_dd/home").into_response(),
         },
         Some(user) if app.member(&user) && app.photos.is_some() => {
-            Html(pages::photos(&user)).into_response()
+            Html(pages::photos(&user, &app.home)).into_response()
         }
         Some(_) => Redirect::to("/_dd/home").into_response(),
         None => Redirect::to("/_dd/login?rd=/_dd/photos").into_response(),
@@ -1141,6 +1303,9 @@ pub async fn start(
         demo_rate: Mutex::new(HashMap::new()),
         library: cfg.library,
         network: cfg.network,
+        demo_library: cfg.demo_library,
+        app_release: cfg.app_release,
+        fleet: cfg.fleet,
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -1161,6 +1326,37 @@ pub async fn start(
         .route("/_dd/demo", get(demo))
         .route("/_dd/web/{file}", get(web_file))
         .route("/_dd/static/{file}", get(static_file))
+        // what any page needs before it can ask a passkey for anything
+        .route("/_dd/config", get(page_config))
+        .route("/_dd/files", get(files_page))
+        .route("/_dd/media", get(media_page))
+        .route(
+            "/_dd/boxes",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::boxes, "/_dd/boxes").await
+            }),
+        )
+        .route(
+            "/_dd/backups",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::backups, "/_dd/backups").await
+            }),
+        )
+        .route(
+            "/_dd/devices",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::devices, "/_dd/devices").await
+            }),
+        )
+        .route(
+            "/_dd/network",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::network_page, "/_dd/network").await
+            }),
+        )
+        .route("/_dd/download", get(download_page))
+        .route("/_dd/fleet.json", get(fleet_json))
+        .route("/_dd/network/mine", get(network_mine))
         .route("/_dd/photos", get(photos_page))
         .route("/_dd/photos/config", post(photos_config))
         // the network's door: a join key for an admitted device
@@ -1199,6 +1395,35 @@ mod tests {
         );
         assert_eq!(peek_user("device(\"ab\");\n"), None);
     }
+    #[test]
+    fn the_demos_leash_follows_the_demos_door_not_the_members() {
+        let svc =
+            |name: &str, url: &str, demo_url: Option<&str>, demo: Option<&str>| pages::Service {
+                name: name.into(),
+                url: url.into(),
+                icon: String::new(),
+                color: String::new(),
+                demo: demo.map(str::to_string),
+                demo_url: demo_url.map(str::to_string),
+            };
+        let home = [
+            // members watch their own library here; the demo is sent to
+            // jellyfin, and "full" is a permission on jellyfin alone
+            svc(
+                "Movies & TV",
+                "https://files.x/_dd/media",
+                Some("https://jellyfin.x/sso"),
+                Some("full"),
+            ),
+            svc("Files", "https://files.x/_dd/files", None, None),
+            svc("Chat", "https://llm.x/", None, Some("rate:10")),
+        ];
+        assert_eq!(demo_allowance(&home, "jellyfin.x").as_deref(), Some("full"));
+        assert_eq!(demo_allowance(&home, "files.x"), None);
+        assert_eq!(demo_allowance(&home, "llm.x").as_deref(), Some("rate:10"));
+        assert_eq!(demo_allowance(&home, "git.x"), None);
+    }
+
     #[test]
     fn usernames_are_filenames() {
         assert!(valid_user("david"));

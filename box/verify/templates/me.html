@@ -1,6 +1,16 @@
-{# who is signed in, and the way out #}
+{# who is signed in, and everything that is not a service: the account's
+   own pages and the way out #}
 <div class="me">
   <span class="avatar" aria-hidden="true">{{ initial }}</span>
   <span>{{ user }}</span>
-  <a class="out" href="/_dd/logout">Sign out</a>
+  <details class="menu">
+    <summary aria-label="Menu">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </summary>
+    <nav>
+      {% for g in menu.groups %}{% if !loop.first %}<hr>{% endif %}
+      {% for i in g %}<a href="{{ i.url }}">{{ i.label }}</a>{% endfor %}
+      {% endfor %}
+    </nav>
+  </details>
 </div>

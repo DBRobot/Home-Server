@@ -19,6 +19,10 @@ pub struct Service {
     /// nothing, and the tile is greyed on its home page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demo: Option<String>,
+    /// Where the demo goes instead. A member's Movies & TV is their own
+    /// library; the demo has none, and gets the box's own films.
+    #[serde(rename = "demoUrl", default, skip_serializing_if = "Option::is_none")]
+    pub demo_url: Option<String>,
 }
 
 /// The account that needs no invite and no key: a look at what a member
@@ -37,6 +41,14 @@ pub fn static_file(name: &str) -> Option<(&'static str, &'static str)> {
         "enrol.js" => (include_str!("../web/enrol.js"), js),
         "redeem.js" => (include_str!("../web/redeem.js"), js),
         "photos.js" => (include_str!("../web/photos.js"), js),
+        "files.js" => (include_str!("../web/files.js"), js),
+        "media.js" => (include_str!("../web/media.js"), js),
+        "library.js" => (include_str!("../web/library.js"), js),
+        "boxes.js" => (include_str!("../web/boxes.js"), js),
+        "backups.js" => (include_str!("../web/backups.js"), js),
+        "devices.js" => (include_str!("../web/devices.js"), js),
+        "network.js" => (include_str!("../web/network.js"), js),
+        "panel.js" => (include_str!("../web/panel.js"), js),
         _ => return None,
     })
 }
@@ -62,6 +74,62 @@ fn initial(user: &str) -> String {
         .unwrap_or_default()
 }
 
+/// One line in the bar's menu.
+pub struct MenuItem {
+    pub label: &'static str,
+    pub url: String,
+}
+
+/// Everything in the bar that is not a service: the member's own pages,
+/// the fleet's, and the way out. Groups are drawn with a rule between.
+pub struct Menu {
+    pub groups: Vec<Vec<MenuItem>>,
+}
+
+impl Menu {
+    /// What this person may actually open. The demo has no library, no
+    /// devices and no backups, so it is offered none of them.
+    fn of(user: &str, services: &[Service]) -> Menu {
+        let item = |label, url: &str| MenuItem {
+            label,
+            url: url.to_string(),
+        };
+        let metrics = services
+            .iter()
+            .find(|s| s.icon == "metrics")
+            .map(|s| item("Metrics", &s.url));
+        // The tile's url, where a tile says. A library page belongs on the
+        // gate's own host: that is the only one serving /_dd/transcode, so
+        // a relative link followed from another host plays nothing.
+        let tile = |mark: &str, fallback: &'static str| {
+            services
+                .iter()
+                .find(|s| s.icon == mark)
+                .map(|s| s.url.clone())
+                .unwrap_or_else(|| fallback.to_string())
+        };
+        let mut groups = Vec::new();
+        if user != DEMO_USER {
+            groups.push(vec![
+                item("Files", &tile("files", "/_dd/files")),
+                item("Movies & TV", &tile("videos", "/_dd/media")),
+            ]);
+            let mut fleet = vec![
+                item("Backups", "/_dd/backups"),
+                item("Devices", "/_dd/devices"),
+                item("Network", "/_dd/network"),
+                item("Boxes", "/_dd/boxes"),
+            ];
+            fleet.extend(metrics);
+            groups.push(fleet);
+        } else if let Some(m) = metrics {
+            groups.push(vec![m]);
+        }
+        groups.push(vec![item("Sign out", "/_dd/logout")]);
+        Menu { groups }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "login.html")]
 struct Login;
@@ -79,6 +147,23 @@ struct Join;
 struct Waiting<'a> {
     user: &'a str,
     initial: String,
+    menu: Menu,
+}
+
+#[derive(Template)]
+#[template(path = "files.html")]
+struct Files<'a> {
+    user: &'a str,
+    initial: String,
+    menu: Menu,
+}
+
+#[derive(Template)]
+#[template(path = "media.html")]
+struct Media<'a> {
+    user: &'a str,
+    initial: String,
+    menu: Menu,
 }
 
 #[derive(Template)]
@@ -86,6 +171,181 @@ struct Waiting<'a> {
 struct Photos<'a> {
     user: &'a str,
     initial: String,
+    menu: Menu,
+}
+
+/// one platform's card on the downloads page
+struct Platform {
+    name: &'static str,
+    icon: &'static str,
+    /// what to call the file, and where it is; empty means not yet
+    files: Vec<(&'static str, String)>,
+    /// shown under the name when there is nothing to download
+    soon: &'static str,
+}
+
+struct Group {
+    title: &'static str,
+    platforms: Vec<Platform>,
+}
+
+#[derive(Template)]
+#[template(path = "download.html")]
+struct Download<'a> {
+    domain: &'a str,
+    repo: &'a str,
+    groups: Vec<Group>,
+}
+
+/// the logo on a platform's card, from web/icons/os/
+fn os_icon(key: &str) -> &'static str {
+    match key {
+        "linux" => include_str!("../web/icons/os/linux.svg"),
+        "android" => include_str!("../web/icons/os/android.svg"),
+        "apple" => include_str!("../web/icons/os/apple.svg"),
+        _ => include_str!("../web/icons/os/windows.svg"),
+    }
+}
+
+/// Where a stranger gets the app. Public: someone invited has nothing to
+/// sign in with until they have it. The artifacts are built after a tag
+/// and published as a release on the mirror, so the links point there by
+/// that tag, not at a file this box holds. A platform with no files is
+/// shown anyway, so the page says what is coming rather than hiding it.
+pub fn download(domain: &str, repo: &str, version: &str) -> String {
+    let at = |name: String| format!("{repo}/releases/download/{version}/{name}");
+    let v = version.trim_start_matches('v');
+    let groups = vec![
+        Group {
+            title: "Desktop",
+            platforms: vec![
+                Platform {
+                    name: "Linux",
+                    icon: os_icon("linux"),
+                    files: vec![
+                        (".deb", at(format!("commonty_{v}_amd64.deb"))),
+                        ("AppImage", at(format!("commonty_{v}_amd64.AppImage"))),
+                    ],
+                    soon: "",
+                },
+                Platform {
+                    name: "Windows",
+                    icon: os_icon("windows"),
+                    files: vec![],
+                    soon: "Not built yet",
+                },
+                Platform {
+                    name: "macOS",
+                    icon: os_icon("apple"),
+                    files: vec![],
+                    soon: "Not built yet",
+                },
+            ],
+        },
+        Group {
+            title: "Mobile",
+            platforms: vec![
+                Platform {
+                    name: "Android",
+                    icon: os_icon("android"),
+                    files: vec![("APK", at("commonty.apk".into()))],
+                    soon: "",
+                },
+                Platform {
+                    name: "iOS",
+                    icon: os_icon("apple"),
+                    files: vec![],
+                    soon: "Not built yet",
+                },
+            ],
+        },
+    ];
+    render(Download {
+        domain,
+        repo,
+        groups,
+    })
+}
+
+#[derive(Template)]
+#[template(path = "panel.html")]
+struct Panel<'a> {
+    user: &'a str,
+    initial: String,
+    menu: Menu,
+    title: &'static str,
+    waiting: &'static str,
+    note: &'static str,
+    script: &'static str,
+}
+
+fn panel(
+    user: &str,
+    services: &[Service],
+    title: &'static str,
+    waiting: &'static str,
+    note: &'static str,
+    script: &'static str,
+) -> String {
+    render(Panel {
+        user,
+        initial: initial(user),
+        menu: Menu::of(user, services),
+        title,
+        waiting,
+        note,
+        script,
+    })
+}
+
+/// What every box is running, and whether it answered at all.
+pub fn boxes(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Boxes",
+        "Asking every box…",
+        "Each box answers for itself, over the fleet's own network. A box that says nothing is off or unreachable, not gone.",
+        "boxes.js",
+    )
+}
+
+/// What has been backed up and how far back it goes. Reading one back is
+/// not something a browser does: it is `restic restore` on the box, with
+/// the password only that box holds.
+pub fn backups(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Backups",
+        "Asking every box…",
+        "A box backs itself up, encrypted with a password only it holds, into the cluster. This page says what happened; restoring is done on the box.",
+        "backups.js",
+    )
+}
+
+/// The keys that are you: the devices in your entry, and the passkeys.
+pub fn devices(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Devices",
+        "Reading your entry…",
+        "Your entry names these, and only a device holding your root key can add or remove one (`dd device`).",
+        "devices.js",
+    )
+}
+
+/// The machines on the fleet's own network, as the control server has them.
+pub fn network_page(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Network",
+        "Asking the control server…",
+        "The fleet's own network, so your devices reach the boxes wherever they are. `dd net join` puts a machine on it.",
+        "network.js",
+    )
 }
 
 struct Tile<'a> {
@@ -103,6 +363,7 @@ struct Home<'a> {
     initial: String,
     demo: bool,
     tiles: Vec<Tile<'a>>,
+    menu: Menu,
 }
 
 fn render<T: Template>(t: T) -> String {
@@ -126,18 +387,38 @@ pub fn join() -> String {
 
 /// Signed in but not on the member list: the account exists, nothing is
 /// open to it yet. A code from the owner opens it here.
-pub fn waiting(user: &str) -> String {
+pub fn waiting(user: &str, services: &[Service]) -> String {
     render(Waiting {
         user,
         initial: initial(user),
+        menu: Menu::of(user, services),
+    })
+}
+
+/// Files: a member's library, opened by their passkey.
+pub fn files(user: &str, services: &[Service]) -> String {
+    render(Files {
+        user,
+        initial: initial(user),
+        menu: Menu::of(user, services),
+    })
+}
+
+/// Movies & TV: the same library, the corners a player cares about.
+pub fn media(user: &str, services: &[Service]) -> String {
+    render(Media {
+        user,
+        initial: initial(user),
+        menu: Menu::of(user, services),
     })
 }
 
 /// Photos: opened by the passkey, or by the demo's password.
-pub fn photos(user: &str) -> String {
+pub fn photos(user: &str, services: &[Service]) -> String {
     render(Photos {
         user,
         initial: initial(user),
+        menu: Menu::of(user, services),
     })
 }
 
@@ -152,13 +433,17 @@ pub fn home(user: &str, services: &[Service]) -> String {
             .iter()
             .map(|s| Tile {
                 name: &s.name,
-                url: &s.url,
+                url: match (demo, &s.demo_url) {
+                    (true, Some(u)) => u,
+                    _ => &s.url,
+                },
                 icon: icon(&s.icon),
                 color: &s.color,
                 // a door this account has no key to: shown, shut, and why
                 shut: demo && s.demo.is_none(),
             })
             .collect(),
+        menu: Menu::of(user, services),
     })
 }
 
@@ -173,6 +458,7 @@ mod tests {
             icon: icon.into(),
             color: "#123456".into(),
             demo: None,
+            demo_url: None,
         }
     }
 
@@ -217,8 +503,91 @@ mod tests {
     }
 
     #[test]
+    fn the_downloads_page_asks_for_nothing_and_points_at_the_release() {
+        let html = download("commonty.org", "https://github.com/x/y", "v0.2.0");
+        assert!(html.contains("https://github.com/x/y/releases/download/v0.2.0/commonty.apk"));
+        assert!(html.contains("commonty_0.2.0_amd64.deb"));
+        assert!(html.contains("commonty_0.2.0_amd64.AppImage"));
+        // desktop and mobile, each with what is there and what is not
+        assert!(html.contains("Desktop") && html.contains("Mobile"));
+        for os in ["Linux", "macOS", "Windows", "Android", "iOS"] {
+            assert!(html.contains(os), "no card for {os}");
+        }
+        // a platform with nothing to download says so and offers no link
+        assert_eq!(html.matches("class=\"os off\"").count(), 3);
+        // two formats collapse into one control, one format is a button
+        // the button takes the first format; the arrow offers every one
+        assert_eq!(html.matches("class=\"split\"").count(), 1);
+        assert!(
+            html.contains("Download .deb"),
+            "the default is not on the button"
+        );
+        assert!(html.contains(">.deb<") && html.contains(">AppImage<"));
+        // and a platform with one format is a plain button, no arrow
+        assert_eq!(html.matches("class=\"get\"").count(), 2);
+        // a stranger is who this is for: no name, no avatar, no menu
+        assert!(!html.contains("class=\"me\"") && !html.contains("/_dd/logout"));
+        assert!(html.contains("https://home.commonty.org/"));
+    }
+
+    #[test]
+    fn the_menu_offers_a_member_their_own_pages_and_the_demo_none_of_them() {
+        let svcs = [svc("Metrics", "metrics"), svc("Chat", "chat")];
+        let html = home("tom", &svcs);
+        for page in [
+            "/_dd/files",
+            "/_dd/media",
+            "/_dd/backups",
+            "/_dd/devices",
+            "/_dd/network",
+            "/_dd/boxes",
+        ] {
+            assert!(html.contains(page), "member's menu is missing {page}");
+        }
+        assert!(html.contains("https://metrics.example/"));
+        assert!(html.contains("/_dd/logout"));
+        let html = home(DEMO_USER, &svcs);
+        for page in [
+            "/_dd/files",
+            "/_dd/media",
+            "/_dd/backups",
+            "/_dd/devices",
+            "/_dd/network",
+            "/_dd/boxes",
+        ] {
+            assert!(!html.contains(page), "the demo was offered {page}");
+        }
+        assert!(html.contains("https://metrics.example/") && html.contains("/_dd/logout"));
+        // no metrics on this box: no line for it, and nothing else moves
+        let html = home("tom", &[svc("Chat", "chat")]);
+        assert!(!html.contains("Metrics") && html.contains("/_dd/boxes"));
+    }
+
+    #[test]
+    fn the_library_pages_carry_the_member_and_their_script() {
+        let html = files("tom", &[]);
+        assert!(html.contains("data-user=\"tom\""));
+        assert!(html.contains("/_dd/static/files.js"));
+        let html = media("tom", &[svc("Metrics", "metrics")]);
+        assert!(html.contains("data-user=\"tom\""));
+        assert!(html.contains("/_dd/static/media.js"));
+        assert!(html.contains("Movies") && html.contains("Shows"));
+        // both pages open the library through the one module
+        for f in ["files.js", "media.js"] {
+            assert!(static_file(f).unwrap().0.contains("from './library.js'"));
+        }
+        assert!(static_file("library.js").unwrap().0.contains("/_dd/dav/"));
+        // a film goes through the box, with the key sealed to it
+        let lib = static_file("library.js").unwrap().0;
+        assert!(lib.contains("/_dd/transcode/start") && lib.contains("library_key_for_box"));
+        // the player comes from this box, never from someone else's
+        assert!(lib.contains("'/_dd/web/hls.js'"));
+        assert!(!lib.contains("http://") && !lib.contains("https://"));
+    }
+
+    #[test]
     fn waiting_page_names_the_person_and_offers_nothing() {
-        let html = waiting("tom");
+        let html = waiting("tom", &[]);
         assert!(html.contains("<span>tom</span>"));
         assert!(html.contains("data-user=\"tom\""));
         assert!(html.contains("/_dd/logout"));
@@ -241,6 +610,20 @@ mod tests {
         let html = home("tom", &[files, chat]);
         assert!(!html.contains("This is a demo") && !html.contains("Not in the demo."));
         assert!(html.contains("href=\"https://llm.x/\""));
+    }
+
+    #[test]
+    fn a_tile_can_send_the_demo_somewhere_else() {
+        let mut tv = svc("Movies & TV", "videos");
+        tv.url = "https://files.x/_dd/media".into();
+        tv.demo_url = Some("https://jellyfin.x/sso".into());
+        tv.demo = Some("full".into());
+        let html = home("tom", &[tv.clone()]);
+        assert!(html.contains("href=\"https://files.x/_dd/media\""));
+        assert!(!html.contains("jellyfin"));
+        let html = home(DEMO_USER, &[tv]);
+        assert!(html.contains("href=\"https://jellyfin.x/sso\""));
+        assert!(!html.contains("/_dd/media"));
     }
 
     #[test]

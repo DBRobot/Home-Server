@@ -11,10 +11,35 @@ let
   garage = config.services.garage.enable;
   mail = config.programs.msmtp.enable;
 
+  # After a good run: when it ended, and what the repository holds, so the
+  # backups page can say how far back this box goes without anything but
+  # this unit holding the repository password.
+  #
+  # Every line is written only once its value is known to be a number.
+  # The textfile collector drops the whole file over one malformed line,
+  # so a metric with an empty value would take the others with it.
   mark = pkgs.writeShellScript "backup-mark" ''
     mkdir -p ${facts}
-    printf 'dd_backup_last_success_seconds{box="${box}"} %s\n' "$(date +%s)" > ${facts}/backup.prom.tmp
-    mv ${facts}/backup.prom.tmp ${facts}/backup.prom
+    f=${facts}/backup.prom.tmp
+    num() { # num <metric> <value>: a line, if the value is a number
+      case "$2" in "" | *[!0-9]*) return 0 ;; esac
+      printf 'dd_backup_%s{box="${box}"} %s\n' "$1" "$2" >> $f
+    }
+    num last_success_seconds "$(date +%s)"
+    if snaps=$(${pkgs.restic}/bin/restic snapshots --json 2>/dev/null); then
+      jq=${pkgs.jq}/bin/jq
+      num snapshots "$(echo "$snaps" | $jq 'length' 2>/dev/null)"
+      # restic stamps a local offset, which jq cannot read; date can, and
+      # sorting the strings orders them but for the hour a clock change
+      # moves, which nothing here cares about
+      for which in 0 -1; do
+        t=$(echo "$snaps" | $jq -r "map(.time) | sort | .[$which] // empty" 2>/dev/null)
+        [ -n "$t" ] || continue
+        [ "$which" = 0 ] && name=oldest || name=newest
+        num "''${name}_seconds" "$(date -d "$t" +%s 2>/dev/null)"
+      done
+    fi
+    mv $f ${facts}/backup.prom
   '';
 
   # Backups die silently by default. Where the box can mail, a failed run does.
@@ -90,6 +115,22 @@ in
       };
     }
     (lib.mkIf (cfg.paths != [ ]) {
+      # What this box covers, from boot, whether or not a run has ever
+      # worked. Written by the backup only, it would say "nothing here is
+      # backed up" about a box whose backups have never once succeeded,
+      # which is the one case worth seeing.
+      # the directory itself belongs to modules/observe/metrics.nix, which
+      # owns it as node-exporter; a second `d` rule here would fight it
+      # over the owner on every boot. L+ makes what parents it needs.
+      systemd.tmpfiles.rules = [
+        "L+ ${facts}/backup-paths.prom - - - - ${
+          pkgs.writeText "backup-paths.prom" (
+            "# HELP dd_backup_path A path this box backs up.\n# TYPE dd_backup_path gauge\n"
+            + lib.concatMapStrings (p: "dd_backup_path{box=\"${box}\",path=\"${p}\"} 1\n") cfg.paths
+          )
+        }"
+      ];
+
       services.restic.backups.dd = {
         repository = "s3:${cfg.endpoint}/backups-${box}";
         environmentFile = toString cfg.envFile;
@@ -132,7 +173,7 @@ in
         onFailure = lib.optional mail "dd-alert@dd-backup-stale.service";
         serviceConfig.Type = "oneshot";
         script = ''
-          last=$(${pkgs.gawk}/bin/awk '{print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
+          last=$(${pkgs.gawk}/bin/awk '/^dd_backup_last_success_seconds/ {print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
           age=$(( $(date +%s) - ''${last:-0} ))
           if [ "$age" -gt $((26 * 3600)) ]; then
             echo "last good backup was $((age / 3600)) hours ago"; exit 1
