@@ -43,3 +43,14 @@ Sign-up: "New here? I have an invite code". The app fetches the invite the
 code derives, makes the root and recovery keys on this device, publishes
 the entry with its grant (`client/account`, shared with `dd identity new
 --code`), shows the recovery key once, and joins the network.
+
+Devices: the device that made the account (it holds the root) adds another
+by pasting the key from that device's "Add this device" page, and removes
+one; every library key follows. "Lost every device?" takes the recovery
+key, installs a new root on this device, signs every old device out and
+shows a new recovery key.
+
+The engine's proxy is our own SOCKS5 (`app/net/socks.go`, `socks5h` from
+the Rust side): its dialer resolves names through the network's DNS first,
+where the fleet's names live. `COMMONTY_NET_DEBUG=1` turns the engine's
+log on and prints the proxy credential for `curl -x socks5h://tsnet:…`.

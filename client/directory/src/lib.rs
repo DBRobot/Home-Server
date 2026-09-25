@@ -12,10 +12,12 @@ pub const DEFAULT: [&str; 2] = [
 ];
 
 /// a proxy every client this process builds goes through: the app's way
-/// into the fleet's own network (app/src/net.rs). None: straight out.
+/// into the fleet's own network (app/src/net.rs), a SOCKS5 one that
+/// resolves names on its side (the network's own names). None: straight out.
 #[derive(Clone)]
 pub struct Proxy {
-    pub url: String,
+    /// host:port
+    pub addr: String,
     pub user: String,
     pub password: String,
 }
@@ -46,7 +48,9 @@ pub fn http() -> Result<reqwest::Client> {
 pub fn builder() -> Result<reqwest::ClientBuilder> {
     let mut b = reqwest::Client::builder();
     if let Some(p) = proxy() {
-        b = b.proxy(reqwest::Proxy::all(&p.url)?.basic_auth(&p.user, &p.password));
+        // socks5h: the name goes to the proxy unresolved
+        let url = format!("socks5h://{}:{}@{}", p.user, p.password, p.addr);
+        b = b.proxy(reqwest::Proxy::all(&url)?);
     }
     Ok(b)
 }

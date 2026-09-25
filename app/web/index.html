@@ -22,6 +22,19 @@
       </form>
       <p id="name-error" class="error" hidden></p>
       <button id="to-signup" class="quiet">New here? I have an invite code</button>
+      <button id="to-recover" class="quiet">Lost every device? Recover with your recovery key</button>
+    </section>
+
+    <section id="page-recover" class="page" hidden>
+      <h1>Start over</h1>
+      <p class="lead">Your recovery key installs a new key on this device and signs every old device out. You get a new recovery key.</p>
+      <form id="recover-form">
+        <label>Name <input id="recover-name" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+        <label>Recovery key <input id="recover-key" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+        <button type="submit" class="primary">Recover</button>
+      </form>
+      <p id="recover-error" class="error" hidden></p>
+      <button id="recover-back" class="quiet">Back</button>
     </section>
 
     <section id="page-signup" class="page" hidden>
@@ -82,6 +95,15 @@
       </div>
       <h2>Devices</h2>
       <ul id="home-devices" class="devices"></ul>
+      <div id="add-device" class="card" hidden>
+        <p class="small">A new device shows a key on its "Add this device" page. Paste it here and it is yours, with every library key sealed to it.</p>
+        <form id="admit-form" class="row">
+          <input id="admit-key" autocomplete="off" spellcheck="false" placeholder="the new device's key">
+          <button type="submit" class="primary">Add</button>
+        </form>
+        <p id="admit-error" class="error small" hidden></p>
+      </div>
+      <p id="no-root" class="small" hidden>Devices are added and removed from the device that made the account.</p>
       <button id="home-forget" class="quiet">Sign out on this device</button>
     </section>
 

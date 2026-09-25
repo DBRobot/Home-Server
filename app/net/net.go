@@ -13,6 +13,8 @@ import "C"
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"os"
 	"sync"
 	"time"
 	"unsafe"
@@ -24,7 +26,7 @@ var (
 	mu    sync.Mutex
 	srv   *tsnet.Server
 	door  *bridge
-	proxy struct{ addr, cred string }
+	proxy *proxyServer
 )
 
 type started struct {
@@ -55,15 +57,15 @@ func reply(v any) *C.char {
 }
 
 // commonty_net_start joins the network (or resumes from the state in dir
-// when key is empty) and returns json: the proxy's address and password,
-// this node's address. Idempotent while running.
+// when key is empty) and returns json: the SOCKS5 proxy's address and
+// password, this node's address. Idempotent while running.
 //
 //export commonty_net_start
 func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	mu.Lock()
 	defer mu.Unlock()
 	if srv != nil {
-		return reply(started{Proxy: proxy.addr, Credential: proxy.cred, IP: ipOf(srv)})
+		return reply(started{Proxy: proxy.addr(), Credential: proxy.cred, IP: ipOf(srv)})
 	}
 	// the control server is reached through the bridge: the front door
 	// carries websockets, not the engine's own upgrade
@@ -71,20 +73,19 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	if err != nil {
 		return reply(started{Error: err.Error()})
 	}
+	// quiet unless asked: the engine's log is a firehose
+	logf := func(string, ...any) {}
+	if os.Getenv("COMMONTY_NET_DEBUG") != "" {
+		logf = log.Printf
+	}
 	s := &tsnet.Server{
 		Dir:        C.GoString(dir),
 		ControlURL: b.url(),
 		AuthKey:    C.GoString(key),
 		Hostname:   C.GoString(hostname),
 		Ephemeral:  false,
-		Logf:       func(string, ...any) {},
-		UserLogf:   func(string, ...any) {},
-	}
-	addr, cred, _, err := s.Loopback()
-	if err != nil {
-		s.Close()
-		b.close()
-		return reply(started{Error: err.Error()})
+		Logf:       logf,
+		UserLogf:   logf,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -93,10 +94,16 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 		b.close()
 		return reply(started{Error: err.Error()})
 	}
+	p, err := newProxy(s)
+	if err != nil {
+		s.Close()
+		b.close()
+		return reply(started{Error: err.Error()})
+	}
 	srv = s
 	door = b
-	proxy.addr, proxy.cred = addr, cred
-	return reply(started{Proxy: addr, Credential: cred, IP: ipOf(s)})
+	proxy = p
+	return reply(started{Proxy: p.addr(), Credential: p.cred, IP: ipOf(s)})
 }
 
 func ipOf(s *tsnet.Server) string {
@@ -148,6 +155,10 @@ func commonty_net_status() *C.char {
 func commonty_net_stop() {
 	mu.Lock()
 	defer mu.Unlock()
+	if proxy != nil {
+		proxy.close()
+		proxy = nil
+	}
 	if srv != nil {
 		srv.Close()
 		srv = nil

@@ -124,3 +124,5 @@ button.quiet { background: transparent; color: var(--ink-2); border-color: var(-
 .row { display: flex; gap: 8px; align-items: center; }
 button.inline { margin-top: 0; }
 button[disabled] { opacity: .6; cursor: default; }
+.row input { flex: 1; margin-top: 0; }
+.devices li button { font-size: 12px; padding: 4px 10px; margin-left: 8px; }
