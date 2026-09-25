@@ -47,6 +47,13 @@ in
         ];
       };
     };
+    # what a visitor sees on the Files page: a library of its own, empty,
+    # read-only. The key is in the open because the demo cannot keep one.
+    dd.verify.demoLibrary = {
+      id = "e14dbb2a30e3096a5a9bc42ace4599b1";
+      key = "qeeZQepVeE9uPrWoujkziNKB93rootOf1KH5MZeKqYM=";
+    };
+
     dd.verify.library = {
       s3 = "https://s3.${config.dd.domain}";
       bucket = "libraries";

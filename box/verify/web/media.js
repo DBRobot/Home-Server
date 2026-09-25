@@ -45,7 +45,7 @@ async function films() {
   const ul = $('films');
   ul.replaceChildren(...items.map((it) => {
     const li = tile(it.name, human(it.size), () => play(it));
-    li.append(rm(it.path, films));
+    if (!lib.reader) li.append(rm(it.path, films));
     return li;
   }));
   $('nofilms').hidden = items.length > 0;
@@ -59,7 +59,7 @@ async function programmes() {
   $('back').hidden = true;
   $('showname').hidden = true;
   $('addep').hidden = true;
-  $('newshow').hidden = false;
+  $('newshow').hidden = !!lib.reader;
   show = null;
 }
 
@@ -69,14 +69,14 @@ async function episodes(name) {
   const ul = $('shows');
   ul.replaceChildren(...items.map((it) => {
     const li = tile(it.name, human(it.size), () => play(it));
-    li.append(rm(it.path, () => episodes(name)));
+    if (!lib.reader) li.append(rm(it.path, () => episodes(name)));
     return li;
   }));
   $('noshows').hidden = items.length > 0;
   $('showname').textContent = name;
   $('showname').hidden = false;
   $('back').hidden = false;
-  $('addep').hidden = false;
+  $('addep').hidden = !!lib.reader;
   $('newshow').hidden = true;
 }
 
@@ -167,6 +167,7 @@ async function start() {
   lib = r.ok;
   $('msg').hidden = true;
   $('shelves').hidden = false;
+  for (const id of ['addfilm', 'newshow']) $(id).hidden = !!lib.reader;
   $('addfilm').onclick = () => $('filmpicker').click();
   $('filmpicker').onchange = () => upload($('filmpicker').files, 'Movies');
   $('addep').onclick = () => $('eppicker').click();

@@ -31,9 +31,15 @@ async function passkeySecret(cfg, passkeys) {
 /// The first library this browser's passkey opens. Returns
 /// `{ ok: lib }`, `{ none: true }` when the account has no library, or
 /// `{ link: 'dd passkey link …' }` when nothing here is sealed to it.
+/// A library comes with the role this viewer has in it: a reader looks
+/// and does not touch.
 export async function unlock(user) {
   await init();
   const cfg = await (await fetch('/_dd/config')).json();
+  // the demo holds no key of its own; the box hands it one (verify.nix)
+  if (cfg.demoLibrary) {
+    return { ok: { id: cfg.demoLibrary.id, key: cfg.demoLibrary.key, reader: true } };
+  }
   const text = await (await fetch('/_dd/directory/' + encodeURIComponent(user))).text();
   const entry = JSON.parse(text);
   const { secret, id } = await passkeySecret(cfg, entry.entry.passkeys || []);

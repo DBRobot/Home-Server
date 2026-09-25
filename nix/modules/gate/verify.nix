@@ -135,6 +135,25 @@ in
     default = null;
     description = "the network's door: with this, an admitted device gets a join key for the fleet's own network (POST /_dd/network/join)";
   };
+  # The demo's library: an id and its key, both plain. This is not a
+  # secret and must not be dressed as one. A passkey lives in one browser
+  # on one device and the demo is one account every visitor shares, so the
+  # demo cannot hold a key of its own; the box hands this one to the
+  # demo's page, exactly as it already hands over the demo's photos
+  # password. Nothing private is in that library, and anyone at all may
+  # sign in as the demo and be given the same key.
+  options.dd.verify.demoLibrary = lib.mkOption {
+    type = lib.types.nullOr (
+      lib.types.submodule {
+        options = {
+          id = lib.mkOption { type = lib.types.str; };
+          key = lib.mkOption { type = lib.types.str; };
+        };
+      }
+    );
+    default = null;
+    description = "the library the demo account reads; not a secret, see the comment above";
+  };
   options.dd.verify.library = lib.mkOption {
     type = lib.types.nullOr (
       lib.types.submodule {
@@ -218,6 +237,10 @@ in
         VERIFY_DIR = "/var/lib/dd-verify/keys";
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
         VERIFY_FLEET = builtins.toJSON cfg.fleet;
+      }
+      // lib.optionalAttrs (full && cfg.demoLibrary != null) {
+        VERIFY_DEMO_LIBRARY_ID = cfg.demoLibrary.id;
+        VERIFY_DEMO_LIBRARY_KEY = cfg.demoLibrary.key;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
       // lib.optionalAttrs (full && cfg.library != null) {

@@ -48,7 +48,7 @@ async function show(dir) {
     meta.className = 'tag';
     meta.textContent = it.dir ? '' : human(it.size);
     li.append(name, meta);
-    if (!it.dir) {
+    if (!it.dir && !lib.reader) {
       const rm = document.createElement('button');
       rm.className = 'quiet inline';
       rm.textContent = 'Trash';
@@ -63,7 +63,7 @@ async function show(dir) {
   }));
   ul.hidden = false;
   $('empty').hidden = items.length > 0;
-  $('up').hidden = false;
+  $('up').hidden = lib.reader;
 }
 
 function addJob(text) {
@@ -110,7 +110,10 @@ async function start() {
     return;
   }
   lib = r.ok;
-  $('msg').hidden = true;
+  $('msg').hidden = lib.reader === undefined ? true : !lib.reader;
+  if (lib.reader) {
+    $('msg').textContent = 'You are looking at the demo\u2019s files. A member sees their own here, and only they can read them.';
+  }
   $('up').onclick = () => $('picker').click();
   $('picker').onchange = () => upload($('picker').files);
   await show('');

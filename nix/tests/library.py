@@ -73,6 +73,20 @@ keys_after = json.loads(box.succeed(aws).strip() or "[]")
 assert any(k.startswith(f"{lib}/trash/") for k in keys_after), keys_after
 assert len(keys_after) == len(keys), (keys, keys_after)
 
+# A browser has a cookie and no device token, and the gate takes it:
+# without this the Files and Movies pages could not read a single name.
+# The demo is the account that signs in without a passkey, so it is the
+# one a test can be.
+demo_lib = "e14dbb2a30e3096a5a9bc42ace4599b1"
+box.succeed("curl -s -c /root/demo.jar -o /dev/null http://127.0.0.1:4181/_dd/demo")
+cfg = json.loads(box.succeed("curl -s -b /root/demo.jar http://127.0.0.1:4181/_dd/config"))
+assert cfg["demoLibrary"]["id"] == demo_lib, cfg
+# its own library opens with that cookie
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -b /root/demo.jar -X PROPFIND http://127.0.0.1:4181/_dd/dav/{demo_lib}/ | grep -q 207")
+# a member's does not, cookie or no cookie
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -b /root/demo.jar -X PROPFIND http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 403")
+# and the demo writes nothing, even in its own
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -b /root/demo.jar -X MKCOL http://127.0.0.1:4181/_dd/dav/{demo_lib}/x | grep -q 403")
 # a stranger's token opens nothing; no token, nothing
 box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} identity new --name tom {dirs}")
 tom = box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} token").strip()

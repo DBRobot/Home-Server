@@ -60,6 +60,7 @@ struct App {
     /// the encrypted libraries' gate (library.rs), on a box with the bucket
     library: Option<library::Gate>,
     network: Option<network::Door>,
+    demo_library: Option<(String, String)>,
     fleet: fleet::Fleet,
 }
 
@@ -113,6 +114,9 @@ pub struct Config {
     /// the library gate, if this box holds the libraries bucket
     pub library: Option<library::Gate>,
     pub network: Option<network::Door>,
+    /// The library the demo account reads: an id and its key, both in the
+    /// open on purpose (see the option in modules/library/libraries.nix).
+    pub demo_library: Option<(String, String)>,
     /// Every box in the fleet and the address its prometheus answers on,
     /// for the Boxes and Backups pages. Empty on a box that is not told.
     pub fleet: fleet::Fleet,
@@ -937,8 +941,20 @@ async fn web_file(
 
 /// The one thing every page needs to talk to a passkey: which domain the
 /// credentials belong to. Public, and true of the box either way.
-async fn page_config(State(app): State<Arc<App>>) -> Response {
-    Json(serde_json::json!({ "rpId": app.domain.clone() })).into_response()
+async fn page_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let mut cfg = serde_json::json!({ "rpId": app.domain.clone() });
+    // The demo has no passkey, because a passkey lives in one browser on
+    // one device and the demo is one account every visitor shares. Its
+    // library key comes from the box instead, the way the demo's photos
+    // password already does. Nothing is given away: the library holds
+    // nothing private, and anyone at all may be the demo.
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    if app.sessions.user(cookie).as_deref() == Some(pages::DEMO_USER)
+        && let Some((id, key)) = &app.demo_library
+    {
+        cfg["demoLibrary"] = serde_json::json!({ "id": id, "key": key });
+    }
+    Json(cfg).into_response()
 }
 
 /// Files: a member's library, opened in the browser by their passkey. The
@@ -1273,6 +1289,7 @@ pub async fn start(
         demo_rate: Mutex::new(HashMap::new()),
         library: cfg.library,
         network: cfg.network,
+        demo_library: cfg.demo_library,
         fleet: cfg.fleet,
     });
     let router = Router::new()
