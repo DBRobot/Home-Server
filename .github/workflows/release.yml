@@ -80,8 +80,56 @@ jobs:
           name: android
           path: app/gen/android/app/build/outputs/apk/**/*.apk
 
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable" }
+      - name: the engine, as a dll
+        shell: bash
+        run: |
+          # cgo on Windows builds with mingw and rust links with msvc, so a
+          # static archive from one cannot go into the other. A dll is
+          # loaded by name and settles the argument.
+          cd app/net
+          mkdir -p "$RUNNER_TEMP/netlib"
+          CGO_ENABLED=1 go build -buildmode=c-shared -o "$RUNNER_TEMP/netlib/commontynet.dll" .
+          # msvc links against the import library beside it
+          ls -la "$RUNNER_TEMP/netlib"
+      - name: rclone, which the drive needs
+        shell: bash
+        run: |
+          curl -sSLo rclone.zip https://downloads.rclone.org/rclone-current-windows-amd64.zip
+          7z x rclone.zip -orclone-out >/dev/null
+          mkdir -p app/bin
+          find rclone-out -name rclone.exe -exec cp {} app/bin/ \;
+      - name: winfsp, so nobody has to fetch it themselves
+        shell: bash
+        run: |
+          # bundled unmodified, which WinFsp's FLOSS exception permits for
+          # software under an OSI licence; Commonty is AGPL-3.0-or-later.
+          # The credit it asks for is on the downloads page and in the
+          # README: WinFsp - Windows File System Proxy, (C) Bill Zissimopoulos
+          curl -sSLo app/bin/winfsp.msi "$WINFSP_URL"
+        env:
+          WINFSP_URL: https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi
+      - name: build the installer
+        shell: bash
+        env:
+          COMMONTY_NET_LIB_DIR: ${{ runner.temp }}/netlib
+        run: |
+          cargo install tauri-cli --version '^2' --locked
+          cd app && cargo tauri build --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/release/bundle/nsis/*.exe
+
   publish:
-    needs: [linux, android]
+    needs: [linux, android, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -94,6 +142,7 @@ jobs:
           cp out/linux/deb/*.deb rel/ 2>/dev/null || cp out/linux/*.deb rel/
           cp out/linux/appimage/*.AppImage rel/ 2>/dev/null || cp out/linux/*.AppImage rel/
           find out/android -name '*.apk' | head -1 | xargs -I{} cp {} rel/commonty.apk
+          find out/windows -name '*.exe' | head -1 | xargs -I{} cp {} rel/commonty-setup.exe
           ls -la rel/
       - uses: softprops/action-gh-release@v2
         with:

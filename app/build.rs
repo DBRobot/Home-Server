@@ -18,11 +18,28 @@ fn main() {
         };
         println!("cargo:rustc-link-search=native={dir}/{abi}");
         println!("cargo:rustc-link-lib=dylib=commontynet");
+    } else if target.contains("windows") {
+        // A dll here, not an archive, and the reason is the toolchain:
+        // Go's cgo on Windows builds with mingw, Rust's default target
+        // links with msvc, and one cannot use the other's static archive.
+        // A dll has no such argument - it is loaded by name at runtime -
+        // so the engine is built c-shared and ships beside the exe, the
+        // same shape Android already uses and for the same reason.
+        println!("cargo:rustc-link-search=native={dir}");
+        println!("cargo:rustc-link-lib=dylib=commontynet");
+        // what Go's runtime and net package want from Windows itself
+        for l in [
+            "ws2_32", "iphlpapi", "userenv", "ntdll", "bcrypt", "advapi32", "winmm",
+        ] {
+            println!("cargo:rustc-link-lib=dylib={l}");
+        }
     } else {
         println!("cargo:rustc-link-search=native={dir}");
         println!("cargo:rustc-link-lib=static=commontynet");
-        #[cfg(target_os = "linux")]
-        {
+        // these branch on the target, not on the machine doing the
+        // building: `cfg!` here is the host, which is only the same thing
+        // by luck and is wrong the moment anything cross-compiles
+        if target.contains("linux") {
             println!("cargo:rustc-link-lib=dylib=pthread");
             println!("cargo:rustc-link-lib=dylib=resolv");
         }

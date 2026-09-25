@@ -19,12 +19,23 @@ impl Drop for Mounted {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = Command::new("fusermount3")
-            .arg("-uz")
-            .arg(&self.at)
-            .stderr(Stdio::null())
-            .status();
+        release(&self.at);
     }
+}
+
+/// Let go of a mount point. Killing rclone is enough on Windows, where
+/// WinFsp tears the drive down with the process that served it; on Linux
+/// a dead fuse mount leaves a folder nothing can open until it is
+/// unmounted by name.
+fn release(at: &Path) {
+    if cfg!(windows) {
+        return;
+    }
+    let _ = Command::new("fusermount3")
+        .arg("-uz")
+        .arg(at)
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// the rclone binary: named by the packaging, or on PATH
@@ -58,11 +69,7 @@ pub fn mount(
     let rc = rclone();
     // a mount left by a process that died is a folder nothing can open
     if std::fs::read_dir(at).is_err() {
-        let _ = Command::new("fusermount3")
-            .arg("-uz")
-            .arg(at)
-            .stderr(Stdio::null())
-            .status();
+        release(at);
     }
     std::fs::create_dir_all(at)?;
     let password = obscure(&rc, &library::crypt::password_of(key))?;
