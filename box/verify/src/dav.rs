@@ -465,7 +465,7 @@ async fn get(g: &Gate, lib: &str, path: &str, headers: &HeaderMap, head: bool) -
     } else {
         Body::from_stream(r.bytes_stream())
     };
-    Ok(out.body(body).context("response")?)
+    out.body(body).context("response")
 }
 
 async fn put(g: &Gate, lib: &str, path: &str, req: Request) -> Result<Response> {
@@ -594,12 +594,15 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        // three bytes of room, checked by addition: `b.len() - 1` is an
+        // underflow waiting for an empty string
+        if b[i] == b'%'
+            && i + 3 <= b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
