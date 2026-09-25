@@ -38,6 +38,8 @@ pub enum LibraryCmd {
         name: String,
         out: PathBuf,
     },
+    /// Make a folder (the pages and the mount expect Files, Movies and Shows)
+    Mkdir { library: String, path: String },
     /// Move a file to the trash (nothing is gone until the box purges it)
     Trash { library: String, name: String },
 }
@@ -146,6 +148,12 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                 .await?;
             eprintln!();
             println!("{name}: {n} bytes -> {}", out.display());
+        }
+        LibraryCmd::Mkdir { library, path } => {
+            let (_, key) = pick(dirs, &user, &opener, &library).await?;
+            let gate = Gate::new(&base, &library, &token, &key);
+            gate.mkdir(&path).await?;
+            println!("{path}: made");
         }
         LibraryCmd::Trash { library, name } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;

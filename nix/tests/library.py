@@ -15,6 +15,13 @@ box.succeed(f"{env} {nix['dd']} identity new --name sarah {dirs}")
 out = box.succeed(f"{env} {nix['dd']} library new {dirs}")
 lib = out.split("library ")[1].split(":")[0].strip()
 assert len(lib) == 32, out
+# a new library opens on something: the pages and the mount expect these
+listing = box.succeed(f"{env} {nix['dd']} library ls {lib} {dirs}")
+for folder in ["Files", "Movies", "Shows"]:
+    assert folder in listing, (folder, listing)
+
+# a folder made from the terminal, in a library that already exists
+box.succeed(f"{env} {nix['dd']} library mkdir {lib} Archive {dirs}")
 
 # what rclone needs: the library key as password, the id as salt, the gate
 # as a webdav remote with the device token. dd prints the key here for

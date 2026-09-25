@@ -358,7 +358,9 @@ button.crumb {
   margin-bottom: 6px;
   background: var(--card);
 }
-button.rowname {
+/* a row's name: a button where it opens something, plain text where it
+   only says what is there (the pages behind the bar's menu) */
+.rowname {
   background: none;
   border: none;
   padding: 0;
@@ -366,9 +368,18 @@ button.rowname {
   color: var(--ink);
   text-align: left;
   flex: 1;
-  cursor: pointer;
 }
+button.rowname { cursor: pointer; }
 button.rowname:hover { color: var(--brand); filter: none; }
+/* what a row says about its name: a size, a release, when it last ran */
+.tag {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+/* a box says several things at once, and a phone is narrow */
+.rows li { flex-wrap: wrap; }
+.rows .rowname { min-width: 40%; }
 button.inline { margin: 0; padding: 4px 10px; font-size: 12.5px; }
 .rows.jobs li { color: var(--ink-2); font-size: 13px; }
 .cmd {
