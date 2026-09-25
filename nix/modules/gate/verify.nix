@@ -237,11 +237,11 @@ in
         VERIFY_DIR = "/var/lib/dd-verify/keys";
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
         VERIFY_FLEET = builtins.toJSON cfg.fleet;
+        VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
       // lib.optionalAttrs (full && cfg.demoLibrary != null) {
         VERIFY_DEMO_LIBRARY_ID = cfg.demoLibrary.id;
         VERIFY_DEMO_LIBRARY_KEY = cfg.demoLibrary.key;
-        VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
       // lib.optionalAttrs (full && cfg.library != null) {
         VERIFY_LIBRARY_S3 = cfg.library.s3;
