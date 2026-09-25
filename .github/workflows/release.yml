@@ -116,6 +116,9 @@ jobs:
           curl -sSLo app/bin/winfsp.msi "$WINFSP_URL"
         env:
           WINFSP_URL: https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi
+      - name: the cli, which needs none of the gui
+        shell: bash
+        run: cargo build --release -p dd
       - name: build the installer
         shell: bash
         env:
@@ -126,7 +129,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: target/release/bundle/nsis/*.exe
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/dd.exe
 
   publish:
     needs: [linux, android, windows]
@@ -142,7 +147,8 @@ jobs:
           cp out/linux/deb/*.deb rel/ 2>/dev/null || cp out/linux/*.deb rel/
           cp out/linux/appimage/*.AppImage rel/ 2>/dev/null || cp out/linux/*.AppImage rel/
           find out/android -name '*.apk' | head -1 | xargs -I{} cp {} rel/commonty.apk
-          find out/windows -name '*.exe' | head -1 | xargs -I{} cp {} rel/commonty-setup.exe
+          find out/windows -path '*nsis*' -name '*.exe' | head -1 | xargs -I{} cp {} rel/commonty-setup.exe
+          find out/windows -name 'dd.exe' | head -1 | xargs -I{} cp {} rel/dd.exe
           ls -la rel/
       - uses: softprops/action-gh-release@v2
         with:
