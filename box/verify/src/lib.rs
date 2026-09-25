@@ -61,6 +61,7 @@ struct App {
     library: Option<library::Gate>,
     network: Option<network::Door>,
     demo_library: Option<(String, String)>,
+    app_release: Option<(String, String)>,
     fleet: fleet::Fleet,
 }
 
@@ -117,6 +118,10 @@ pub struct Config {
     /// The library the demo account reads: an id and its key, both in the
     /// open on purpose (see the option in modules/library/libraries.nix).
     pub demo_library: Option<(String, String)>,
+    /// Where the app is built and published, and the release to offer:
+    /// the downloads page links there rather than at a file this box
+    /// holds. None: no page, because there is nothing to send anyone to.
+    pub app_release: Option<(String, String)>,
     /// Every box in the fleet and the address its prometheus answers on,
     /// for the Boxes and Backups pages. Empty on a box that is not told.
     pub fleet: fleet::Fleet,
@@ -1012,6 +1017,15 @@ async fn fleet_json(State(app): State<Arc<App>>, headers: HeaderMap) -> Response
     }
 }
 
+/// Where a stranger gets the app. The only page here that asks for
+/// nothing: an invited person has no way in until they have it.
+async fn download_page(State(app): State<Arc<App>>) -> Response {
+    match &app.app_release {
+        Some((repo, version)) => Html(pages::download(&app.domain, repo, version)).into_response(),
+        None => (StatusCode::NOT_FOUND, "nothing to download yet").into_response(),
+    }
+}
+
 /// The member's own machines on the fleet's network.
 async fn network_mine(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
@@ -1290,6 +1304,7 @@ pub async fn start(
         library: cfg.library,
         network: cfg.network,
         demo_library: cfg.demo_library,
+        app_release: cfg.app_release,
         fleet: cfg.fleet,
     });
     let router = Router::new()
@@ -1339,6 +1354,7 @@ pub async fn start(
                 member_page(&a, &h, pages::network_page, "/_dd/network").await
             }),
         )
+        .route("/_dd/download", get(download_page))
         .route("/_dd/fleet.json", get(fleet_json))
         .route("/_dd/network/mine", get(network_mine))
         .route("/_dd/photos", get(photos_page))

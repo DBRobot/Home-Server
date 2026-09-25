@@ -175,6 +175,37 @@ struct Photos<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "download.html")]
+struct Download<'a> {
+    domain: &'a str,
+    repo: &'a str,
+    deb: String,
+    appimage: String,
+    apk: String,
+}
+
+/// Where a stranger gets the app. Public: someone invited has nothing to
+/// sign in with until they have it. The artifacts are built after a merge
+/// and published as a release on the mirror, so the links point there by
+/// the tag the release carries, not at a file this box holds.
+pub fn download(domain: &str, repo: &str, version: &str) -> String {
+    let at = |name: &str| format!("{repo}/releases/download/{version}/{name}");
+    render(Download {
+        domain,
+        repo,
+        deb: at(&format!(
+            "commonty_{}_amd64.deb",
+            version.trim_start_matches('v')
+        )),
+        appimage: at(&format!(
+            "commonty_{}_amd64.AppImage",
+            version.trim_start_matches('v')
+        )),
+        apk: at("commonty.apk"),
+    })
+}
+
+#[derive(Template)]
 #[template(path = "panel.html")]
 struct Panel<'a> {
     user: &'a str,
@@ -407,6 +438,17 @@ mod tests {
                 .contains("/_dd/redeem/start")
         );
         assert!(static_file("nope").is_none());
+    }
+
+    #[test]
+    fn the_downloads_page_asks_for_nothing_and_points_at_the_release() {
+        let html = download("commonty.org", "https://github.com/x/y", "v0.2.0");
+        assert!(html.contains("https://github.com/x/y/releases/download/v0.2.0/commonty.apk"));
+        assert!(html.contains("commonty_0.2.0_amd64.deb"));
+        assert!(html.contains("commonty_0.2.0_amd64.AppImage"));
+        // a stranger is who this is for: no name, no avatar, no menu
+        assert!(!html.contains("class=\"me\"") && !html.contains("/_dd/logout"));
+        assert!(html.contains("https://home.commonty.org/"));
     }
 
     #[test]

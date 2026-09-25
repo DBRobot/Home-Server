@@ -40,6 +40,13 @@ async fn main() -> Result<()> {
         // every box and where its prometheus answers, for the pages that
         // show the fleet; a box that is not told has none to show
         fleet: serde_json::from_str(&env_or("VERIFY_FLEET", "{}")).context("VERIFY_FLEET")?,
+        app_release: match (
+            std::env::var("VERIFY_APP_REPO"),
+            std::env::var("VERIFY_APP_VERSION"),
+        ) {
+            (Ok(r), Ok(v)) if !r.is_empty() && !v.is_empty() => Some((r, v)),
+            _ => None,
+        },
         demo_library: match (
             std::env::var("VERIFY_DEMO_LIBRARY_ID"),
             std::env::var("VERIFY_DEMO_LIBRARY_KEY"),

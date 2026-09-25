@@ -1,0 +1,51 @@
+{# The one page a stranger is meant to see. No session, no gate: someone
+   who has been invited needs the app before they can sign in to anything. #}
+{% extends "base.html" %}
+{% block title %}Get Commonty{% endblock %}
+{% block main %}
+<main class="wide">
+  <div class="card">
+    <h1>Get Commonty</h1>
+    <p class="lead">Your files, photos and films on a box someone you know
+    owns, encrypted on your own device before they leave it. The app is how
+    you reach them.</p>
+
+    <section class="shelf">
+      <h2>Linux</h2>
+      <ul class="rows">
+        <li>
+          <span class="rowname">Debian, Ubuntu and anything that takes a .deb</span>
+          <a class="quiet inline" href="{{ deb }}">Download</a>
+        </li>
+        <li>
+          <span class="rowname">AppImage, for everything else</span>
+          <a class="quiet inline" href="{{ appimage }}">Download</a>
+        </li>
+      </ul>
+      <p class="note">The AppImage needs no install: make it executable and run it.</p>
+    </section>
+
+    <section class="shelf">
+      <h2>Android</h2>
+      <ul class="rows">
+        <li>
+          <span class="rowname">APK, installed by hand</span>
+          <a class="quiet inline" href="{{ apk }}">Download</a>
+        </li>
+      </ul>
+      <p class="note">Android asks you to allow installing from outside its
+      store, once. There is no listing to install from: this is not a product.</p>
+    </section>
+
+    <section class="shelf">
+      <h2>Or build it yourself</h2>
+      <p class="note">Everything here is built from
+      <a href="{{ repo }}">the source</a>, in the open, by the same commands
+      you can run. Nothing in the app is a secret: it makes its own key on
+      your device the first time you open it, and that key never leaves.</p>
+    </section>
+
+    <p class="note">Already have it? <a href="https://home.{{ domain }}/">Sign in</a>.</p>
+  </div>
+</main>
+{% endblock %}
