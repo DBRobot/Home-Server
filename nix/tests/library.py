@@ -15,9 +15,10 @@ box.succeed(f"{env} {nix['dd']} identity new --name sarah {dirs}")
 out = box.succeed(f"{env} {nix['dd']} library new {dirs}")
 lib = out.split("library ")[1].split(":")[0].strip()
 assert len(lib) == 32, out
-# a new library opens on something: the pages and the mount expect these
+# a new library opens on something: the pages and the mount expect these,
+# and a listing that hid folders is how an empty-looking library happens
 listing = box.succeed(f"{env} {nix['dd']} library ls {lib} {dirs}")
-for folder in ["Files", "Movies", "Shows"]:
+for folder in ["Files/", "Movies/", "Shows/"]:
     assert folder in listing, (folder, listing)
 
 # a folder made from the terminal, in a library that already exists

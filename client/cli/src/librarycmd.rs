@@ -97,7 +97,11 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
             let gate = Gate::new(&base, &library, &token, &key);
             for it in gate.walk("").await? {
-                println!("{:>12}  {}", it.size, it.path);
+                if it.dir {
+                    println!("{:>12}  {}/", "-", it.path);
+                } else {
+                    println!("{:>12}  {}", it.size, it.path);
+                }
             }
         }
         LibraryCmd::Put {
