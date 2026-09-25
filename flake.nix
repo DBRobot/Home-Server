@@ -372,9 +372,21 @@
           android-sdk = androidSdk;
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
+          # A film is HLS, because that is what the box's transcode makes
+          # and what lets a viewer seek. Safari plays a playlist by itself;
+          # nothing else does, so the page needs a player. Pinned by hash
+          # and served from this directory beside our own wasm: no
+          # third-party blob in the tree, and the page fetches it from the
+          # box like everything else it loads.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
             mkdir -p $out
             wasm-bindgen --target web --no-typescript --out-dir $out ${wasmBuild}/lib/dd_web.wasm
+            cp ${
+              pkgs.fetchurl {
+                url = "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.6.5/hls.min.js";
+                hash = "sha256-k36IEw6HrUntpsfxCOk+QsInVYxti01bU9205DB6Msw=";
+              }
+            } $out/hls.js
           '';
 
           # the checks, on the same compiled artifacts as the binaries: fmt

@@ -133,10 +133,31 @@ export async function transcode(lib, path, sealedSize) {
   return `/_dd/transcode${playlist}`;
 }
 
-/// whether this browser plays a playlist without a library of our own
+/// whether this browser plays a playlist by itself (Safari, every iPhone)
 export function playsPlaylists() {
   const v = document.createElement('video');
   return !!(v.canPlayType('application/vnd.apple.mpegurl') || v.canPlayType('application/x-mpegURL'));
+}
+
+/// Where it does not, a player from the box (flake.nix pins it beside our
+/// own wasm). Loaded the first time a film is opened and not before: it is
+/// half a megabyte and most visits never play anything.
+let player = null;
+export async function playlistPlayer() {
+  if (!player) {
+    // a classic script, not an import: the file is a UMD bundle and its
+    // wrapper wants `this` to be the window, which a module denies it
+    await new Promise((ok, no) => {
+      const s = document.createElement('script');
+      s.src = '/_dd/web/hls.js';
+      s.onload = ok;
+      s.onerror = () => no(new Error('the player did not load'));
+      document.head.append(s);
+    });
+    player = window.Hls;
+  }
+  if (!player || !player.isSupported()) throw new Error('this browser cannot play a film');
+  return player;
 }
 
 export function human(n) {

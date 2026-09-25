@@ -459,6 +459,9 @@ mod tests {
         // a film goes through the box, with the key sealed to it
         let lib = static_file("library.js").unwrap().0;
         assert!(lib.contains("/_dd/transcode/start") && lib.contains("library_key_for_box"));
+        // the player comes from this box, never from someone else's
+        assert!(lib.contains("'/_dd/web/hls.js'"));
+        assert!(!lib.contains("http://") && !lib.contains("https://"));
     }
 
     #[test]

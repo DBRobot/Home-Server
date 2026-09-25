@@ -3,7 +3,7 @@
 // with its episodes inside. The same passkey, the same gate, the same
 // ciphertext: only the shape of the listing is different (library.js).
 
-import { unlock, list, fetchPlain, save, put, trash, mkdir, transcode, playsPlaylists, human } from './library.js';
+import { unlock, list, fetchPlain, save, put, trash, mkdir, transcode, playsPlaylists, playlistPlayer, human } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const user = document.querySelector('[data-user]').dataset.user;
@@ -13,6 +13,7 @@ const user = document.querySelector('[data-user]').dataset.user;
 const INLINE = 256 * 1024 * 1024;
 let lib = null;
 let show = null;                 // the programme being looked at, or null
+let hls = null;                  // the player, where the browser needs one
 
 function tile(label, sub, onclick) {
   const li = document.createElement('li');
@@ -86,20 +87,27 @@ async function play(it) {
   $('savefile').hidden = true;
   $('title').textContent = it.name;
   // A film is bigger than a tab: the box decrypts it in its own memory
-  // for this one viewing and sends a playlist. Browsers that play a
-  // playlist by themselves get that; the rest get what fits in a tab.
-  if (playsPlaylists()) {
-    $('note').textContent = 'Asking the box to play it…';
-    try {
-      v.src = await transcode(lib, it.path, it.sealed);
-      v.hidden = false;
-      $('note').textContent = '';
-      v.play().catch(() => {});
-      return;
-    } catch (e) {
-      $('note').textContent = e.message;
-      // and fall through: a small file still opens here
+  // for this one viewing and sends a playlist. Safari plays a playlist
+  // itself; everywhere else the page loads a player from the box.
+  $('note').textContent = 'Asking the box to play it…';
+  try {
+    const url = await transcode(lib, it.path, it.sealed);
+    if (playsPlaylists()) {
+      v.src = url;
+    } else {
+      const Hls = await playlistPlayer();
+      hls?.destroy();
+      hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(v);
     }
+    v.hidden = false;
+    $('note').textContent = '';
+    v.play().catch(() => {});
+    return;
+  } catch (e) {
+    $('note').textContent = e.message;
+    // and fall through: a small file still opens in the tab
   }
   if (it.size > INLINE) {
     v.hidden = true;
@@ -172,6 +180,9 @@ async function start() {
   };
   $('close').onclick = () => {
     $('video').pause();
+    // the player holds the box's session open until it is told to stop
+    hls?.destroy();
+    hls = null;
     $('video').removeAttribute('src');
     $('playing').hidden = true;
   };
