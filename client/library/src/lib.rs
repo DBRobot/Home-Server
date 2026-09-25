@@ -1,25 +1,21 @@
 //! A member's encrypted library: the files a box holds but cannot read.
 //!
-//! One library is one bucket. A file is a random id, its content in
-//! fixed-size chunks each encrypted with the file's own key, and a record
-//! (name, size, chunk count, the file key) encrypted with the library key.
-//! The library key is sealed to the member's device, root and recovery
+//! One library is one prefix in the bucket, in rclone's crypt format
+//! (crypt.rs): encrypted names, encrypted blocks, so `rclone mount` opens
+//! it on any desktop and no format here is ours. The library key is the
+//! remote's password, sealed to the member's device, root and recovery
 //! keys and published in their directory entry: the keys live in the
 //! identity, never on a box, never in a file on disk. Sharing a library is
 //! sealing its key to one more reader; taking it back is a new key.
 //!
-//! What a box learns: how many chunks exist, how big they are, who fetches
-//! which when. Names, contents and the shape of a file, never.
+//! What a box learns: how many objects exist, how big they are, who
+//! fetches which when. Names and contents, never.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-/// a chunk of content before encryption; the last chunk of a file is shorter
-pub const CHUNK: usize = 4 * 1024 * 1024;
+pub mod crypt;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -31,6 +27,8 @@ pub enum Error {
     Aead,
     #[error("record: {0}")]
     Record(String),
+    #[error("format: {0}")]
+    Format(String),
     #[error(transparent)]
     Identity(#[from] identity::Error),
 }
@@ -213,130 +211,6 @@ pub fn open_library(
     Err(Error::Sealed)
 }
 
-// ---------------------------------------------------------------- content
-
-fn cipher(key: &[u8; 32]) -> XChaCha20Poly1305 {
-    XChaCha20Poly1305::new(key.into())
-}
-
-/// the nonce of chunk `n` of a file: the file key is used for one file
-/// only, so a counter nonce is sound and the chunk index binds each
-/// chunk to its place
-fn chunk_nonce(n: u64) -> XNonce {
-    let mut b = [0u8; 24];
-    b[..8].copy_from_slice(&n.to_le_bytes());
-    XNonce::from(b)
-}
-
-/// one chunk, encrypted with the file key at its index
-pub fn seal_chunk(file_key: &Key, index: u64, plain: &[u8]) -> Result<Vec<u8>> {
-    cipher(file_key)
-        .encrypt(
-            &chunk_nonce(index),
-            Payload {
-                msg: plain,
-                aad: &index.to_le_bytes(),
-            },
-        )
-        .map_err(|_| Error::Aead)
-}
-
-pub fn open_chunk(file_key: &Key, index: u64, sealed: &[u8]) -> Result<Vec<u8>> {
-    cipher(file_key)
-        .decrypt(
-            &chunk_nonce(index),
-            Payload {
-                msg: sealed,
-                aad: &index.to_le_bytes(),
-            },
-        )
-        .map_err(|_| Error::Aead)
-}
-
-/// the size of a chunk on the box for a chunk of this many plain bytes
-pub fn sealed_len(plain: usize) -> usize {
-    plain + 16
-}
-
-// ---------------------------------------------------------------- records
-
-/// What a file is, as the record encrypted with the library key says.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Record {
-    pub id: String,
-    /// a path inside the library, "/" separated, no leading slash
-    pub name: String,
-    pub size: u64,
-    pub chunks: u64,
-    /// the file key, base64
-    pub key: String,
-    pub modified: u64,
-}
-
-/// a record on the box: random nonce, then the ciphertext; the record id is
-/// bound as associated data so a record cannot be moved under another id
-pub fn seal_record(library_key: &Key, r: &Record) -> Result<Vec<u8>> {
-    let plain = serde_json::to_vec(r).map_err(|e| Error::Record(e.to_string()))?;
-    let mut nonce = [0u8; 24];
-    fill(&mut nonce);
-    let sealed = cipher(library_key)
-        .encrypt(
-            &XNonce::from(nonce),
-            Payload {
-                msg: &plain,
-                aad: r.id.as_bytes(),
-            },
-        )
-        .map_err(|_| Error::Aead)?;
-    let mut out = nonce.to_vec();
-    out.extend(sealed);
-    Ok(out)
-}
-
-pub fn open_record(library_key: &Key, id: &str, bytes: &[u8]) -> Result<Record> {
-    if bytes.len() < 24 {
-        return Err(Error::Record("too short".into()));
-    }
-    let (nonce, sealed) = bytes.split_at(24);
-    let plain = cipher(library_key)
-        .decrypt(
-            XNonce::from_slice(nonce),
-            Payload {
-                msg: sealed,
-                aad: id.as_bytes(),
-            },
-        )
-        .map_err(|_| Error::Aead)?;
-    let r: Record = serde_json::from_slice(&plain).map_err(|e| Error::Record(e.to_string()))?;
-    if r.id != id {
-        return Err(Error::Record("id inside does not match".into()));
-    }
-    Ok(r)
-}
-
-pub fn file_key(r: &Record) -> Result<Key> {
-    let b = B64.decode(&r.key).map_err(|e| Error::Key(e.to_string()))?;
-    let arr: [u8; 32] = b[..]
-        .try_into()
-        .map_err(|_| Error::Key("file key is not 32 bytes".into()))?;
-    Ok(Zeroizing::new(arr))
-}
-
-pub fn encode_key(k: &Key) -> String {
-    B64.encode(&k[..])
-}
-
-/// the object names inside a library's bucket
-pub fn record_object(id: &str) -> String {
-    format!("records/{id}")
-}
-pub fn chunk_object(id: &str, n: u64) -> String {
-    format!("chunks/{id}/{n:08}")
-}
-pub fn trash_prefix(id: &str) -> String {
-    format!("trash/{id}/")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,40 +278,5 @@ mod tests {
         assert_eq!(&open_x25519(&secret, &sealed).unwrap()[..], &fk[..]);
         let (_, other) = ephemeral();
         assert!(open_x25519(&other, &sealed).is_err());
-    }
-
-    #[test]
-    fn chunks_open_only_at_their_index_with_their_key() {
-        let k = random_key();
-        let plain = b"the first chunk of a film";
-        let sealed = seal_chunk(&k, 0, plain).unwrap();
-        assert_eq!(sealed.len(), sealed_len(plain.len()));
-        assert_eq!(open_chunk(&k, 0, &sealed).unwrap(), plain);
-        assert!(
-            open_chunk(&k, 1, &sealed).is_err(),
-            "moved to another place"
-        );
-        assert!(
-            open_chunk(&random_key(), 0, &sealed).is_err(),
-            "another file's key"
-        );
-    }
-
-    #[test]
-    fn a_record_is_bound_to_its_id() {
-        let lk = random_key();
-        let fk = random_key();
-        let r = Record {
-            id: random_id(),
-            name: "films/Heat (1995).mkv".into(),
-            size: 12_345,
-            chunks: 1,
-            key: encode_key(&fk),
-            modified: 7,
-        };
-        let sealed = seal_record(&lk, &r).unwrap();
-        assert_eq!(open_record(&lk, &r.id, &sealed).unwrap(), r);
-        assert!(open_record(&lk, "some-other-id", &sealed).is_err());
-        assert_eq!(&file_key(&r).unwrap()[..], &fk[..]);
     }
 }

@@ -13,13 +13,14 @@ directory = { path = "../directory" }
 account = { path = "../account" }
 anyhow = "1"
 ed25519-dalek = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures = "0.3"
+tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["rt", "time", "sync"] }
 
-# the folders are a fuse mount; a phone has none, its files come by other
-# means (the app)
-[target.'cfg(not(target_os = "android"))'.dependencies]
-fuser = "0.18"
+
+# jellyfin dies with its parent (prctl)
+[target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

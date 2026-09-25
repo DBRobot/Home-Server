@@ -12,7 +12,8 @@ use tokio::sync::Mutex;
 use crate::account::Keys;
 
 pub struct Running {
-    mount: media::fs::Mount,
+    at: PathBuf,
+    mounts: Vec<media::mount::Mounted>,
     player: media::jellyfin::Player,
 }
 
@@ -54,10 +55,10 @@ pub async fn media_status(media: State<'_, Media>) -> Result<MediaStatus, String
     Ok(match m.as_ref() {
         Some(r) => MediaStatus {
             running: true,
-            at: Some(r.mount.at.to_string_lossy().into_owned()),
+            at: Some(r.at.to_string_lossy().into_owned()),
             url: Some(r.player.url.clone()),
-            libraries: r.mount.libraries.len(),
-            files: r.mount.libraries.iter().map(|l| l.files).sum(),
+            libraries: r.mounts.len(),
+            files: 0,
             jellyfin: jellyfin_bin().map(|p| p.to_string_lossy().into_owned()),
         },
         None => MediaStatus {
@@ -83,15 +84,36 @@ pub async fn media_open(
         let home = home()?;
         let at = home.join("Commonty");
         let data = crate::paths::data().join("jellyfin");
-        let mount = media::fs::mount(&keys.0, &crate::account::dirs(), at)
+        let dirs = crate::account::dirs();
+        let (opener, user, _) = media::gate::Opener::load(&keys.0).map_err(|e| e.to_string())?;
+        // a token that outlives a film: the mount holds it for the day
+        let kp = auth::device::load(&keys.0)
+            .map_err(|e| e.to_string())?
+            .ok_or("no device key here")?;
+        let token = auth::device::mint(&kp, &user, std::time::Duration::from_secs(24 * 3600))
+            .map_err(|e| e.to_string())?;
+        let base = media::gate::files_base(&dirs).map_err(|e| e.to_string())?;
+        let mut mounts = Vec::new();
+        for (owner, lib, key) in media::gate::openable(&dirs, &user, &opener)
             .await
-            .map_err(|e| format!("{e:#}"))?;
-        let (_, user, _) = media::gate::Opener::load(&keys.0).map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?
+        {
+            let gate = media::gate::Gate::new(&base, &lib.id, &token, &key);
+            let (dav, _) = gate.dav();
+            let dir = at.join(&lib.id[..12]);
+            mounts.push(
+                media::mount::mount(&lib.id, &owner, dav, &token, &key, &dir)
+                    .map_err(|e| format!("{e:#}"))?,
+            );
+        }
+        if mounts.is_empty() {
+            return Err("no library to mount: make one first".to_string());
+        }
         let password = media::jellyfin::password(&keys.0).map_err(|e| e.to_string())?;
-        let player = media::jellyfin::start(&bin, &data, &mount.at, &user, &password)
+        let player = media::jellyfin::start(&bin, &data, &at, &user, &password)
             .await
             .map_err(|e| format!("{e:#}"))?;
-        *m = Some(Running { mount, player });
+        *m = Some(Running { at, mounts, player });
     }
     let (url, session) = m
         .as_ref()

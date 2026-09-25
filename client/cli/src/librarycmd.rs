@@ -1,14 +1,15 @@
 //! `dd library`: a member's encrypted libraries from the terminal. The key
 //! comes out of the entry (sealed to this device or the root), every byte
 //! is encrypted here before it goes anywhere, and the box's gate only ever
-//! hands out a url for one object at a time (client/media/gate.rs). `dd
-//! media` mounts the same libraries; this is the plain path in and out.
+//! speaks WebDAV over the library's prefix (client/media/gate.rs), in
+//! rclone's format. `dd media` mounts the same libraries with rclone; this
+//! is the plain path in and out.
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use library::{Library, Record};
+use library::Library;
 pub use media::gate::{Gate, Opener, files_base, openable};
 
 use crate::who;
@@ -19,6 +20,9 @@ pub enum LibraryCmd {
     New,
     /// The libraries you can open
     List,
+    /// A library's key as rclone wants it (`password`; the id is
+    /// `password2`): yours, on your machine, for an `rclone config` by hand
+    Key { library: String },
     /// What a library holds
     Ls { library: String },
     /// A file into a library, under a name (default: the file's name); `-` reads stdin
@@ -76,13 +80,15 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                 println!("{}  {whose}  {} key(s)", lib.id, lib.keys.len());
             }
         }
+        LibraryCmd::Key { library } => {
+            let (_, key) = pick(dirs, &user, &opener, &library).await?;
+            println!("{}", library::crypt::password_of(&key));
+        }
         LibraryCmd::Ls { library } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
-            let gate = Gate::new(&base, &library, &token);
-            let mut recs = gate.records(&key).await?;
-            recs.sort_by(|a, b| a.name.cmp(&b.name));
-            for r in recs {
-                println!("{:>12}  {}", r.size, r.name);
+            let gate = Gate::new(&base, &library, &token, &key);
+            for it in gate.walk("").await? {
+                println!("{:>12}  {}", it.size, it.path);
             }
         }
         LibraryCmd::Put {
@@ -91,7 +97,7 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
             name,
         } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
-            let gate = Gate::new(&base, &library, &token);
+            let gate = Gate::new(&base, &library, &token, &key);
             let name = name.unwrap_or_else(|| {
                 file.file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -100,103 +106,48 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
             if name.is_empty() {
                 bail!("a file from stdin needs a name: --as <name>");
             }
-            // streamed a chunk at a time: a film does not fit in memory, and
-            // `-` lets a copy come in over a pipe (ssh box cat ...)
-            let mut src: Box<dyn std::io::Read> = if file.as_os_str() == "-" {
-                Box::new(std::io::stdin())
+            // a file streams a block at a time; stdin has no length, so it
+            // is read whole first (a pipe is for small things)
+            let (src, len): (Box<dyn std::io::Read + Send>, u64) = if file.as_os_str() == "-" {
+                let mut all = Vec::new();
+                std::io::Read::read_to_end(&mut std::io::stdin(), &mut all)?;
+                let len = all.len() as u64;
+                (Box::new(std::io::Cursor::new(all)), len)
             } else {
-                Box::new(
-                    std::fs::File::open(&file)
-                        .with_context(|| format!("opening {}", file.display()))?,
-                )
+                let f = std::fs::File::open(&file)
+                    .with_context(|| format!("opening {}", file.display()))?;
+                let len = f.metadata()?.len();
+                (Box::new(f), len)
             };
-            let file_key = library::random_key();
-            let id = library::random_id();
-            let mut n = 0u64;
-            let mut size = 0u64;
-            let mut buf = vec![0u8; library::CHUNK];
-            loop {
-                let got = read_full(&mut src, &mut buf)?;
-                if got == 0 && n > 0 {
-                    break;
-                }
-                gate.store(
-                    &library::chunk_object(&id, n),
-                    library::seal_chunk(&file_key, n, &buf[..got])?,
-                )
-                .await?;
-                n += 1;
-                size += got as u64;
-                eprint!("\r{name}: chunk {n} ({} MiB)", size >> 20);
-                if got < library::CHUNK {
-                    break;
-                }
-            }
-            eprintln!();
-            let rec = Record {
-                id: id.clone(),
-                name: name.clone(),
-                size,
-                chunks: n,
-                key: library::encode_key(&file_key),
-                modified: identity::now(),
-            };
-            gate.store(
-                &library::record_object(&id),
-                library::seal_record(&key, &rec)?,
-            )
+            let shown = name.clone();
+            gate.put(&name, src, len, move |done| {
+                eprint!("\r{shown}: {} MiB", done >> 20);
+            })
             .await?;
-            println!("{name}: {size} bytes in {n} chunk(s), record {id}");
+            eprintln!();
+            println!("{name}: {len} bytes");
         }
         LibraryCmd::Get { library, name, out } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
-            let gate = Gate::new(&base, &library, &token);
-            let rec = gate
-                .records(&key)
-                .await?
-                .into_iter()
-                .find(|r| r.name == name)
-                .with_context(|| format!("no {name} in {library}"))?;
-            let file_key = library::file_key(&rec)?;
-            let mut f = std::fs::File::create(&out)?;
-            use std::io::Write as _;
-            for n in 0..rec.chunks {
-                let sealed = gate.fetch(&library::chunk_object(&rec.id, n)).await?;
-                f.write_all(&library::open_chunk(&file_key, n, &sealed)?)?;
-                eprint!("\r{name}: chunk {}/{}", n + 1, rec.chunks);
-            }
+            let gate = Gate::new(&base, &library, &token, &key);
+            let f = std::fs::File::create(&out)?;
+            let shown = name.clone();
+            let n = gate
+                .get(&name, std::io::BufWriter::new(f), move |done| {
+                    eprint!("\r{shown}: {} MiB", done >> 20);
+                })
+                .await?;
             eprintln!();
-            println!("{name}: {} bytes -> {}", rec.size, out.display());
+            println!("{name}: {n} bytes -> {}", out.display());
         }
         LibraryCmd::Trash { library, name } => {
             let (_, key) = pick(dirs, &user, &opener, &library).await?;
-            let gate = Gate::new(&base, &library, &token);
-            let rec = gate
-                .records(&key)
-                .await?
-                .into_iter()
-                .find(|r| r.name == name)
-                .with_context(|| format!("no {name} in {library}"))?;
-            gate.json(reqwest::Method::POST, &format!("/trash/{}", rec.id))
-                .await?;
-            println!("{name}: in the trash; the chunks stay until the box purges");
+            let gate = Gate::new(&base, &library, &token, &key);
+            gate.trash(&name).await?;
+            println!("{name}: in the trash; nothing is gone until the box purges");
         }
     }
     Ok(())
-}
-
-/// as much of `buf` as the reader gives before it ends
-fn read_full(r: &mut dyn std::io::Read, buf: &mut [u8]) -> Result<usize> {
-    let mut at = 0;
-    while at < buf.len() {
-        match r.read(&mut buf[at..]) {
-            Ok(0) => break,
-            Ok(k) => at += k,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(at)
 }
 
 async fn pick(

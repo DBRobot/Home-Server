@@ -10,6 +10,7 @@
 //! person signs with a key they alone hold. This box stores and serves it and
 //! can add nothing to it. With VERIFY_ROLE=directory that is all a box does.
 
+pub mod dav;
 mod directory;
 pub mod library;
 pub mod network;
@@ -1164,13 +1165,10 @@ pub async fn start(
         .route("/_dd/photos/config", post(photos_config))
         // the network's door: a join key for an admitted device
         .route("/_dd/network/join", post(network::join))
-        // the encrypted libraries' gate
-        .route("/_dd/library/{lib}/records", get(library::records))
-        .route(
-            "/_dd/library/{lib}/url/{*object}",
-            get(library::url).put(library::url),
-        )
-        .route("/_dd/library/{lib}/trash/{id}", post(library::trash))
+        // the encrypted libraries' gate: WebDAV over each library's prefix
+        .route("/_dd/dav/{lib}", axum::routing::any(dav::handle_root))
+        .route("/_dd/dav/{lib}/", axum::routing::any(dav::handle_root))
+        .route("/_dd/dav/{lib}/{*path}", axum::routing::any(dav::handle))
         .route("/_dd/enrol/start", post(enrol_start))
         .route("/_dd/enrol/finish", post(enrol_finish))
         .route("/_dd/enrol/result", get(enrol_result))
