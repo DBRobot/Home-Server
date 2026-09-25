@@ -1,0 +1,123 @@
+// A member's library in a browser tab: the passkey makes the key, the
+// gate hands over ciphertext on WebDAV, and every name and every byte is
+// turned over here. Files and Movies & TV are two corners of the same
+// library, so the opening, listing and carrying live here once.
+
+import init, { library_device_key, library_open, path_encrypt, path_decrypt, file_open, file_seal, plain_size } from '/_dd/web/dd_web.js';
+import { b64u, u8b64 } from './webauthn.js';
+
+// the passkey's own secret, under a label of this page's own
+async function passkeySecret(cfg, passkeys) {
+  const allow = passkeys.map((p) => ({ type: 'public-key', id: b64u(p.id) }));
+  if (!allow.length) throw new Error('this account has no passkey in a browser yet: `dd enrol` adds one');
+  const salt = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('dd-library')));
+  const a = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rpId: cfg.rpId,
+      allowCredentials: allow,
+      userVerification: 'preferred',
+      extensions: { prf: { eval: { first: salt } } },
+    },
+  });
+  const prf = a.getClientExtensionResults().prf;
+  const secret = prf && prf.results && prf.results.first;
+  if (!secret) throw new Error('this passkey cannot make a key on this browser; try another');
+  const raw = new Uint8Array(a.rawId);
+  const id = btoa(String.fromCharCode(...raw)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return { secret: u8b64(secret), id };
+}
+
+/// The first library this browser's passkey opens. Returns
+/// `{ ok: lib }`, `{ none: true }` when the account has no library, or
+/// `{ link: 'dd passkey link …' }` when nothing here is sealed to it.
+export async function unlock(user) {
+  await init();
+  const cfg = await (await fetch('/_dd/config')).json();
+  const text = await (await fetch('/_dd/directory/' + encodeURIComponent(user))).text();
+  const entry = JSON.parse(text);
+  const { secret, id } = await passkeySecret(cfg, entry.entry.passkeys || []);
+  const libraries = entry.entry.libraries || [];
+  if (!libraries.length) return { none: true };
+  for (const l of libraries) {
+    try {
+      return { ok: { id: l.id, key: library_open(text, l.id, secret) } };
+    } catch { /* the next one, or none */ }
+  }
+  return { link: `dd passkey link ${id} ${library_device_key(secret)}` };
+}
+
+/// the gate's url for a path in the library, under its encrypted name
+export function dav(lib, path) {
+  const enc = path ? path_encrypt(lib.key, lib.id, path).split('/').map(encodeURIComponent).join('/') : '';
+  return `/_dd/dav/${lib.id}/${enc}`;
+}
+
+/// what a folder holds, names and sizes as they really are
+export async function list(lib, dir) {
+  const r = await fetch(dav(lib, dir) + '/', { method: 'PROPFIND', headers: { depth: '1' } });
+  if (r.status === 404) return [];
+  if (r.status !== 207) throw new Error(`the gate said ${r.status}`);
+  const doc = new DOMParser().parseFromString(await r.text(), 'application/xml');
+  const prefix = `/_dd/dav/${lib.id}/`;
+  const out = [];
+  for (const el of doc.getElementsByTagNameNS('DAV:', 'response')) {
+    const href = el.getElementsByTagNameNS('DAV:', 'href')[0]?.textContent || '';
+    const rel = decodeURI(href).slice(prefix.length).replace(/\/$/, '');
+    if (!rel) continue;
+    let path;
+    try { path = path_decrypt(lib.key, lib.id, rel.split('/').map(decodeURIComponent).join('/')); }
+    catch { continue; }                       // not ours to read: the trash, a stray
+    if (path === dir) continue;               // the folder lists itself first
+    const isDir = !!el.getElementsByTagNameNS('DAV:', 'collection').length;
+    const sealed = Number(el.getElementsByTagNameNS('DAV:', 'getcontentlength')[0]?.textContent || 0);
+    out.push({
+      path,
+      name: path.split('/').pop(),
+      dir: isDir,
+      size: isDir ? 0 : plain_size(sealed),
+      modified: el.getElementsByTagNameNS('DAV:', 'getlastmodified')[0]?.textContent || '',
+    });
+  }
+  out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+  return out;
+}
+
+/// a file out of the library and into the machine's downloads
+export async function fetchPlain(lib, path) {
+  const r = await fetch(dav(lib, path));
+  if (!r.ok) throw new Error(`the gate said ${r.status}`);
+  return file_open(lib.key, lib.id, new Uint8Array(await r.arrayBuffer()));
+}
+
+export function save(bytes, name) {
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/// a file into the library, sealed here
+export async function put(lib, path, file) {
+  const sealed = file_seal(lib.key, lib.id, new Uint8Array(await file.arrayBuffer()));
+  const r = await fetch(dav(lib, path), { method: 'PUT', body: sealed });
+  if (!r.ok) throw new Error(`the gate said ${r.status}`);
+}
+
+export async function trash(lib, path) {
+  await fetch(dav(lib, path), { method: 'DELETE' });
+}
+
+export function human(n) {
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`;
+}
+
+export async function mkdir(lib, path) {
+  const r = await fetch(dav(lib, path), { method: 'MKCOL' });
+  if (!r.ok && r.status !== 405) throw new Error(`the gate said ${r.status}`);
+}

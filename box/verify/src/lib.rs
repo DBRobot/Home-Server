@@ -12,6 +12,7 @@
 
 pub mod dav;
 mod directory;
+pub mod fleet;
 pub mod library;
 pub mod network;
 mod oidc;
@@ -59,6 +60,7 @@ struct App {
     /// the encrypted libraries' gate (library.rs), on a box with the bucket
     library: Option<library::Gate>,
     network: Option<network::Door>,
+    fleet: fleet::Fleet,
 }
 
 enum Ceremony {
@@ -111,6 +113,9 @@ pub struct Config {
     /// the library gate, if this box holds the libraries bucket
     pub library: Option<library::Gate>,
     pub network: Option<network::Door>,
+    /// Every box in the fleet and the address its prometheus answers on,
+    /// for the Boxes and Backups pages. Empty on a box that is not told.
+    pub fleet: fleet::Fleet,
 }
 
 /// What the photos page needs to make or open an ente account for a person:
@@ -868,7 +873,7 @@ async fn login_finish(
 async fn home_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
-        Some(user) if !app.member(&user) => Html(pages::waiting(&user)).into_response(),
+        Some(user) if !app.member(&user) => Html(pages::waiting(&user, &app.home)).into_response(),
         Some(user) => Html(pages::home(&user, &app.home)).into_response(),
         None => Redirect::to("/_dd/login?rd=/").into_response(),
     }
@@ -933,10 +938,75 @@ async fn files_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response
     let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
     match app.sessions.user(cookie) {
         Some(user) if app.member(&user) && user != pages::DEMO_USER => {
-            Html(pages::files(&user)).into_response()
+            Html(pages::files(&user, &app.home)).into_response()
         }
         Some(_) => Redirect::to("/_dd/home").into_response(),
         None => Redirect::to("/_dd/login?rd=/_dd/files").into_response(),
+    }
+}
+
+/// Movies & TV: the library's Movies and Shows, opened by the passkey.
+async fn media_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Html(pages::media(&user, &app.home)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to("/_dd/login?rd=/_dd/media").into_response(),
+    }
+}
+
+/// Boxes, Backups, Devices, Network: the pages behind the bar's menu.
+/// Each is a member's own view of the fleet; the demo gets none of them.
+async fn member_page(
+    app: &App,
+    headers: &HeaderMap,
+    page: fn(&str, &[pages::Service]) -> String,
+    at: &str,
+) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Html(page(&user, &app.home)).into_response()
+        }
+        Some(_) => Redirect::to("/_dd/home").into_response(),
+        None => Redirect::to(&format!("/_dd/login?rd={at}")).into_response(),
+    }
+}
+
+/// What every box is running and how its last backup went. Read from each
+/// box's own prometheus when the page asks, never stored here.
+async fn fleet_json(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    match app.sessions.user(cookie) {
+        Some(user) if app.member(&user) && user != pages::DEMO_USER => {
+            Json(fleet::look(&app.fleet).await).into_response()
+        }
+        _ => StatusCode::FORBIDDEN.into_response(),
+    }
+}
+
+/// The member's own machines on the fleet's network.
+async fn network_mine(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+    let cookie = headers.get("cookie").and_then(|v| v.to_str().ok());
+    let Some(user) = app.sessions.user(cookie) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    if !app.member(&user) || user == pages::DEMO_USER {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match &app.network {
+        // the control server is on one box; elsewhere the page says so
+        None => Json(serde_json::json!({ "here": false, "machines": [] })).into_response(),
+        Some(door) => match door.mine(&user).await {
+            Ok(m) => Json(serde_json::json!({ "here": true, "machines": m })).into_response(),
+            Err(e) => (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
     }
 }
 
@@ -946,11 +1016,13 @@ async fn photos_page(State(app): State<Arc<App>>, headers: HeaderMap) -> Respons
     match app.sessions.user(cookie) {
         // the demo has no passkey: the page gets its password from the config
         Some(user) if user == pages::DEMO_USER => match &app.photos {
-            Some(p) if p.demo_password.is_some() => Html(pages::photos(&user)).into_response(),
+            Some(p) if p.demo_password.is_some() => {
+                Html(pages::photos(&user, &app.home)).into_response()
+            }
             _ => Redirect::to("/_dd/home").into_response(),
         },
         Some(user) if app.member(&user) && app.photos.is_some() => {
-            Html(pages::photos(&user)).into_response()
+            Html(pages::photos(&user, &app.home)).into_response()
         }
         Some(_) => Redirect::to("/_dd/home").into_response(),
         None => Redirect::to("/_dd/login?rd=/_dd/photos").into_response(),
@@ -1192,6 +1264,7 @@ pub async fn start(
         demo_rate: Mutex::new(HashMap::new()),
         library: cfg.library,
         network: cfg.network,
+        fleet: cfg.fleet,
     });
     let router = Router::new()
         .route("/verify", get(verify))
@@ -1215,6 +1288,33 @@ pub async fn start(
         // what any page needs before it can ask a passkey for anything
         .route("/_dd/config", get(page_config))
         .route("/_dd/files", get(files_page))
+        .route("/_dd/media", get(media_page))
+        .route(
+            "/_dd/boxes",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::boxes, "/_dd/boxes").await
+            }),
+        )
+        .route(
+            "/_dd/backups",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::backups, "/_dd/backups").await
+            }),
+        )
+        .route(
+            "/_dd/devices",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::devices, "/_dd/devices").await
+            }),
+        )
+        .route(
+            "/_dd/network",
+            get(|State(a): State<Arc<App>>, h: HeaderMap| async move {
+                member_page(&a, &h, pages::network_page, "/_dd/network").await
+            }),
+        )
+        .route("/_dd/fleet.json", get(fleet_json))
+        .route("/_dd/network/mine", get(network_mine))
         .route("/_dd/photos", get(photos_page))
         .route("/_dd/photos/config", post(photos_config))
         // the network's door: a join key for an admitted device

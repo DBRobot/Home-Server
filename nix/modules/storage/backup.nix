@@ -11,10 +11,30 @@ let
   garage = config.services.garage.enable;
   mail = config.programs.msmtp.enable;
 
+  # After a good run: when it ended, and what the repository holds, so the
+  # backups page can say how far back this box goes without anything but
+  # this unit holding the repository password.
   mark = pkgs.writeShellScript "backup-mark" ''
     mkdir -p ${facts}
-    printf 'dd_backup_last_success_seconds{box="${box}"} %s\n' "$(date +%s)" > ${facts}/backup.prom.tmp
-    mv ${facts}/backup.prom.tmp ${facts}/backup.prom
+    f=${facts}/backup.prom.tmp
+    printf 'dd_backup_last_success_seconds{box="${box}"} %s\n' "$(date +%s)" > $f
+    ${lib.concatMapStrings (p: ''
+      printf 'dd_backup_path{box="${box}",path="${p}"} 1\n' >> $f
+    '') cfg.paths}
+    if snaps=$(${pkgs.restic}/bin/restic snapshots --json 2>/dev/null); then
+      jq=${pkgs.jq}/bin/jq
+      printf 'dd_backup_snapshots{box="${box}"} %s\n' "$(echo "$snaps" | $jq 'length')" >> $f
+      # restic stamps a local offset, which jq cannot read; date can, and
+      # sorting the strings orders them but for the hour a clock change
+      # moves, which nothing here cares about
+      for which in 0 -1; do
+        t=$(echo "$snaps" | $jq -r "map(.time) | sort | .[$which] // empty")
+        [ -n "$t" ] || continue
+        [ "$which" = 0 ] && name=oldest || name=newest
+        printf 'dd_backup_%s_seconds{box="${box}"} %s\n' "$name" "$(date -d "$t" +%s)" >> $f
+      done
+    fi
+    mv $f ${facts}/backup.prom
   '';
 
   # Backups die silently by default. Where the box can mail, a failed run does.
@@ -132,7 +152,7 @@ in
         onFailure = lib.optional mail "dd-alert@dd-backup-stale.service";
         serviceConfig.Type = "oneshot";
         script = ''
-          last=$(${pkgs.gawk}/bin/awk '{print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
+          last=$(${pkgs.gawk}/bin/awk '/^dd_backup_last_success_seconds/ {print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
           age=$(( $(date +%s) - ''${last:-0} ))
           if [ "$age" -gt $((26 * 3600)) ]; then
             echo "last good backup was $((age / 3600)) hours ago"; exit 1

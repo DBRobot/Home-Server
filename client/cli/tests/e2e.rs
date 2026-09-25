@@ -78,6 +78,7 @@ impl Box_ {
             web_dir: None,
             photos: None,
             library: None,
+            fleet: Default::default(),
             network: None,
             bind: "127.0.0.1:0".parse().unwrap(),
             dir: dir.clone(),
@@ -1271,6 +1272,7 @@ async fn start_at(
 ) -> anyhow::Result<Box_> {
     let (addr, _task) = verify::start(verify::Config {
         home: vec![],
+        fleet: Default::default(),
         members: None,
         release_pub: None,
         web_dir: None,

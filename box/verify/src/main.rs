@@ -37,6 +37,9 @@ async fn main() -> Result<()> {
             _ => None,
         },
         home: serde_json::from_str(&env_or("VERIFY_HOME", "[]")).context("VERIFY_HOME")?,
+        // every box and where its prometheus answers, for the pages that
+        // show the fleet; a box that is not told has none to show
+        fleet: serde_json::from_str(&env_or("VERIFY_FLEET", "{}")).context("VERIFY_FLEET")?,
         // required on a full box: an unset list would be an open door
         members: if full {
             Some(verify::Members::parse(&env("VERIFY_MEMBERS")?).context("VERIFY_MEMBERS")?)

@@ -1,0 +1,165 @@
+// Movies & TV: the two corners of the library a player cares about.
+// Films are files under Movies/, a programme is a folder under Shows/
+// with its episodes inside. The same passkey, the same gate, the same
+// ciphertext: only the shape of the listing is different (library.js).
+
+import { unlock, list, fetchPlain, save, put, trash, mkdir, human } from './library.js';
+
+const $ = (id) => document.getElementById(id);
+const user = document.querySelector('[data-user]').dataset.user;
+// a whole film cannot be opened in a tab: the bytes are turned over here,
+// so the tab would hold the film twice. Small things play, the rest is
+// what the desktop mount and the app are for.
+const INLINE = 256 * 1024 * 1024;
+let lib = null;
+let show = null;                 // the programme being looked at, or null
+
+function tile(label, sub, onclick) {
+  const li = document.createElement('li');
+  const b = document.createElement('button');
+  b.className = 'rowname';
+  b.textContent = label;
+  b.onclick = onclick;
+  const tag = document.createElement('span');
+  tag.className = 'tag';
+  tag.textContent = sub;
+  li.append(b, tag);
+  return li;
+}
+
+function rm(path, after) {
+  const b = document.createElement('button');
+  b.className = 'quiet inline';
+  b.textContent = 'Trash';
+  b.onclick = async () => {
+    b.disabled = true;
+    await trash(lib, path);
+    after();
+  };
+  return b;
+}
+
+async function films() {
+  const items = (await list(lib, 'Movies')).filter((i) => !i.dir);
+  const ul = $('films');
+  ul.replaceChildren(...items.map((it) => {
+    const li = tile(it.name, human(it.size), () => play(it));
+    li.append(rm(it.path, films));
+    return li;
+  }));
+  $('nofilms').hidden = items.length > 0;
+}
+
+async function programmes() {
+  const items = (await list(lib, 'Shows')).filter((i) => i.dir);
+  const ul = $('shows');
+  ul.replaceChildren(...items.map((it) => tile(`📺 ${it.name}`, '', () => episodes(it.name))));
+  $('noshows').hidden = items.length > 0;
+  $('back').hidden = true;
+  $('showname').hidden = true;
+  $('addep').hidden = true;
+  $('newshow').hidden = false;
+  show = null;
+}
+
+async function episodes(name) {
+  show = name;
+  const items = (await list(lib, `Shows/${name}`)).filter((i) => !i.dir);
+  const ul = $('shows');
+  ul.replaceChildren(...items.map((it) => {
+    const li = tile(it.name, human(it.size), () => play(it));
+    li.append(rm(it.path, () => episodes(name)));
+    return li;
+  }));
+  $('noshows').hidden = items.length > 0;
+  $('showname').textContent = name;
+  $('showname').hidden = false;
+  $('back').hidden = false;
+  $('addep').hidden = false;
+  $('newshow').hidden = true;
+}
+
+async function play(it) {
+  const p = $('playing');
+  const v = $('video');
+  p.hidden = false;
+  $('title').textContent = it.name;
+  if (it.size > INLINE) {
+    v.hidden = true;
+    $('note').textContent = `${human(it.size)}: too big to open in a tab. \`dd media\` puts this library on your desktop as folders, and the app plays it on a phone.`;
+    $('savefile').hidden = false;
+    $('savefile').onclick = () => download(it);
+    return;
+  }
+  $('savefile').hidden = true;
+  $('note').textContent = 'Opening…';
+  try {
+    const plain = await fetchPlain(lib, it.path);
+    v.src = URL.createObjectURL(new Blob([plain]));
+    v.hidden = false;
+    $('note').textContent = '';
+    v.play().catch(() => {});
+  } catch (e) {
+    $('note').textContent = e.message;
+  }
+}
+
+async function download(it) {
+  $('note').textContent = 'Fetching…';
+  try {
+    save(await fetchPlain(lib, it.path), it.name);
+    $('note').textContent = 'Saved.';
+  } catch (e) {
+    $('note').textContent = e.message;
+  }
+}
+
+async function upload(files, into) {
+  for (const f of files) {
+    $('msg').hidden = false;
+    $('msg').textContent = `${f.name} — encrypting`;
+    try {
+      await put(lib, `${into}/${f.name}`, f);
+      $('msg').textContent = `${f.name} — ${human(f.size)}`;
+    } catch (e) {
+      $('msg').textContent = `${f.name} — ${e.message}`;
+    }
+  }
+  await (into === 'Movies' ? films() : episodes(show));
+}
+
+async function start() {
+  const r = await unlock(user);
+  if (r.none) {
+    $('msg').textContent = 'No library yet. `dd library new` makes one on the machine that holds your key.';
+    return;
+  }
+  if (r.link) {
+    $('msg').textContent = 'This browser is not linked to your library yet.';
+    $('linkcmd').textContent = r.link;
+    $('link').hidden = false;
+    return;
+  }
+  lib = r.ok;
+  $('msg').hidden = true;
+  $('shelves').hidden = false;
+  $('addfilm').onclick = () => $('filmpicker').click();
+  $('filmpicker').onchange = () => upload($('filmpicker').files, 'Movies');
+  $('addep').onclick = () => $('eppicker').click();
+  $('eppicker').onchange = () => upload($('eppicker').files, `Shows/${show}`);
+  $('back').onclick = () => programmes();
+  $('newshow').onclick = async () => {
+    const name = prompt('What is the programme called?');
+    if (!name) return;
+    await mkdir(lib, `Shows/${name}`);
+    await episodes(name);
+  };
+  $('close').onclick = () => {
+    $('video').pause();
+    $('video').removeAttribute('src');
+    $('playing').hidden = true;
+  };
+  await Promise.all([films(), programmes()]);
+}
+
+start().catch((e) => { $('msg').textContent = String(e.message || e); });

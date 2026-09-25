@@ -38,6 +38,13 @@ pub fn static_file(name: &str) -> Option<(&'static str, &'static str)> {
         "redeem.js" => (include_str!("../web/redeem.js"), js),
         "photos.js" => (include_str!("../web/photos.js"), js),
         "files.js" => (include_str!("../web/files.js"), js),
+        "media.js" => (include_str!("../web/media.js"), js),
+        "library.js" => (include_str!("../web/library.js"), js),
+        "boxes.js" => (include_str!("../web/boxes.js"), js),
+        "backups.js" => (include_str!("../web/backups.js"), js),
+        "devices.js" => (include_str!("../web/devices.js"), js),
+        "network.js" => (include_str!("../web/network.js"), js),
+        "panel.js" => (include_str!("../web/panel.js"), js),
         _ => return None,
     })
 }
@@ -63,6 +70,52 @@ fn initial(user: &str) -> String {
         .unwrap_or_default()
 }
 
+/// One line in the bar's menu.
+pub struct MenuItem {
+    pub label: &'static str,
+    pub url: String,
+}
+
+/// Everything in the bar that is not a service: the member's own pages,
+/// the fleet's, and the way out. Groups are drawn with a rule between.
+pub struct Menu {
+    pub groups: Vec<Vec<MenuItem>>,
+}
+
+impl Menu {
+    /// What this person may actually open. The demo has no library, no
+    /// devices and no backups, so it is offered none of them.
+    fn of(user: &str, services: &[Service]) -> Menu {
+        let item = |label, url: &str| MenuItem {
+            label,
+            url: url.to_string(),
+        };
+        let metrics = services
+            .iter()
+            .find(|s| s.icon == "metrics")
+            .map(|s| item("Metrics", &s.url));
+        let mut groups = Vec::new();
+        if user != DEMO_USER {
+            groups.push(vec![
+                item("Files", "/_dd/files"),
+                item("Movies & TV", "/_dd/media"),
+            ]);
+            let mut fleet = vec![
+                item("Backups", "/_dd/backups"),
+                item("Devices", "/_dd/devices"),
+                item("Network", "/_dd/network"),
+                item("Boxes", "/_dd/boxes"),
+            ];
+            fleet.extend(metrics);
+            groups.push(fleet);
+        } else if let Some(m) = metrics {
+            groups.push(vec![m]);
+        }
+        groups.push(vec![item("Sign out", "/_dd/logout")]);
+        Menu { groups }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "login.html")]
 struct Login;
@@ -80,6 +133,7 @@ struct Join;
 struct Waiting<'a> {
     user: &'a str,
     initial: String,
+    menu: Menu,
 }
 
 #[derive(Template)]
@@ -87,6 +141,15 @@ struct Waiting<'a> {
 struct Files<'a> {
     user: &'a str,
     initial: String,
+    menu: Menu,
+}
+
+#[derive(Template)]
+#[template(path = "media.html")]
+struct Media<'a> {
+    user: &'a str,
+    initial: String,
+    menu: Menu,
 }
 
 #[derive(Template)]
@@ -94,6 +157,88 @@ struct Files<'a> {
 struct Photos<'a> {
     user: &'a str,
     initial: String,
+    menu: Menu,
+}
+
+#[derive(Template)]
+#[template(path = "panel.html")]
+struct Panel<'a> {
+    user: &'a str,
+    initial: String,
+    menu: Menu,
+    title: &'static str,
+    waiting: &'static str,
+    note: &'static str,
+    script: &'static str,
+}
+
+fn panel(
+    user: &str,
+    services: &[Service],
+    title: &'static str,
+    waiting: &'static str,
+    note: &'static str,
+    script: &'static str,
+) -> String {
+    render(Panel {
+        user,
+        initial: initial(user),
+        menu: Menu::of(user, services),
+        title,
+        waiting,
+        note,
+        script,
+    })
+}
+
+/// What every box is running, and whether it answered at all.
+pub fn boxes(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Boxes",
+        "Asking every box…",
+        "Each box answers for itself, over the fleet's own network. A box that says nothing is off or unreachable, not gone.",
+        "boxes.js",
+    )
+}
+
+/// What has been backed up and how far back it goes. Reading one back is
+/// not something a browser does: it is `restic restore` on the box, with
+/// the password only that box holds.
+pub fn backups(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Backups",
+        "Asking every box…",
+        "A box backs itself up, encrypted with a password only it holds, into the cluster. This page says what happened; restoring is done on the box.",
+        "backups.js",
+    )
+}
+
+/// The keys that are you: the devices in your entry, and the passkeys.
+pub fn devices(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Devices",
+        "Reading your entry…",
+        "Your entry names these, and only a device holding your root key can add or remove one (`dd device`).",
+        "devices.js",
+    )
+}
+
+/// The machines on the fleet's own network, as the control server has them.
+pub fn network_page(user: &str, services: &[Service]) -> String {
+    panel(
+        user,
+        services,
+        "Network",
+        "Asking the control server…",
+        "The fleet's own network, so your devices reach the boxes wherever they are. `dd net join` puts a machine on it.",
+        "network.js",
+    )
 }
 
 struct Tile<'a> {
@@ -111,6 +256,7 @@ struct Home<'a> {
     initial: String,
     demo: bool,
     tiles: Vec<Tile<'a>>,
+    menu: Menu,
 }
 
 fn render<T: Template>(t: T) -> String {
@@ -134,26 +280,38 @@ pub fn join() -> String {
 
 /// Signed in but not on the member list: the account exists, nothing is
 /// open to it yet. A code from the owner opens it here.
-pub fn waiting(user: &str) -> String {
+pub fn waiting(user: &str, services: &[Service]) -> String {
     render(Waiting {
         user,
         initial: initial(user),
+        menu: Menu::of(user, services),
     })
 }
 
 /// Files: a member's library, opened by their passkey.
-pub fn files(user: &str) -> String {
+pub fn files(user: &str, services: &[Service]) -> String {
     render(Files {
         user,
         initial: initial(user),
+        menu: Menu::of(user, services),
+    })
+}
+
+/// Movies & TV: the same library, the corners a player cares about.
+pub fn media(user: &str, services: &[Service]) -> String {
+    render(Media {
+        user,
+        initial: initial(user),
+        menu: Menu::of(user, services),
     })
 }
 
 /// Photos: opened by the passkey, or by the demo's password.
-pub fn photos(user: &str) -> String {
+pub fn photos(user: &str, services: &[Service]) -> String {
     render(Photos {
         user,
         initial: initial(user),
+        menu: Menu::of(user, services),
     })
 }
 
@@ -175,6 +333,7 @@ pub fn home(user: &str, services: &[Service]) -> String {
                 shut: demo && s.demo.is_none(),
             })
             .collect(),
+        menu: Menu::of(user, services),
     })
 }
 
@@ -233,8 +392,57 @@ mod tests {
     }
 
     #[test]
+    fn the_menu_offers_a_member_their_own_pages_and_the_demo_none_of_them() {
+        let svcs = [svc("Metrics", "metrics"), svc("Chat", "chat")];
+        let html = home("tom", &svcs);
+        for page in [
+            "/_dd/files",
+            "/_dd/media",
+            "/_dd/backups",
+            "/_dd/devices",
+            "/_dd/network",
+            "/_dd/boxes",
+        ] {
+            assert!(html.contains(page), "member's menu is missing {page}");
+        }
+        assert!(html.contains("https://metrics.example/"));
+        assert!(html.contains("/_dd/logout"));
+        let html = home(DEMO_USER, &svcs);
+        for page in [
+            "/_dd/files",
+            "/_dd/media",
+            "/_dd/backups",
+            "/_dd/devices",
+            "/_dd/network",
+            "/_dd/boxes",
+        ] {
+            assert!(!html.contains(page), "the demo was offered {page}");
+        }
+        assert!(html.contains("https://metrics.example/") && html.contains("/_dd/logout"));
+        // no metrics on this box: no line for it, and nothing else moves
+        let html = home("tom", &[svc("Chat", "chat")]);
+        assert!(!html.contains("Metrics") && html.contains("/_dd/boxes"));
+    }
+
+    #[test]
+    fn the_library_pages_carry_the_member_and_their_script() {
+        let html = files("tom", &[]);
+        assert!(html.contains("data-user=\"tom\""));
+        assert!(html.contains("/_dd/static/files.js"));
+        let html = media("tom", &[svc("Metrics", "metrics")]);
+        assert!(html.contains("data-user=\"tom\""));
+        assert!(html.contains("/_dd/static/media.js"));
+        assert!(html.contains("Movies") && html.contains("Shows"));
+        // both pages open the library through the one module
+        for f in ["files.js", "media.js"] {
+            assert!(static_file(f).unwrap().0.contains("from './library.js'"));
+        }
+        assert!(static_file("library.js").unwrap().0.contains("/_dd/dav/"));
+    }
+
+    #[test]
     fn waiting_page_names_the_person_and_offers_nothing() {
-        let html = waiting("tom");
+        let html = waiting("tom", &[]);
         assert!(html.contains("<span>tom</span>"));
         assert!(html.contains("data-user=\"tom\""));
         assert!(html.contains("/_dd/logout"));

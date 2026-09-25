@@ -58,6 +58,14 @@ in
     default = [ ];
     description = "Directory urls of the other boxes, e.g. https://files.example/_dd/directory.";
   };
+  # Every box in the fleet and the address its prometheus answers on. The
+  # Boxes and Backups pages ask each box for its own facts; nothing about
+  # another box is kept here.
+  options.dd.verify.fleet = lib.mkOption {
+    type = lib.types.attrsOf lib.types.str;
+    default = { };
+    description = "Box name -> the address its prometheus answers on, e.g. node1 = \"100.95.31.105\".";
+  };
   # the front door: one tile per service this box offers, declared by the
   # roles that run them, shown at home.<domain> to whoever is signed in
   options.dd.home.services = lib.mkOption {
@@ -204,6 +212,7 @@ in
         VERIFY_BIND = if full then "127.0.0.1:${toString port}" else "0.0.0.0:${toString port}";
         VERIFY_DIR = "/var/lib/dd-verify/keys";
         VERIFY_PEERS = lib.concatStringsSep "," cfg.peers;
+        VERIFY_FLEET = builtins.toJSON cfg.fleet;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
       // lib.optionalAttrs (full && cfg.library != null) {
