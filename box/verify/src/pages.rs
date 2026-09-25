@@ -625,6 +625,21 @@ mod tests {
     }
 
     #[test]
+    fn the_name_is_what_opens_the_menu() {
+        let html = home("tom", &[svc("Chat", "chat")]);
+        // the name and the avatar are inside the control, not beside it
+        let s = html.split("<summary>").nth(1).unwrap_or_default();
+        let s = s.split("</summary>").next().unwrap_or_default();
+        assert!(
+            s.contains("<span>tom</span>"),
+            "the name is not the control: {s}"
+        );
+        assert!(s.contains("class=\"avatar\""));
+        // and nothing else in the bar competes with it
+        assert!(!html.contains("aria-label=\"Menu\""));
+    }
+
+    #[test]
     fn a_menu_only_service_is_in_the_menu_and_not_a_tile() {
         let mut m = svc("Metrics", "metrics");
         m.menu_only = true;
