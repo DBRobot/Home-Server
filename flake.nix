@@ -186,6 +186,53 @@
             '';
             doCheck = false;
           };
+          # the same engine for Android: a shared library per abi (Go makes
+          # no archives there), cross-built with the ndk. `nix build
+          # .#net-android`, then the .so files go into the apk (README).
+          androidPkgs = import nixpkgs {
+            inherit system;
+            config = {
+              allowUnfree = true;
+              android_sdk.accept_license = true;
+            };
+          };
+          androidSdk =
+            (androidPkgs.androidenv.composeAndroidPackages {
+              platformVersions = [
+                "34"
+                "36"
+              ];
+              buildToolsVersions = [
+                "34.0.0"
+                "35.0.0"
+              ];
+              includeNDK = true;
+              ndkVersions = [ "26.1.10909125" ];
+              includeEmulator = true;
+              includeSystemImages = true;
+              systemImageTypes = [ "google_apis" ];
+              abiVersions = [ "x86_64" ];
+              cmdLineToolsVersion = "11.0";
+            }).androidsdk;
+          androidHome = "${androidSdk}/libexec/android-sdk";
+          androidNdk = "${androidHome}/ndk/26.1.10909125";
+          appNetAndroid = pkgs.buildGoModule {
+            pname = "commonty-net-android";
+            version = "0.1.0";
+            src = ./app/net;
+            vendorHash = "sha256-n6mcL9euSTEeP2l4gg8A3uMTK2xrIh7xgeuVCsESRFU=";
+            buildPhase = ''
+              runHook preBuild
+              T=${androidNdk}/toolchains/llvm/prebuilt/linux-x86_64/bin
+              export CGO_ENABLED=1 GOOS=android
+              mkdir -p $out/arm64-v8a $out/x86_64
+              GOARCH=arm64 CC=$T/aarch64-linux-android34-clang go build -buildmode=c-shared -o $out/arm64-v8a/libcommontynet.so .
+              GOARCH=amd64 CC=$T/x86_64-linux-android34-clang go build -buildmode=c-shared -o $out/x86_64/libcommontynet.so .
+              runHook postBuild
+            '';
+            installPhase = "true";
+            doCheck = false;
+          };
           # what the app's window is made of; the workspace checks compile
           # the app too, so they need it as well
           appLibs = [
@@ -306,6 +353,10 @@
           });
           # the app's network engine (app/net): `nix build .#net` for the archive
           net = appNet;
+          # and for Android, one .so per abi
+          net-android = appNetAndroid;
+          # the Android toolchain, for the dev shell below
+          android-sdk = androidSdk;
           # Our Rust in the browser: the ente account for a person whose key
           # is a passkey (crates/web). The verifier serves this directory.
           web = pkgs.runCommand "dd-web-dist" { nativeBuildInputs = [ pkgs.wasm-bindgen-cli ]; } ''
@@ -350,34 +401,69 @@
       # `nix develop` drops you into a shell with the rust toolchain on PATH.
       # Nothing is installed globally and any machine cloning this repo gets
       # exactly these versions.
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [
-          pkgs.cargo
-          pkgs.rustc
-          pkgs.rust-analyzer # editor: completion, jump to definition
-          pkgs.clippy # linter that teaches you the language
-          pkgs.rustfmt
-          pkgs.pkg-config # crates with C dependencies need this to find them
-          pkgs.fuse3 # the cli's mount
-          pkgs.sops # `dd secret run -- ...` runs this
-          pkgs.age
-          pkgs.cargo-tauri # `cargo tauri dev` in app/
-        ]
-        ++ [
-          # the app's window, for `cargo build -p commonty` here
-          pkgs.webkitgtk_4_1
-          pkgs.gtk3
-          pkgs.libsoup_3
-          pkgs.glib
-          pkgs.openssl
-          pkgs.glib-networking
-        ];
-        RUST_BACKTRACE = "1";
-        # the app's network engine, for `cargo build -p commonty` here
-        COMMONTY_NET_LIB_DIR = "${rust.net}/lib";
-        # the webview finds its gio modules (tls) and, on nvidia, draws
-        WEBKIT_DISABLE_DMABUF_RENDERER = "1";
-        GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
+      devShells.${system} = {
+        default = pkgs.mkShell {
+          packages = [
+            pkgs.cargo
+            pkgs.rustc
+            pkgs.rust-analyzer # editor: completion, jump to definition
+            pkgs.clippy # linter that teaches you the language
+            pkgs.rustfmt
+            pkgs.pkg-config # crates with C dependencies need this to find them
+            pkgs.fuse3 # the cli's mount
+            pkgs.sops # `dd secret run -- ...` runs this
+            pkgs.age
+            pkgs.cargo-tauri # `cargo tauri dev` in app/
+          ]
+          ++ [
+            # the app's window, for `cargo build -p commonty` here
+            pkgs.webkitgtk_4_1
+            pkgs.gtk3
+            pkgs.libsoup_3
+            pkgs.glib
+            pkgs.openssl
+            pkgs.glib-networking
+          ];
+          RUST_BACKTRACE = "1";
+          # the app's network engine, for `cargo build -p commonty` here
+          COMMONTY_NET_LIB_DIR = "${rust.net}/lib";
+          # the webview finds its gio modules (tls) and, on nvidia, draws
+          WEBKIT_DISABLE_DMABUF_RENDERER = "1";
+          GIO_MODULE_DIR = "${pkgs.glib-networking}/lib/gio/modules";
+        };
+
+        # `nix develop .#android`: the Android toolchain for the app. From
+        # app/: `cargo tauri android build --apk` with COMMONTY_NET_LIB_DIR
+        # pointing at the jniLibs the engine's .so files were copied into
+        # (app/README.md). Not in ci: a phone build is made here.
+        android =
+          let
+            androidRust = (pkgs.extend rust-overlay.overlays.default).rust-bin.stable.latest.default.override {
+              targets = [
+                "aarch64-linux-android"
+                "x86_64-linux-android"
+              ];
+            };
+          in
+          pkgs.mkShell {
+            packages = [
+              rust.android-sdk
+              androidRust
+              pkgs.cargo-tauri
+              pkgs.jdk17
+              pkgs.gradle
+              pkgs.go
+              pkgs.pkg-config
+              pkgs.nodejs
+            ];
+            ANDROID_HOME = "${rust.android-sdk}/libexec/android-sdk";
+            ANDROID_SDK_ROOT = "${rust.android-sdk}/libexec/android-sdk";
+            NDK_HOME = "${rust.android-sdk}/libexec/android-sdk/ndk/26.1.10909125";
+            JAVA_HOME = pkgs.jdk17;
+            # gradle's aapt2 must be the sdk's: the one it downloads is not for nix
+            GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${rust.android-sdk}/libexec/android-sdk/build-tools/35.0.0/aapt2";
+            COMMONTY_NET_ANDROID = "${rust.net-android}";
+          };
       };
 
       # `nix build .#dd` / `nix run .#dd -- status`. Every dependency is
@@ -390,6 +476,7 @@
         "fmt"
         "clippy"
         "tests"
+        "android-sdk"
       ];
 
       # Boxes booted as vms and driven through the failure cases, so the

@@ -65,16 +65,22 @@ pub struct NetStatus {
 }
 
 fn state_dir() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "no HOME".to_string())?;
-    Ok(PathBuf::from(home).join(".local/share/commonty/net"))
+    Ok(crate::paths::data().join("net"))
 }
 
 fn hostname() -> String {
-    std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "device".to_string())
+    #[cfg(target_os = "android")]
+    {
+        "phone".to_string()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        std::fs::read_to_string("/etc/hostname")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "device".to_string())
+    }
 }
 
 /// bring the engine up, from the state on disk or with a fresh key, and
@@ -82,6 +88,7 @@ fn hostname() -> String {
 fn start(control: &str, key: &str) -> Result<Started, String> {
     let dir = state_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let marker = dir.join("joined");
     let c = |s: &str| CString::new(s).map_err(|e| e.to_string());
     let (dir, control, key, host) = (
         c(&dir.to_string_lossy())?,
@@ -97,6 +104,8 @@ fn start(control: &str, key: &str) -> Result<Started, String> {
         return Err(st.error);
     }
     eprintln!("network: on as {}, proxy at {}", st.ip, st.proxy);
+    // joined for real: the next start resumes from here without a key
+    let _ = std::fs::write(&marker, st.ip.as_bytes());
     if std::env::var_os("COMMONTY_NET_DEBUG").is_some() {
         eprintln!("network: proxy credential {}", st.credential);
     }
@@ -112,7 +121,7 @@ fn status_now() -> NetStatus {
     let out = take(unsafe { commonty_net_status() });
     let mut st: NetStatus = serde_json::from_str(&out).unwrap_or_default();
     st.joined = state_dir()
-        .map(|d| d.join("tailscaled.state").exists())
+        .map(|d| d.join("joined").exists())
         .unwrap_or(false);
     st
 }
@@ -158,7 +167,7 @@ pub async fn net_join(keys: State<'_, Keys>) -> Result<NetStatus, String> {
 /// resume from the state on disk, at app start; nothing if never joined
 pub fn resume(control: &str) {
     if let Ok(d) = state_dir()
-        && d.join("tailscaled.state").exists()
+        && d.join("joined").exists()
     {
         let control = control.to_string();
         std::thread::spawn(move || {

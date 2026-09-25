@@ -4,12 +4,15 @@
 pub mod device;
 pub mod keystore;
 
-pub use keystore::{FileStore, KeyStore, OsKeyring, Store, open};
+pub use keystore::{FileStore, KeyStore, Store, open_file};
+#[cfg(not(target_os = "android"))]
+pub use keystore::{OsKeyring, open};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
     Token(String),
+    #[cfg(not(target_os = "android"))]
     #[error("keystore: {0}")]
     Keystore(#[from] keyring::Error),
     #[error(transparent)]

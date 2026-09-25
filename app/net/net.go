@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 	"unsafe"
@@ -67,6 +69,14 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	if srv != nil {
 		return reply(started{Proxy: proxy.addr(), Credential: proxy.cred, IP: ipOf(srv)})
 	}
+	// the engine's log policy wants a place of its own (a phone has no
+	// home; Go reads its environment once, so this is set here, not by
+	// the caller), and nothing of ours is sent to Tailscale
+	state := C.GoString(dir)
+	logs := filepath.Join(state, "logs")
+	_ = os.MkdirAll(logs, 0o700)
+	_ = os.Setenv("TS_LOGS_DIR", logs)
+	_ = os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
 	// the control server is reached through the bridge: the front door
 	// carries websockets, not the engine's own upgrade
 	b, err := newBridge(C.GoString(control))
@@ -75,11 +85,11 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	}
 	// quiet unless asked: the engine's log is a firehose
 	logf := func(string, ...any) {}
-	if os.Getenv("COMMONTY_NET_DEBUG") != "" {
+	if os.Getenv("COMMONTY_NET_DEBUG") != "" || runtime.GOOS == "android" {
 		logf = log.Printf
 	}
 	s := &tsnet.Server{
-		Dir:        C.GoString(dir),
+		Dir:        state,
 		ControlURL: b.url(),
 		AuthKey:    C.GoString(key),
 		Hostname:   C.GoString(hostname),

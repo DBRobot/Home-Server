@@ -82,7 +82,7 @@ pub async fn media_open(
         let bin = jellyfin_bin().ok_or("no jellyfin on this machine")?;
         let home = home()?;
         let at = home.join("Commonty");
-        let data = home.join(".local/share/commonty/jellyfin");
+        let data = crate::paths::data().join("jellyfin");
         let mount = media::fs::mount(&keys.0, &crate::account::dirs(), at)
             .await
             .map_err(|e| format!("{e:#}"))?;

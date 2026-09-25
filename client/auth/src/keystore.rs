@@ -14,10 +14,12 @@ pub trait KeyStore {
 
 /// The OS credential store. Encrypted at rest by the OS and unlocked by the
 /// user's normal login, so there is no key material of ours on disk.
+#[cfg(not(target_os = "android"))]
 pub struct OsKeyring {
     service: String,
 }
 
+#[cfg(not(target_os = "android"))]
 impl OsKeyring {
     pub fn new(service: impl Into<String>) -> Self {
         Self {
@@ -33,6 +35,7 @@ impl OsKeyring {
 const OLD_SERVICE: &str = "distributed-datacenter";
 const RENAMED: &str = "commonty";
 
+#[cfg(not(target_os = "android"))]
 impl KeyStore for OsKeyring {
     fn get(&self, account: &str) -> crate::Result<Option<Zeroizing<String>>> {
         let entry = keyring::Entry::new(&self.service, account)?;
@@ -116,13 +119,16 @@ impl KeyStore for FileStore {
     }
 }
 
-/// The store a cli run uses: the file DD_KEYRING_FILE names, else the OS
-/// credential store under `service`.
+/// The store a run uses: the file DD_KEYRING_FILE names, else the OS
+/// credential store under `service`; on Android, a file the app names in
+/// its private storage (`open_file`).
 pub enum Store {
+    #[cfg(not(target_os = "android"))]
     Os(OsKeyring),
     File(FileStore),
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn open(service: &str) -> Store {
     match std::env::var("DD_KEYRING_FILE") {
         Ok(p) if !p.is_empty() => Store::File(FileStore::new(p)),
@@ -130,21 +136,29 @@ pub fn open(service: &str) -> Store {
     }
 }
 
+/// a store in a file, wherever the caller keeps its private things
+pub fn open_file(path: impl Into<std::path::PathBuf>) -> Store {
+    Store::File(FileStore::new(path.into()))
+}
+
 impl KeyStore for Store {
     fn get(&self, account: &str) -> crate::Result<Option<Zeroizing<String>>> {
         match self {
+            #[cfg(not(target_os = "android"))]
             Store::Os(s) => s.get(account),
             Store::File(s) => s.get(account),
         }
     }
     fn set(&self, account: &str, secret: &str) -> crate::Result<()> {
         match self {
+            #[cfg(not(target_os = "android"))]
             Store::Os(s) => s.set(account, secret),
             Store::File(s) => s.set(account, secret),
         }
     }
     fn clear(&self, account: &str) -> crate::Result<()> {
         match self {
+            #[cfg(not(target_os = "android"))]
             Store::Os(s) => s.clear(account),
             Store::File(s) => s.clear(account),
         }

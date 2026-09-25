@@ -23,7 +23,7 @@ your entry with every library key sealed to it.
 
 Milestone 2: Movies & TV. Open mounts every library you can open at
 `~/Commonty` (client/media, FUSE) and starts Jellyfin on this machine
-against it, with its data in `~/.local/share/commonty/jellyfin`, then shows
+against it, with its data under the app's data directory (`jellyfin/`), then shows
 it in a window of its own, signed in. First start answers Jellyfin's setup:
 you as its one user (a random password kept in the keystore, account
 `jellyfin-password`) and the mount as one library. The packaged app brings
@@ -54,3 +54,34 @@ The engine's proxy is our own SOCKS5 (`app/net/socks.go`, `socks5h` from
 the Rust side): its dialer resolves names through the network's DNS first,
 where the fleet's names live. `COMMONTY_NET_DEBUG=1` turns the engine's
 log on and prints the proxy credential for `curl -x socks5h://tsnet:…`.
+
+## Android
+
+The same app, from the same tree. What differs is at the bottom: the keys
+are a file in the app's private storage (`auth::open_file`; Android has no
+OS keyring), the engine is a shared library per abi (`nix build
+.#net-android`, since Go makes no archives there; it reads interfaces
+through `getifaddrs`, the call Android permits), no mount and no Jellyfin
+(the card says so), and the app's data directory is what Android gives it.
+
+Build, from `app/`, in the Android shell:
+
+    nix develop ..#android
+    mkdir -p gen/android/app/src/main/jniLibs
+    cp -r $COMMONTY_NET_ANDROID/* gen/android/app/src/main/jniLibs/
+    COMMONTY_NET_LIB_DIR=$PWD/gen/android/app/src/main/jniLibs \
+      cargo tauri android build --apk --target x86_64 --debug   # emulator
+    COMMONTY_NET_LIB_DIR=$PWD/gen/android/app/src/main/jniLibs \
+      cargo tauri android build --apk --target aarch64            # a phone
+
+The apk lands under `gen/android/app/build/outputs/apk/`. `gen/android` is
+the project Tauri generated (`cargo tauri android init`), checked in; its
+builds and the copied libraries are not. An emulator:
+
+    avdmanager create avd -n probe -k "system-images;android-34;google_apis;x86_64" -d pixel_6
+    emulator -avd probe -no-window -gpu swiftshader_indirect &
+    adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+
+Not in ci: a phone build is made here. Proven 2026-09-24 on the emulator:
+recovery of an account, sign-in, joining the network through the bridge,
+node1 as a peer.

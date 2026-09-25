@@ -114,6 +114,11 @@ async function media(st) {
     return;
   }
   const text = $("media-text");
+  if (st.unavailable) {
+    text.textContent = "Movies & TV plays on a desktop for now; a phone is a place to watch, and that comes later.";
+    $("media-open").hidden = true;
+    return;
+  }
   if (st.running) {
     text.textContent = `Jellyfin is running on this machine with ${st.libraries} librar${st.libraries === 1 ? "y" : "ies"}, ${st.files} file(s), folders at ${st.at}.`;
   } else if (st.jellyfin) {
