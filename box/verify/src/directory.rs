@@ -125,6 +125,34 @@ impl Directory {
         Ok(())
     }
 
+    /// A library id belongs to the entry that claimed it first. Ids are
+    /// public - they ride in entries anyone may read - and the gate asks
+    /// the entry whether it owns one, so without this rule naming someone
+    /// else's id in your own entry makes you its owner.
+    fn claims_free(&self, new: &identity::SignedEntry) -> std::result::Result<(), String> {
+        if new.entry.libraries.is_empty() {
+            return Ok(());
+        }
+        let listed = self.list().map_err(|e| {
+            eprintln!("directory: {e:#}");
+            "cannot read the directory".to_string()
+        })?;
+        for l in listed {
+            if l.name == new.entry.name {
+                continue;
+            }
+            let Ok(Some(e)) = self.entry(&l.name) else {
+                continue;
+            };
+            for theirs in &e.entry.libraries {
+                if new.entry.libraries.iter().any(|ours| ours.id == theirs.id) {
+                    return Err(format!("library {} is already {}'s", theirs.id, l.name));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// A first sight from the network: may this box take it? Every peer has
     /// to answer, and none may hold the name under a different root. A peer
     /// that holds it under the same root is fine - the client publishes to
@@ -216,6 +244,10 @@ impl Directory {
                     eprintln!("directory: refused {} from {peer}: grant", l.name);
                     continue;
                 }
+            }
+            if let Err(e) = self.claims_free(&theirs) {
+                eprintln!("directory: refused {} from {peer}: {e}", l.name);
+                continue;
             }
             match identity::accept(ours.as_ref(), &theirs) {
                 Ok(()) => {
@@ -471,6 +503,10 @@ impl Directory {
             eprintln!("directory: refused update for {name}: {e}");
             return Err((StatusCode::CONFLICT, e));
         }
+        if let Err(e) = self.claims_free(&signed) {
+            eprintln!("directory: refused update for {name}: {e}");
+            return Err((StatusCode::CONFLICT, e));
+        }
         if existing.is_none()
             && let Err((status, why)) = self.first_sight_allowed(&signed).await
         {
@@ -493,5 +529,82 @@ impl Directory {
             }
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use identity::{Device, Entry, Library, encode_public, fingerprint, generate, sign};
+
+    fn scratch(what: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("dd-dir-{what}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn entry(name: &str, key: &ed25519_dalek::SigningKey, libs: &[&str], version: u64) -> Entry {
+        Entry {
+            name: name.into(),
+            root: encode_public(&key.verifying_key()),
+            recovery: encode_public(&generate().verifying_key()),
+            devices: vec![{
+                let p = encode_public(&generate().verifying_key());
+                Device {
+                    fingerprint: fingerprint(&p),
+                    public_key: p,
+                    added: 1,
+                }
+            }],
+            passkeys: vec![],
+            grant: None,
+            libraries: libs
+                .iter()
+                .map(|id| Library {
+                    id: (*id).into(),
+                    keys: vec![],
+                    readers: vec![],
+                    created: 1,
+                })
+                .collect(),
+            version,
+            updated: identity::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_library_belongs_to_whoever_claimed_it_first() {
+        let dir = scratch("claims");
+        let d = Directory::open(dir.clone(), vec![], None).unwrap();
+        let hers = "a996a28ca51c9cf1d3f8e2038c8339c8";
+        let his = "b0071e4bd2c34aa19d5e6f7081c2d3e4";
+
+        let sarah = generate();
+        d.admit(sign(entry("sarah", &sarah, &[hers], 1), &sarah).unwrap())
+            .await
+            .unwrap();
+
+        // the whole of C1: tom's entry is validly signed, by tom, about tom,
+        // and it names sarah's library. The gate would read it and agree.
+        let tom = generate();
+        let (status, why) = d
+            .admit(sign(entry("tom", &tom, &[hers], 1), &tom).unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT, "{why}");
+        assert!(why.contains("already sarah's"), "{why}");
+        assert!(d.entry("tom").unwrap().is_none(), "nothing of tom's stored");
+
+        // his own id is his, and claiming it does not disturb hers
+        d.admit(sign(entry("tom", &tom, &[his], 1), &tom).unwrap())
+            .await
+            .unwrap();
+        // and sarah keeps publishing her own without tripping over herself
+        d.admit(sign(entry("sarah", &sarah, &[hers], 2), &sarah).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(d.entry("sarah").unwrap().unwrap().entry.version, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
