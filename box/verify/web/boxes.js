@@ -12,6 +12,8 @@ async function start() {
     b.up ? `last run ${b.result ?? '?'} ${ago(b.last_run)}` : '',
     b.model ? `${b.model} · ${b.cores ?? '?'} cores · ${b.memory ? human(b.memory) : '?'}` : '',
     b.kernel ? `linux ${b.kernel}` : '',
+    // the box's own backup: fleet health, not somebody's archived disk
+    b.backup ? `backed up ${ago(b.backup.last_success)}` : '',
   ].filter(Boolean)), 'No boxes are declared here.');
 }
 

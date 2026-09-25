@@ -72,9 +72,7 @@ header {
   color: var(--brand-ink);
 }
 .bar {
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 16px 24px;
+  padding: 16px 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;

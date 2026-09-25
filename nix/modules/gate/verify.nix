@@ -85,6 +85,11 @@ in
             default = 50;
             description = "tiles are shown in rank order";
           };
+          menuOnly = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "in the bar's menu, not a tile on the home page";
+          };
           demoUrl = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
@@ -311,6 +316,7 @@ in
               color
               demo
               demoUrl
+              menuOnly
               ;
           }) (lib.sort (a: b: a.rank < b.rank) config.dd.home.services)
         );
