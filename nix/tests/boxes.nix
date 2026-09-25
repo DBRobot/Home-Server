@@ -26,6 +26,11 @@ let
             == builtins.length (builtins.attrNames boxes) - 1
           )
           (builtins.all (p: !lib.hasInfix box.tailnet p) cfgs.${name}.config.dd.verify.peers)
+          # the keyboard way in: a hash nixos will actually write. With
+          # mutable users it writes one only for a user it is creating, so
+          # the two go together or the console password is decoration
+          (cfgs.${name}.config.users.users.admin.hashedPasswordFile != null)
+          (cfgs.${name}.config.users.mutableUsers == false)
         ]
         ++ lib.optionals (builtins.elem "storage" box.roles) [
           # garage: this box's own address is public, its peers never include itself
