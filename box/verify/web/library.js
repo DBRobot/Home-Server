@@ -3,7 +3,7 @@
 // turned over here. Files and Movies & TV are two corners of the same
 // library, so the opening, listing and carrying live here once.
 
-import init, { library_device_key, library_open, path_encrypt, path_decrypt, file_open, file_seal, plain_size } from '/_dd/web/dd_web.js';
+import init, { library_device_key, library_open, library_key_for_box, path_encrypt, path_decrypt, file_open, file_seal, plain_size } from '/_dd/web/dd_web.js';
 import { b64u, u8b64 } from './webauthn.js';
 
 // the passkey's own secret, under a label of this page's own
@@ -76,6 +76,7 @@ export async function list(lib, dir) {
       name: path.split('/').pop(),
       dir: isDir,
       size: isDir ? 0 : plain_size(sealed),
+      sealed,
       modified: el.getElementsByTagNameNS('DAV:', 'getlastmodified')[0]?.textContent || '',
     });
   }
@@ -108,6 +109,34 @@ export async function put(lib, path, file) {
 
 export async function trash(lib, path) {
   await fetch(dav(lib, path), { method: 'DELETE' });
+}
+
+/// A film this tab cannot open: the box does the work instead. It is
+/// given a url it can fetch ranges from for a few minutes and the
+/// library's data key sealed to a key it made when it started, so the
+/// plaintext exists in its memory for this one file and nowhere else.
+/// What comes back is a playlist on the same host as this page.
+export async function transcode(lib, path, sealedSize) {
+  const pre = await fetch(dav(lib, path), { headers: { 'x-dd-presign': '1' } });
+  if (!pre.ok) throw new Error(`the gate said ${pre.status}`);
+  const { url } = await pre.json();
+  const box = await fetch('/_dd/transcode/key');
+  if (!box.ok) throw new Error('this box does not transcode');
+  const { key } = await box.json();
+  const r = await fetch('/_dd/transcode/start', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url, key: library_key_for_box(lib.key, lib.id, key), size: sealedSize }),
+  });
+  if (!r.ok) throw new Error(`the box said ${r.status}: ${await r.text()}`);
+  const { playlist } = await r.json();
+  return `/_dd/transcode${playlist}`;
+}
+
+/// whether this browser plays a playlist without a library of our own
+export function playsPlaylists() {
+  const v = document.createElement('video');
+  return !!(v.canPlayType('application/vnd.apple.mpegurl') || v.canPlayType('application/x-mpegURL'));
 }
 
 export function human(n) {

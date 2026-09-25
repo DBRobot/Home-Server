@@ -446,6 +446,9 @@ mod tests {
             assert!(static_file(f).unwrap().0.contains("from './library.js'"));
         }
         assert!(static_file("library.js").unwrap().0.contains("/_dd/dav/"));
+        // a film goes through the box, with the key sealed to it
+        let lib = static_file("library.js").unwrap().0;
+        assert!(lib.contains("/_dd/transcode/start") && lib.contains("library_key_for_box"));
     }
 
     #[test]

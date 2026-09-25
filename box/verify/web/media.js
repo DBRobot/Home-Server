@@ -3,7 +3,7 @@
 // with its episodes inside. The same passkey, the same gate, the same
 // ciphertext: only the shape of the listing is different (library.js).
 
-import { unlock, list, fetchPlain, save, put, trash, mkdir, human } from './library.js';
+import { unlock, list, fetchPlain, save, put, trash, mkdir, transcode, playsPlaylists, human } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const user = document.querySelector('[data-user]').dataset.user;
@@ -83,15 +83,31 @@ async function play(it) {
   const p = $('playing');
   const v = $('video');
   p.hidden = false;
+  $('savefile').hidden = true;
   $('title').textContent = it.name;
+  // A film is bigger than a tab: the box decrypts it in its own memory
+  // for this one viewing and sends a playlist. Browsers that play a
+  // playlist by themselves get that; the rest get what fits in a tab.
+  if (playsPlaylists()) {
+    $('note').textContent = 'Asking the box to play it…';
+    try {
+      v.src = await transcode(lib, it.path, it.sealed);
+      v.hidden = false;
+      $('note').textContent = '';
+      v.play().catch(() => {});
+      return;
+    } catch (e) {
+      $('note').textContent = e.message;
+      // and fall through: a small file still opens here
+    }
+  }
   if (it.size > INLINE) {
     v.hidden = true;
-    $('note').textContent = `${human(it.size)}: too big to open in a tab. \`dd media\` puts this library on your desktop as folders, and the app plays it on a phone.`;
+    $('note').textContent = `${human(it.size)}: too big to open in this browser, which plays no playlist of its own. \`dd media\` puts this library on your desktop as folders.`;
     $('savefile').hidden = false;
     $('savefile').onclick = () => download(it);
     return;
   }
-  $('savefile').hidden = true;
   $('note').textContent = 'Opening…';
   try {
     const plain = await fetchPlain(lib, it.path);

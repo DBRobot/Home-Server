@@ -65,6 +65,13 @@ pub async fn run(cmd: LibraryCmd, keys: &auth::Store, dirs: &[String]) -> Result
                 "library {id}: sealed to {} of your keys, in your entry",
                 cur.entry.devices.len() + 2
             );
+            // the three the pages and the mount expect; a library with
+            // none of them opens empty everywhere and looks broken
+            let gate = Gate::new(&base, &id, &token, &key);
+            for folder in ["Files", "Movies", "Shows"] {
+                gate.mkdir(folder).await?;
+            }
+            println!("  with Files, Movies and Shows in it");
         }
         LibraryCmd::List => {
             let libs = openable(dirs, &user, &opener).await?;

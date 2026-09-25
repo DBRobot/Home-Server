@@ -119,6 +119,16 @@ fn seal_file(library_key_b64: &str, id: &str, plain: &[u8]) -> R<Vec<u8>> {
     Ok(out)
 }
 
+/// The library's data key, sealed to a box that is about to do one job
+/// on one file. The box can read this library while the session lasts,
+/// which is what transcoding is: plaintext in its memory for one film,
+/// nothing kept. Nothing else about the library goes with it, and the
+/// key it is sealed to is thrown away when the box restarts.
+fn key_for_box(library_key_b64: &str, id: &str, box_public_b64: &str) -> R<String> {
+    let c = cipher(library_key_b64, id)?;
+    library::seal_to_x25519(box_public_b64, &c.data_key()[..]).map_err(err)
+}
+
 /// how many plain bytes a file of this sealed size holds
 fn plain_of(sealed: f64) -> R<f64> {
     library::crypt::plain_size(sealed as u64)
@@ -160,6 +170,15 @@ pub fn file_open(library_key_b64: &str, id: &str, sealed: &[u8]) -> Result<Vec<u
 #[wasm_bindgen]
 pub fn file_seal(library_key_b64: &str, id: &str, plain: &[u8]) -> Result<Vec<u8>, JsValue> {
     js(seal_file(library_key_b64, id, plain))
+}
+
+#[wasm_bindgen]
+pub fn library_key_for_box(
+    library_key_b64: &str,
+    id: &str,
+    box_public_b64: &str,
+) -> Result<String, JsValue> {
+    js(key_for_box(library_key_b64, id, box_public_b64))
 }
 
 #[wasm_bindgen]
@@ -237,5 +256,18 @@ mod tests {
         // and another passkey's secret does not open it
         let stranger = base64::engine::general_purpose::STANDARD.encode([9u8; 32]);
         assert!(open(&json, &id, &stranger).is_err());
+    }
+
+    #[test]
+    fn the_data_key_goes_to_a_box_sealed_and_to_no_one_else() {
+        let (public, secret) = library::ephemeral();
+        let key = library::random_key();
+        let k = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &key[..]);
+        let sealed = key_for_box(&k, "aa", &public).unwrap();
+        let opened = library::open_x25519(&secret, &sealed).unwrap();
+        let c = cipher(&k, "aa").unwrap();
+        assert_eq!(&opened[..], &c.data_key()[..]);
+        let (_, other) = library::ephemeral();
+        assert!(library::open_x25519(&other, &sealed).is_err());
     }
 }
