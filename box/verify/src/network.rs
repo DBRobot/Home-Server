@@ -209,6 +209,13 @@ pub(crate) async fn join(State(app): State<Arc<App>>, headers: HeaderMap) -> Res
         Ok(u) => u,
         Err(e) => return (StatusCode::UNAUTHORIZED, e.to_string()).into_response(),
     };
+    // a key on the fleet's network is not something signing up earns: the
+    // network carries boxes, and every box trusts the interface it arrives
+    // on. Membership is the release's word, and the demo never leaves the
+    // browser it was made in.
+    if !app.member(&user) || user == crate::pages::DEMO_USER {
+        return (StatusCode::FORBIDDEN, "not a member of this fleet").into_response();
+    }
     match door.join_key(&user).await {
         Ok((key, expires)) => Json(serde_json::json!({
             "control_url": door.control_url,
