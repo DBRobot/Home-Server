@@ -135,7 +135,9 @@ impl Menu {
 
 #[derive(Template)]
 #[template(path = "login.html")]
-struct Login;
+struct Login<'a> {
+    domain: &'a str,
+}
 
 #[derive(Template)]
 #[template(path = "enrol.html")]
@@ -143,7 +145,9 @@ struct Enrol;
 
 #[derive(Template)]
 #[template(path = "join.html")]
-struct Join;
+struct Join<'a> {
+    domain: &'a str,
+}
 
 #[derive(Template)]
 #[template(path = "waiting.html")]
@@ -374,9 +378,10 @@ fn render<T: Template>(t: T) -> String {
     t.render().unwrap_or_default()
 }
 
-/// Sign in: username, then the passkey.
-pub fn login() -> String {
-    render(Login)
+/// Sign in: username, then the passkey. Carries the domain so it can
+/// point at the downloads page, which lives on the bare name.
+pub fn login(domain: &str) -> String {
+    render(Login { domain })
 }
 
 /// Set up a passkey, from a link a device signed.
@@ -385,8 +390,8 @@ pub fn enrol() -> String {
 }
 
 /// An account, from nothing, in the browser: a name and a passkey.
-pub fn join() -> String {
-    render(Join)
+pub fn join(domain: &str) -> String {
+    render(Join { domain })
 }
 
 /// Signed in but not on the member list: the account exists, nothing is
@@ -470,19 +475,26 @@ mod tests {
 
     #[test]
     fn auth_pages_are_one_shell_one_script() {
-        for page in [login(), enrol(), join()] {
+        for page in [login("commonty.org"), enrol(), join("commonty.org")] {
             assert!(page.starts_with("<!doctype html>"));
             assert!(page.trim_end().ends_with("</html>"));
             assert_eq!(page.matches("<script").count(), 1);
             assert_eq!(page.matches("</header>").count(), 1);
             assert!(page.contains("/_dd/static/home.css"));
         }
-        assert!(login().contains("dd enrol"));
+        assert!(login("commonty.org").contains("dd enrol"));
         assert!(enrol().contains("dd enrol"));
-        assert!(login().contains("/_dd/static/login.js"));
-        assert!(login().contains("href=\"/_dd/join\""));
+        assert!(login("commonty.org").contains("/_dd/static/login.js"));
+        assert!(login("commonty.org").contains("href=\"/_dd/join\""));
+        // somebody signing in on a phone needs the app before any of this
+        for html in [login("commonty.org"), join("commonty.org")] {
+            assert!(
+                html.contains("https://commonty.org/download"),
+                "no way to the app from a page a stranger lands on"
+            );
+        }
         assert!(enrol().contains("/_dd/static/enrol.js"));
-        assert!(join().contains("/_dd/static/join.js"));
+        assert!(join("commonty.org").contains("/_dd/static/join.js"));
         for f in ["login.js", "join.js", "enrol.js", "redeem.js", "photos.js"] {
             assert!(static_file(f).is_some(), "{f}");
         }

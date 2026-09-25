@@ -1320,13 +1320,19 @@ pub async fn start(
         .route("/verify", get(verify))
         .route("/health", get(|| async { "ok" }))
         // the browser side, served under /_dd/ on every vhost
-        .route("/_dd/login", get(|| async { Html(pages::login()) }))
+        .route(
+            "/_dd/login",
+            get(|State(a): State<Arc<App>>| async move { Html(pages::login(&a.domain)) }),
+        )
         .route("/_dd/login/start", post(login_start))
         .route("/_dd/login/finish", post(login_finish))
         .route("/_dd/logout", get(logout))
         .route("/_dd/home", get(home_page))
         .route("/_dd/enrol", get(|| async { Html(pages::enrol()) }))
-        .route("/_dd/join", get(|| async { Html(pages::join()) }))
+        .route(
+            "/_dd/join",
+            get(|State(a): State<Arc<App>>| async move { Html(pages::join(&a.domain)) }),
+        )
         .route("/_dd/join/start", post(join_start))
         .route("/_dd/join/finish", post(join_finish))
         .route("/_dd/join/sign", post(join_sign))
