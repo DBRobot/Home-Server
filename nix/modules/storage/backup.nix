@@ -14,24 +14,32 @@ let
   # After a good run: when it ended, and what the repository holds, so the
   # backups page can say how far back this box goes without anything but
   # this unit holding the repository password.
+  #
+  # Every line is written only once its value is known to be a number.
+  # The textfile collector drops the whole file over one malformed line,
+  # so a metric with an empty value would take the others with it.
   mark = pkgs.writeShellScript "backup-mark" ''
     mkdir -p ${facts}
     f=${facts}/backup.prom.tmp
-    printf 'dd_backup_last_success_seconds{box="${box}"} %s\n' "$(date +%s)" > $f
+    num() { # num <metric> <value>: a line, if the value is a number
+      case "$2" in "" | *[!0-9]*) return 0 ;; esac
+      printf 'dd_backup_%s{box="${box}"} %s\n' "$1" "$2" >> $f
+    }
+    num last_success_seconds "$(date +%s)"
     ${lib.concatMapStrings (p: ''
       printf 'dd_backup_path{box="${box}",path="${p}"} 1\n' >> $f
     '') cfg.paths}
     if snaps=$(${pkgs.restic}/bin/restic snapshots --json 2>/dev/null); then
       jq=${pkgs.jq}/bin/jq
-      printf 'dd_backup_snapshots{box="${box}"} %s\n' "$(echo "$snaps" | $jq 'length')" >> $f
+      num snapshots "$(echo "$snaps" | $jq 'length' 2>/dev/null)"
       # restic stamps a local offset, which jq cannot read; date can, and
       # sorting the strings orders them but for the hour a clock change
       # moves, which nothing here cares about
       for which in 0 -1; do
-        t=$(echo "$snaps" | $jq -r "map(.time) | sort | .[$which] // empty")
+        t=$(echo "$snaps" | $jq -r "map(.time) | sort | .[$which] // empty" 2>/dev/null)
         [ -n "$t" ] || continue
         [ "$which" = 0 ] && name=oldest || name=newest
-        printf 'dd_backup_%s_seconds{box="${box}"} %s\n' "$name" "$(date -d "$t" +%s)" >> $f
+        num "''${name}_seconds" "$(date -d "$t" +%s 2>/dev/null)"
       done
     fi
     mv $f ${facts}/backup.prom
