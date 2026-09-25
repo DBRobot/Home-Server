@@ -33,6 +33,7 @@
       # every vm test, by name: nix/tests/<name>.nix + .py. Also what the ci
       # matrix runs and what main requires (nix/modules/forge/forgejo.nix)
       vmTests = [
+        "console"
         "directory"
         "metrics"
         "backup"
