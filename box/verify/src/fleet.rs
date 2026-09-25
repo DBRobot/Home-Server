@@ -9,10 +9,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-/// one box, as its own prometheus describes it. Every field is optional:
+/// One box, as its own prometheus describes it. Every field is optional:
 /// a box that is off answers nothing and is still a box.
 #[derive(Debug, Default, Serialize)]
-pub struct Box_ {
+pub struct Status {
     pub name: String,
     /// false when its prometheus did not answer at all
     pub up: bool,
@@ -83,8 +83,8 @@ async fn query(
     )
 }
 
-async fn one(http: &reqwest::Client, name: &str, addr: &str) -> Box_ {
-    let mut b = Box_ {
+async fn one(http: &reqwest::Client, name: &str, addr: &str) -> Status {
+    let mut b = Status {
         name: name.to_string(),
         ..Default::default()
     };
@@ -130,14 +130,14 @@ async fn one(http: &reqwest::Client, name: &str, addr: &str) -> Box_ {
 }
 
 /// every box at once: one slow box does not hold up the page
-pub async fn look(fleet: &Fleet) -> Vec<Box_> {
+pub async fn look(fleet: &Fleet) -> Vec<Status> {
     let http = client();
     let mut set = tokio::task::JoinSet::new();
     for (name, addr) in fleet {
         let (http, name, addr) = (http.clone(), name.clone(), addr.clone());
         set.spawn(async move { one(&http, &name, &addr).await });
     }
-    let mut out: Vec<Box_> = set.join_all().await;
+    let mut out: Vec<Status> = set.join_all().await;
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
