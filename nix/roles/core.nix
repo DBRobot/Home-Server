@@ -76,17 +76,24 @@
     enable = true;
     openFirewall = true;
   };
-  # The fleet's own network is NOT started here. Two tailscaleds on one box
+  # Every box is on the fleet's own network. Two tailscaleds on one box
   # share routing table 52 and the same policy rules, and the second one
-  # rewrites that table every time it reconfigures: on node2 a login loop
-  # did exactly that all night and took the box off the network while every
-  # link stayed up. Only the box that runs the control server joins its own
-  # network (modules/net/headscale.nix), because a device has to reach it
-  # there. Boxes in one house reach each other on that house's network and
-  # need no overlay between them; the day they are in different houses,
-  # this becomes the one tailscaled they run, not a second.
-  # tailscale0 is the trusted side; whatever cable or wifi a box has stays as it is
-  networking.firewall.trustedInterfaces = [ "tailscale0" ];
+  # rewrites that table every time it reconfigures: on node2 a keeper that
+  # could not join looped all night doing exactly that and took the box
+  # off the network while every link stayed up. What made that harmful was
+  # the retry, not the coexistence - the control box has run both for days
+  # - so the keeper backs off now instead of reconfiguring every thirty
+  # seconds, and a release that costs a box the fleet rolls itself back
+  # (box/release: the agent's reach check). The owner's tailscale stays
+  # until every address has moved to this network; then it is the one
+  # tailscaled a box runs, not a second.
+  dd.net.enable = true;
+  # both tunnels are the trusted side; whatever cable or wifi a box has
+  # stays as it is
+  networking.firewall.trustedInterfaces = [
+    "tailscale0"
+    "commonty0"
+  ];
   networking.networkmanager.enable = true;
   # never invent a "Wired connection 1": on a first boot NetworkManager can
   # see the cable before the declared profile exists, make a dhcp profile

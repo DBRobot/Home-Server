@@ -101,6 +101,7 @@ in
           tailscale --socket "$sock" status >/dev/null 2>&1 && break
           sleep 1
         done
+        wait=30
         until tailscale --socket "$sock" status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null; do
           if [ ! -s ${cfg.keyFile} ]; then
             echo "no key at ${cfg.keyFile} yet"
@@ -114,7 +115,16 @@ in
             --accept-dns=false \
             --accept-routes=false \
             --netfilter-mode=off \
-            --timeout=60s || sleep 30
+            --timeout=60s && continue
+          # Every `up` rewrites routing table 52, which the box's other
+          # tailscaled shares. Retrying one that fails, every thirty
+          # seconds, is what took node2 off the network for eight hours.
+          # Back off instead: a box that cannot join is a box to look at,
+          # not one to keep poking.
+          wait=$(( wait * 2 ))
+          [ $wait -gt 3600 ] && wait=3600
+          echo "could not join; next try in $wait s"
+          sleep $wait
         done
         echo "on the network as $(tailscale --socket "$sock" ip -4)"
         ${cfg.afterJoin}
