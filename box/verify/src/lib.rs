@@ -131,6 +131,20 @@ pub struct Photos {
     pub demo_password: Option<String>,
 }
 
+/// What the demo may do on one host, by the tile whose door that host is.
+/// The demo's door is not always the member's: a tile that sends the demo
+/// somewhere else is a permission for THAT host and for nothing on the
+/// one members go to.
+fn demo_allowance(home: &[pages::Service], host: &str) -> Option<String> {
+    home.iter().find_map(|s| {
+        let door = s.demo_url.as_ref().unwrap_or(&s.url);
+        let h = door.split("//").nth(1)?.split('/').next()?;
+        h.eq_ignore_ascii_case(host)
+            .then(|| s.demo.clone())
+            .flatten()
+    })
+}
+
 /// fleet/members.json: ids let in, ids shut out. The file is either a bare
 /// list (the first shape) or {"members": [...], "revoked": [...]}.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -193,7 +207,7 @@ impl App {
         self.home.iter().any(|s| s.demo.is_some())
     }
 
-    /// What the demo may do, by the tile whose host the request is for:
+    /// What the demo may do, by the tile whose door the request is for:
     /// `full`, `read`, `rate:N`, or nothing. nginx passes the original
     /// method and host with the gate's subrequest. This is the permission
     /// set of one account; the services' own permissions do the rest.
@@ -209,12 +223,7 @@ impl App {
             .and_then(|v| v.to_str().ok())
             .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
             .unwrap_or_default();
-        let Some(allow) = self.home.iter().find_map(|s| {
-            let h = s.url.split("//").nth(1)?.split('/').next()?;
-            h.eq_ignore_ascii_case(&host)
-                .then(|| s.demo.clone())
-                .flatten()
-        }) else {
+        let Some(allow) = demo_allowance(&self.home, &host) else {
             return false;
         };
         match allow.as_str() {
@@ -1353,6 +1362,35 @@ mod tests {
         );
         assert_eq!(peek_user("device(\"ab\");\n"), None);
     }
+    #[test]
+    fn the_demos_leash_follows_the_demos_door_not_the_members() {
+        let svc =
+            |name: &str, url: &str, demo_url: Option<&str>, demo: Option<&str>| pages::Service {
+                name: name.into(),
+                url: url.into(),
+                icon: String::new(),
+                color: String::new(),
+                demo: demo.map(str::to_string),
+                demo_url: demo_url.map(str::to_string),
+            };
+        let home = [
+            // members watch their own library here; the demo is sent to
+            // jellyfin, and "full" is a permission on jellyfin alone
+            svc(
+                "Movies & TV",
+                "https://files.x/_dd/media",
+                Some("https://jellyfin.x/sso"),
+                Some("full"),
+            ),
+            svc("Files", "https://files.x/_dd/files", None, None),
+            svc("Chat", "https://llm.x/", None, Some("rate:10")),
+        ];
+        assert_eq!(demo_allowance(&home, "jellyfin.x").as_deref(), Some("full"));
+        assert_eq!(demo_allowance(&home, "files.x"), None);
+        assert_eq!(demo_allowance(&home, "llm.x").as_deref(), Some("rate:10"));
+        assert_eq!(demo_allowance(&home, "git.x"), None);
+    }
+
     #[test]
     fn usernames_are_filenames() {
         assert!(valid_user("david"));

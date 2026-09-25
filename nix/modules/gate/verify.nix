@@ -85,6 +85,11 @@ in
             default = 50;
             description = "tiles are shown in rank order";
           };
+          demoUrl = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Where the demo goes instead, when a member's door and the demo's are not the same one. Null: the same url.";
+          };
           demo = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
@@ -256,6 +261,7 @@ in
               icon
               color
               demo
+              demoUrl
               ;
           }) (lib.sort (a: b: a.rank < b.rank) config.dd.home.services)
         );

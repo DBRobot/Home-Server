@@ -19,6 +19,10 @@ pub struct Service {
     /// nothing, and the tile is greyed on its home page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demo: Option<String>,
+    /// Where the demo goes instead. A member's Movies & TV is their own
+    /// library; the demo has none, and gets the box's own films.
+    #[serde(rename = "demoUrl", default, skip_serializing_if = "Option::is_none")]
+    pub demo_url: Option<String>,
 }
 
 /// The account that needs no invite and no key: a look at what a member
@@ -326,7 +330,10 @@ pub fn home(user: &str, services: &[Service]) -> String {
             .iter()
             .map(|s| Tile {
                 name: &s.name,
-                url: &s.url,
+                url: match (demo, &s.demo_url) {
+                    (true, Some(u)) => u,
+                    _ => &s.url,
+                },
                 icon: icon(&s.icon),
                 color: &s.color,
                 // a door this account has no key to: shown, shut, and why
@@ -348,6 +355,7 @@ mod tests {
             icon: icon.into(),
             color: "#123456".into(),
             demo: None,
+            demo_url: None,
         }
     }
 
@@ -465,6 +473,20 @@ mod tests {
         let html = home("tom", &[files, chat]);
         assert!(!html.contains("This is a demo") && !html.contains("Not in the demo."));
         assert!(html.contains("href=\"https://llm.x/\""));
+    }
+
+    #[test]
+    fn a_tile_can_send_the_demo_somewhere_else() {
+        let mut tv = svc("Movies & TV", "videos");
+        tv.url = "https://files.x/_dd/media".into();
+        tv.demo_url = Some("https://jellyfin.x/sso".into());
+        tv.demo = Some("full".into());
+        let html = home("tom", &[tv.clone()]);
+        assert!(html.contains("href=\"https://files.x/_dd/media\""));
+        assert!(!html.contains("jellyfin"));
+        let html = home(DEMO_USER, &[tv]);
+        assert!(html.contains("href=\"https://jellyfin.x/sso\""));
+        assert!(!html.contains("/_dd/media"));
     }
 
     #[test]
