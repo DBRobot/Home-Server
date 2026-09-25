@@ -364,13 +364,16 @@ fn copy_to_cache(
     let key_file = PathBuf::from(key_dir).join(format!("dd-cache-key-{}", std::process::id()));
     {
         use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&key_file)?;
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create(true).truncate(true);
+        // the key is on disk for the length of one copy; where the
+        // filesystem has modes, it is readable by nobody else
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            o.mode(0o600);
+        }
+        let mut f = o.open(&key_file)?;
         f.write_all(signing_key.as_bytes())?;
     }
     let to = format!("{cache}&secret-key={}", key_file.display());
