@@ -5,7 +5,14 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- The app keeps this device's key, the account root and its network
+         node's state in its own files. None of that may leave in a backup:
+         not to Google's cloud, and not to a new phone in a transfer, which
+         allowBackup alone does not stop on Android 12 and later. -->
     <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.commonty"
