@@ -213,6 +213,11 @@ in
           proxy_read_timeout 1h;
         '';
       };
+      # the admin api and its docs are for the verifier, which asks on
+      # 127.0.0.1; through the door they are one stolen key from the
+      # whole network
+      locations."/api/".return = "404";
+      locations."/swagger".return = "404";
     };
   };
 }
