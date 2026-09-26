@@ -343,6 +343,16 @@ impl App {
             .map_err(|e| anyhow!("{e}"))?
             .fact(format!("operation({operation:?})").as_str())
             .map_err(|e| anyhow!("{e}"))?
+            .fact(format!("here({:?})", self.domain).as_str())
+            .map_err(|e| anyhow!("{e}"))?
+            // A token that says where it is for is only good there. Today
+            // none of them do, and one opens everything its holder owns on
+            // every box for as long as it lives; this is the half that has
+            // to be in place before minting can start saying so, and it
+            // costs nothing until then. Refusing comes first, so a token
+            // meant for another box cannot fall through to the allow below.
+            .policy("deny if audience($a), here($h), $a != $h")
+            .map_err(|e| anyhow!("{e}"))?
             // access takes any token of the user's; anything else demands a
             // token minted for exactly that, so an hour-long access token in
             // a script cannot enrol a passkey that outlives it
