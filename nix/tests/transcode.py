@@ -32,6 +32,17 @@ sid = started["id"]
 box.wait_until_succeeds("curl -sf http://127.0.0.1:4190/session/%s/index.m3u8 | grep -q '\\.ts'" % sid, timeout=120)
 seg = box.succeed("curl -sf http://127.0.0.1:4190/session/%s/index.m3u8 | grep '\\.ts' | head -1" % sid).strip()
 box.succeed("curl -sf -o /tmp/seg.ts http://127.0.0.1:4190/session/%s/%s && test $(stat -c %%s /tmp/seg.ts) -gt 1000" % (sid, seg))
+# The session id is on ffmpeg's command line for every process to read. It
+# opens nothing for them: the plain listener serves its own user alone, and
+# this test runs as root, which is someone else.
+assert sid in box.succeed("ps -eo args | grep '[f]fmpeg'"), "the id is visible, which is the point"
+code = box.succeed("curl -s -o /dev/null -w '%%{http_code}' http://127.0.0.1:4191/plain/%s" % sid).strip()
+assert code == "403", code
+# and a session fetches from the libraries bucket and nowhere else: not a
+# box on the network, not the box itself
+for url in ["http://127.0.0.1:4191/plain/x", "http://169.254.169.254/latest", "http://127.0.0.1:8000.evil/x"]:
+    code = box.succeed("curl -s -o /dev/null -w '%%{http_code}' -X POST -H 'content-type: application/json' -d '{\"url\":\"%s\",\"key\":\"AAAA\",\"size\":100}' http://127.0.0.1:4190/session" % url).strip()
+    assert code == "400", (url, code)
 # a key sealed to some other box is refused
 box.fail("curl -sf -X POST -H 'content-type: application/json' -d '{\"url\":\"http://127.0.0.1:8000/x\",\"key\":\"AAAA\",\"size\":100}' http://127.0.0.1:4190/session")
 # the work is really happening, and ending the session really ends it:
