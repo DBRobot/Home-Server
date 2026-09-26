@@ -101,6 +101,7 @@ in
       "--reasoning"
       "off" # default off: measured 0.8s vs 16.5s for the same answer.
       # per-request opt-in with chat_template_kwargs {"enable_thinking": true}
+      "--no-slots" # every signed-in caller shares nginx's key; /slots is everyone's requests
     ];
   };
 
