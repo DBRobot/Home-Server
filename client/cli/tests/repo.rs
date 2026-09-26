@@ -423,7 +423,14 @@ async fn a_forge_cannot_pass_one_repository_off_as_another() {
     laptop.ok(
         &cwd,
         env!("CARGO_BIN_EXE_dd"),
-        &["identity", "new", "--name", "sarah", "--directory", &directory],
+        &[
+            "identity",
+            "new",
+            "--name",
+            "sarah",
+            "--directory",
+            &directory,
+        ],
     );
 
     // two repositories, the same owner and the same device signing both
@@ -431,7 +438,17 @@ async fn a_forge_cannot_pass_one_repository_off_as_another() {
     let mut urls = vec![];
     for (name, content) in [("plans", "the plans\n"), ("diary", "the diary\n")] {
         let backing = forge.join(format!("{name}.git"));
-        laptop.git(&cwd, &["init", "-q", "--bare", "-b", "dd", backing.to_str().unwrap()]);
+        laptop.git(
+            &cwd,
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "-b",
+                "dd",
+                backing.to_str().unwrap(),
+            ],
+        );
         let url = format!("dd::{}", backing.display());
         let work = scratch(name);
         laptop.git(&work, &["init", "-q", "-b", "main"]);

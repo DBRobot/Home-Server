@@ -1503,13 +1503,40 @@ async fn a_new_box_takes_no_side_when_its_peers_disagree_about_a_name() {
     // two directories that never talk: each has its own `david`
     let honest = Box_::start(false, vec![], 300).await;
     let liar = Box_::start(false, vec![], 300).await;
-    Device::new().dd_ok(&["identity", "new", "--name", "david", "--directory", &honest.directory()]);
-    Device::new().dd_ok(&["identity", "new", "--name", "david", "--directory", &liar.directory()]);
-    let (h, l) = (entry(&honest, "david").await.unwrap(), entry(&liar, "david").await.unwrap());
-    assert_ne!(h["entry"]["root"], l["entry"]["root"], "two different people");
+    Device::new().dd_ok(&[
+        "identity",
+        "new",
+        "--name",
+        "david",
+        "--directory",
+        &honest.directory(),
+    ]);
+    Device::new().dd_ok(&[
+        "identity",
+        "new",
+        "--name",
+        "david",
+        "--directory",
+        &liar.directory(),
+    ]);
+    let (h, l) = (
+        entry(&honest, "david").await.unwrap(),
+        entry(&liar, "david").await.unwrap(),
+    );
+    assert_ne!(
+        h["entry"]["root"], l["entry"]["root"],
+        "two different people"
+    );
 
     // a new box that pulls from both, and a name only one of them has
-    Device::new().dd_ok(&["identity", "new", "--name", "carol", "--directory", &honest.directory()]);
+    Device::new().dd_ok(&[
+        "identity",
+        "new",
+        "--name",
+        "carol",
+        "--directory",
+        &honest.directory(),
+    ]);
     let fresh = Box_::start(false, vec![honest.directory(), liar.directory()], 1).await;
     wait_for(|| async { entry(&fresh, "carol").await.is_some() }).await;
 

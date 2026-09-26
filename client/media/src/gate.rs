@@ -418,7 +418,12 @@ pub async fn openable(
         .context("no directory has a usable entry for you")?;
     // every id here is about to be a folder and an argument; a box may have
     // refused a bad one already, and this machine does not take its word
-    for lib in mine.entry.libraries.iter().filter(|l| identity::valid_library_id(&l.id)) {
+    for lib in mine
+        .entry
+        .libraries
+        .iter()
+        .filter(|l| identity::valid_library_id(&l.id))
+    {
         if let Ok(k) = opener.open(lib) {
             out.push((user.to_string(), lib.clone(), k));
         }
@@ -436,7 +441,12 @@ pub async fn openable(
             let Ok(e) = directory::resolve(&f, directory::Anchor::FirstSight) else {
                 continue;
             };
-            for lib in e.entry.libraries.iter().filter(|l| identity::valid_library_id(&l.id)) {
+            for lib in e
+                .entry
+                .libraries
+                .iter()
+                .filter(|l| identity::valid_library_id(&l.id))
+            {
                 if let Some(r) = lib.readers.iter().find(|r| r.name == user) {
                     let as_mine = Library {
                         keys: r.keys.clone(),

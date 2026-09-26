@@ -534,7 +534,12 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
     for d in &new.entry.devices {
         decode_public(&d.public_key)?;
     }
-    if let Some(l) = new.entry.libraries.iter().find(|l| !valid_library_id(&l.id)) {
+    if let Some(l) = new
+        .entry
+        .libraries
+        .iter()
+        .find(|l| !valid_library_id(&l.id))
+    {
         return Err(Error::Rejected(format!("{:?} is not a library id", l.id)));
     }
     let Some(old) = existing else {
@@ -803,7 +808,14 @@ mod tests {
             accept(None, &sign(e, &root).unwrap())
         };
         assert!(with(&"ab".repeat(16)).is_ok());
-        for bad in ["../../etc", "-rf", "a".repeat(31).as_str(), &"g".repeat(32), "", &"ab/".repeat(11)] {
+        for bad in [
+            "../../etc",
+            "-rf",
+            "a".repeat(31).as_str(),
+            &"g".repeat(32),
+            "",
+            &"ab/".repeat(11),
+        ] {
             assert!(with(bad).is_err(), "{bad:?} was taken as a library id");
         }
     }

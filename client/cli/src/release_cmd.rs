@@ -500,7 +500,12 @@ fn recorded_builds(
         let out = {
             use std::io::Write as _;
             let mut c = Command::new("curl")
-                .args(["-sf", "-H", "@-", &format!("{api}/commits/{sha}/statuses?limit=50")])
+                .args([
+                    "-sf",
+                    "-H",
+                    "@-",
+                    &format!("{api}/commits/{sha}/statuses?limit=50"),
+                ])
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .spawn()?;
