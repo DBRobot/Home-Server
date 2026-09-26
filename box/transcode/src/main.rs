@@ -42,6 +42,9 @@ const IDLE: Duration = Duration::from_secs(600);
 const KEEP: usize = 64;
 /// blocks fetched from the bucket in one request: 64 of 64 KiB, a range
 const PIECE: u64 = 64;
+/// ffmpegs at once: each takes cores for as long as its film plays, and
+/// anyone who can reach start could otherwise ask for a hundred
+const MAX_SESSIONS: usize = 4;
 
 use library::crypt::{BLOCK, HEADER, SEALED_BLOCK};
 
@@ -122,6 +125,13 @@ async fn key(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
 }
 
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
+    if app.sessions.lock().await.len() >= MAX_SESSIONS {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "this box is transcoding all it can; try again when a film ends",
+        )
+            .into_response();
+    }
     let data_key = match library::open_x25519(&app.secret, &s.key) {
         Ok(k) => k,
         Err(_) => {
