@@ -520,6 +520,9 @@
         # this repo's pinned nixpkgs and not whatever unstable is serving
         # at the moment of use.
         inherit (pkgs) sops;
+        # `dd release app` checks a build's provenance with this; the
+        # distribution's gh is often too old to have `attestation`
+        inherit (pkgs) gh;
       };
 
       # Boxes booted as vms and driven through the failure cases, so the

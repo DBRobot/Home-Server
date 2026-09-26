@@ -42,10 +42,7 @@
   # the bare domain: where the front door is
   # the app the invited person needs before they can sign in to anything,
   # so it answers on the bare name and asks for nothing
-  dd.verify.appRelease = {
-    repo = "https://github.com/DBRobot/Home-Server";
-    version = "v0.1.0";
-  };
+  dd.verify.appManifest = "https://git.${config.dd.domain}/${config.dd.repo}/raw/branch/releases/app.json";
 
   services.nginx.virtualHosts.${config.dd.domain} = {
     forceSSL = true;

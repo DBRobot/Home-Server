@@ -197,6 +197,44 @@ pub fn sign_as(payload: Payload, key: &SigningKey, form: Form) -> Result<Signed>
     })
 }
 
+/// Anything else the release key signs, in the V2 form: a JSON payload that
+/// names its own `kind`. The app manifest is one. A box release has no
+/// kind and a different shape, so neither can be passed off as the other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedDoc {
+    pub payload: serde_json::Value,
+    pub signer: String,
+    pub signature: String,
+}
+
+pub fn sign_doc(kind: &str, mut payload: serde_json::Value, key: &SigningKey) -> Result<SignedDoc> {
+    payload["kind"] = serde_json::Value::String(kind.to_string());
+    let sig: Signature = key.sign(&canonical_v2(&payload)?);
+    Ok(SignedDoc {
+        payload,
+        signer: encode_public(&key.verifying_key()),
+        signature: B64.encode(sig.to_bytes()),
+    })
+}
+
+/// A signed document as published, if it is signed by `trusted` and is of
+/// `kind`; its payload.
+pub fn verify_doc(raw: &str, kind: &str, trusted: &VerifyingKey) -> Result<serde_json::Value> {
+    let d: SignedDoc = serde_json::from_str(raw)?;
+    if d.signer != encode_public(trusted) {
+        return Err(Error::Signer(d.signer));
+    }
+    let sig = B64.decode(&d.signature).map_err(|_| Error::Signature)?;
+    let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
+    trusted
+        .verify(&canonical_v2(&d.payload)?, &sig)
+        .map_err(|_| Error::Signature)?;
+    if d.payload["kind"].as_str() != Some(kind) {
+        return Err(Error::Key(format!("not a {kind}")));
+    }
+    Ok(d.payload)
+}
+
 /// A release file, checked against the bytes it was published as. Either
 /// form verifies; the payload comes back as this build understands it,
 /// which is only after the whole of it - unknown fields included - was
@@ -462,5 +500,28 @@ mod form_tests {
         assert!(verify_json(&tampered, &k.verifying_key()).is_err());
         let moved = published.replace("sha256-AAAA", "sha256-BBBB");
         assert!(verify_json(&moved, &k.verifying_key()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod doc_tests {
+    use super::*;
+
+    #[test]
+    fn a_document_is_what_it_says_it_is_and_nothing_else() {
+        let k = generate();
+        let vk = k.verifying_key();
+        let app = sign_doc("app", serde_json::json!({ "tag": "v1", "files": {} }), &k).unwrap();
+        let raw = serde_json::to_string_pretty(&app).unwrap();
+        assert_eq!(verify_doc(&raw, "app", &vk).unwrap()["tag"], "v1");
+
+        // not something else by another name
+        assert!(verify_doc(&raw, "invite", &vk).is_err());
+        // not a box release either
+        assert!(verify_json(&raw, &vk).is_err());
+        // and not changed
+        assert!(verify_doc(&raw.replace("v1", "v2"), "app", &vk).is_err());
+        // nor signed by some other key
+        assert!(verify_doc(&raw, "app", &generate().verifying_key()).is_err());
     }
 }

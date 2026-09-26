@@ -50,6 +50,22 @@ pub enum ReleaseCmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Sign the app a tag built: fetch every file of the GitHub release,
+    /// check GitHub's attestation that it was built from that tag in that
+    /// repository, hash each one, and publish a manifest signed with the
+    /// release key beside the box releases. The download page offers only
+    /// what a signed manifest names.
+    App {
+        /// the release tag, e.g. v0.1.0
+        #[arg(long)]
+        tag: String,
+        /// the GitHub repository it was built in
+        #[arg(long, default_value = "DBRobot/Home-Server")]
+        from: String,
+        /// sign and print the manifest, push nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// The release the boxes see.
     Show {
         #[arg(long, default_value = DEFAULT_URL)]
@@ -95,6 +111,7 @@ pub fn run(cmd: ReleaseCmd, repo: &str, keys: &auth::Store) -> Result<()> {
             print(&signed);
         }
         ReleaseCmd::Status { url } => status(repo, &url)?,
+        ReleaseCmd::App { tag, from, dry_run } => app(repo, keys, &tag, &from, dry_run)?,
         ReleaseCmd::Publish {
             r#ref,
             cache,
@@ -324,54 +341,14 @@ fn publish(
     }
 
     eprintln!("== publish release {counter}");
-    let wt = std::env::temp_dir().join(format!("dd-release-{}", std::process::id()));
-    // the releases branch: history of every release, never merged anywhere
-    let have_branch = git(
+    to_releases(
         &root,
-        &["ls-remote", "--exit-code", "--heads", "forge", "releases"],
-    )
-    .is_ok();
-    if have_branch {
-        git(&root, &["fetch", "-q", "forge", "releases"])?;
-        git(
-            &root,
-            &[
-                "worktree",
-                "add",
-                "-q",
-                "--detach",
-                wt.to_str().unwrap(),
-                "forge/releases",
-            ],
-        )?;
-    } else {
-        git(
-            &root,
-            &["worktree", "add", "-q", "--orphan", wt.to_str().unwrap()],
-        )?;
-    }
-    let result = (|| -> Result<()> {
-        std::fs::create_dir_all(wt.join("history"))?;
-        std::fs::write(wt.join("current.json"), &body)?;
-        std::fs::write(wt.join(format!("history/{counter}.json")), &body)?;
-        git(&wt, &["add", "current.json", "history"])?;
-        git(
-            &wt,
-            &[
-                "commit",
-                "-q",
-                "-m",
-                &format!("release {counter}: {}", &rev[..12]),
-            ],
-        )?;
-        git(&wt, &["push", "-q", "forge", "HEAD:refs/heads/releases"])?;
-        Ok(())
-    })();
-    let _ = git(
-        &root,
-        &["worktree", "remove", "--force", wt.to_str().unwrap()],
-    );
-    result?;
+        &[
+            ("current.json".into(), body.clone()),
+            (format!("history/{counter}.json"), body.clone()),
+        ],
+        &format!("release {counter}: {}", &rev[..12]),
+    )?;
     print(&signed);
     Ok(())
 }
@@ -619,6 +596,185 @@ pub(crate) fn load(keys: &auth::Store) -> Result<ed25519_dalek::SigningKey> {
         .get(ACCOUNT)?
         .context("no release key here - `dd release init`")?;
     release::decode_secret(&s).map_err(|e| anyhow::anyhow!("release key: {e}"))
+}
+
+/// Write files onto the releases branch and push it: the history of what
+/// the release key has signed, never merged anywhere.
+fn to_releases(root: &std::path::Path, files: &[(String, String)], message: &str) -> Result<()> {
+    let wt = std::env::temp_dir().join(format!("dd-release-{}", std::process::id()));
+    let have_branch = git(
+        root,
+        &["ls-remote", "--exit-code", "--heads", "forge", "releases"],
+    )
+    .is_ok();
+    if have_branch {
+        git(root, &["fetch", "-q", "forge", "releases"])?;
+        git(
+            root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                wt.to_str().unwrap(),
+                "forge/releases",
+            ],
+        )?;
+    } else {
+        git(
+            root,
+            &["worktree", "add", "-q", "--orphan", wt.to_str().unwrap()],
+        )?;
+    }
+    let result = (|| -> Result<()> {
+        for (name, body) in files {
+            let p = wt.join(name);
+            if let Some(d) = p.parent() {
+                std::fs::create_dir_all(d)?;
+            }
+            std::fs::write(&p, body)?;
+            git(&wt, &["add", name])?;
+        }
+        git(&wt, &["commit", "-q", "-m", message])?;
+        git(&wt, &["push", "-q", "forge", "HEAD:refs/heads/releases"])?;
+        Ok(())
+    })();
+    let _ = git(
+        root,
+        &["worktree", "remove", "--force", wt.to_str().unwrap()],
+    );
+    result
+}
+
+/// The files of a GitHub release: name and download url.
+fn github_assets(from: &str, tag: &str) -> Result<Vec<(String, String)>> {
+    let body = ureq_get(&format!(
+        "https://api.github.com/repos/{from}/releases/tags/{tag}"
+    ))
+    .map_err(|_| anyhow::anyhow!("no release {tag} in {from}"))?;
+    let v: serde_json::Value = serde_json::from_str(&body)?;
+    let out: Vec<(String, String)> = v["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| {
+            Some((
+                a["name"].as_str()?.to_string(),
+                a["browser_download_url"].as_str()?.to_string(),
+            ))
+        })
+        .collect();
+    if out.is_empty() {
+        bail!("release {tag} in {from} has no files");
+    }
+    Ok(out)
+}
+
+fn app(repo: &str, keys: &auth::Store, tag: &str, from: &str, dry_run: bool) -> Result<()> {
+    use sha2::Digest as _;
+    let root = repo_root(repo)?;
+    let key = load(keys)?;
+    // The release key vouches for bytes it has seen, built from source it
+    // can name. `gh attestation verify` checks GitHub's signed statement
+    // that this file came out of a workflow run in `from` - and the run's
+    // commit is then checked to be what `tag` points at here, so a file
+    // built from some other commit, or uploaded by hand, is refused.
+    let want = git(&root, &["rev-parse", &format!("{tag}^{{commit}}")])
+        .with_context(|| format!("no tag {tag} here; fetch the forge's tags"))?;
+    let want = want.trim().to_string();
+    let dir = std::env::temp_dir().join(format!("dd-app-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let result = (|| -> Result<serde_json::Value> {
+        let mut files = serde_json::Map::new();
+        for (name, url) in github_assets(from, tag)? {
+            let path = dir.join(&name);
+            let st = Command::new("curl")
+                .args(["-sfL", "-o"])
+                .arg(&path)
+                .arg(&url)
+                .status()?;
+            if !st.success() {
+                bail!("downloading {name}");
+            }
+            // this repo's pinned gh, and only a signature made by the
+            // release workflow counts - not any workflow in the repository
+            let workflow = format!("{from}/.github/workflows/release.yml");
+            let token = Command::new("gh")
+                .args(["auth", "token"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            let mut gh = Command::new("nix");
+            gh.current_dir(&root)
+                .args([
+                    "run",
+                    ".#gh",
+                    "--",
+                    "attestation",
+                    "verify",
+                    "--format",
+                    "json",
+                ])
+                .args(["--repo", from, "--signer-workflow", &workflow])
+                .arg(&path);
+            if let Some(t) = token {
+                gh.env("GH_TOKEN", t);
+            }
+            let att = gh
+                .output()
+                .context("running gh: it checks the build's provenance")?;
+            if !att.status.success() {
+                bail!(
+                    "{name}: no attestation from {from} verifies it:\n{}",
+                    String::from_utf8_lossy(&att.stderr)
+                );
+            }
+            let built_from = serde_json::from_slice::<serde_json::Value>(&att.stdout)?
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|a| {
+                    a.pointer("/verificationResult/statement/predicate/buildDefinition/resolvedDependencies/0/digest/gitCommit")
+                        .and_then(|c| c.as_str())
+                        .map(str::to_string)
+                })
+                .context("the attestation names no commit")?;
+            if built_from != want {
+                bail!("{name} was built from {built_from}, and {tag} is {want}");
+            }
+            let bytes = std::fs::read(&path)?;
+            let sha = format!("{:x}", sha2::Sha256::digest(&bytes));
+            eprintln!("   {name}  {sha}");
+            files.insert(
+                name,
+                serde_json::json!({ "sha256": sha, "size": bytes.len(), "url": url }),
+            );
+        }
+        Ok(serde_json::json!({
+            "tag": tag,
+            "commit": want,
+            "from": from,
+            "issued": release::now(),
+            "files": files,
+        }))
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    let signed = release::sign_doc("app", result?, &key)?;
+    let body = serde_json::to_string_pretty(&signed)?;
+    if dry_run {
+        println!("{body}");
+        return Ok(());
+    }
+    to_releases(
+        &root,
+        &[
+            ("app.json".into(), body.clone()),
+            (format!("app-history/{tag}.json"), body),
+        ],
+        &format!("app {tag}"),
+    )?;
+    println!("app {tag} signed; the download page offers it within ten minutes");
+    Ok(())
 }
 
 fn repo_root(repo: &str) -> Result<PathBuf> {

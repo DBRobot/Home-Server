@@ -147,27 +147,14 @@ in
   # demo's page, exactly as it already hands over the demo's photos
   # password. Nothing private is in that library, and anyone at all may
   # sign in as the demo and be given the same key.
-  # Where the app is built and published, and which release to offer. The
-  # downloads page links at the mirror's release, not at a file this box
-  # holds: artifacts are built after a merge, by the runner, and a box
-  # that stores none of them cannot serve a stale one.
-  options.dd.verify.appRelease = lib.mkOption {
-    type = lib.types.nullOr (
-      lib.types.submodule {
-        options = {
-          repo = lib.mkOption {
-            type = lib.types.str;
-            description = "the mirror the app is released on, e.g. https://github.com/you/commonty";
-          };
-          version = lib.mkOption {
-            type = lib.types.str;
-            description = "the release tag whose artifacts the page offers";
-          };
-        };
-      }
-    );
+  # The app the downloads page offers: whatever a manifest signed with the
+  # release key names, published beside the box releases. Which tag is
+  # current is the manifest's to say, not this box's configuration - so a
+  # new app is `dd release app`, not a release of the boxes.
+  options.dd.verify.appManifest = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
     default = null;
-    description = "the app release the downloads page sends people to; null: no page";
+    description = "url of the signed app manifest (releases branch, app.json); null: no downloads page";
   };
   options.dd.verify.demoLibrary = lib.mkOption {
     type = lib.types.nullOr (
@@ -266,9 +253,8 @@ in
         VERIFY_FLEET = builtins.toJSON cfg.fleet;
         VERIFY_SYNC_SECS = toString cfg.syncSeconds;
       }
-      // lib.optionalAttrs (full && cfg.appRelease != null) {
-        VERIFY_APP_REPO = cfg.appRelease.repo;
-        VERIFY_APP_VERSION = cfg.appRelease.version;
+      // lib.optionalAttrs (full && cfg.appManifest != null) {
+        VERIFY_APP_MANIFEST = cfg.appManifest;
       }
       // lib.optionalAttrs (full && cfg.demoLibrary != null) {
         VERIFY_DEMO_LIBRARY_ID = cfg.demoLibrary.id;

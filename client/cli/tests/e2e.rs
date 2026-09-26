@@ -101,7 +101,7 @@ impl Box_ {
             library: None,
             fleet: Default::default(),
             demo_library: None,
-            app_release: None,
+            app_manifest: None,
             network: None,
             bind: "127.0.0.1:0".parse().unwrap(),
             dir: dir.clone(),
@@ -1341,7 +1341,7 @@ async fn start_at(
         home: vec![],
         fleet: Default::default(),
         demo_library: None,
-        app_release: None,
+        app_manifest: None,
         members: None,
         release_pub: None,
         web_dir: None,
@@ -1391,4 +1391,105 @@ async fn publish_brings_a_lagging_box_up() {
     assert!(out.contains("accepted version 1"), "{out}");
     assert!(entry(&b, "kim").await.is_some());
     let _ = &a.dir;
+}
+
+/// Answer every request with `body`, from a thread: enough of a forge to
+/// serve one file.
+fn serve_forever(body: String) -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for mut s in l.incoming().flatten() {
+            let mut buf = [0u8; 4096];
+            let _ = std::io::Read::read(&mut s, &mut buf);
+            let r = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = std::io::Write::write_all(&mut s, r.as_bytes());
+        }
+    });
+    format!("http://{addr}/app.json")
+}
+
+async fn download_page_of(release_pub: String, manifest_url: String) -> (u16, String) {
+    let (addr, _task) = verify::start(verify::Config {
+        home: vec![],
+        members: Some(verify::Members::list(vec![])),
+        release_pub: Some(release_pub),
+        web_dir: None,
+        photos: None,
+        library: None,
+        fleet: Default::default(),
+        demo_library: None,
+        app_manifest: Some(manifest_url),
+        network: None,
+        bind: "127.0.0.1:0".parse().unwrap(),
+        dir: scratch("box").join("keys"),
+        peers: vec![],
+        sync_secs: 300,
+        domain: Some("localhost".to_string()),
+        oidc: None,
+    })
+    .await
+    .unwrap();
+    let r = reqwest::get(format!("http://{addr}/_dd/download"))
+        .await
+        .unwrap();
+    (r.status().as_u16(), r.text().await.unwrap_or_default())
+}
+
+/// The downloads page is the one page a stranger is sent to, and what it
+/// offers is what they install. It offers exactly the files a manifest
+/// signed with the release key names, with their hashes - and nothing at
+/// all if the manifest is signed by anything else.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_download_page_offers_only_what_the_release_key_signed() {
+    let key = release::generate();
+    let public = release::encode_public(&key.verifying_key());
+    let apk_sha = "a1b2c3d4e5f6".repeat(5) + "abcd";
+    let manifest = serde_json::json!({
+        "tag": "v9.9.9",
+        "commit": "0123456789abcdef",
+        "from": "someone/commonty",
+        "files": {
+            "commonty.apk": { "sha256": apk_sha, "url": "https://example.invalid/commonty.apk" },
+            // not a sha256: dropped rather than shown
+            "commonty-setup.exe": { "sha256": "trust me", "url": "https://example.invalid/setup.exe" },
+        }
+    });
+
+    let good = release::sign_doc("app", manifest.clone(), &key).unwrap();
+    let (st, page) = download_page_of(
+        public.clone(),
+        serve_forever(serde_json::to_string(&good).unwrap()),
+    )
+    .await;
+    assert_eq!(st, 200, "{page}");
+    assert!(
+        page.contains("https://example.invalid/commonty.apk"),
+        "{page}"
+    );
+    assert!(page.contains(&apk_sha[..12]), "the hash is shown");
+    assert!(
+        !page.contains("setup.exe"),
+        "a file with no real hash is not offered"
+    );
+    assert!(page.contains("v9.9.9"));
+
+    // the same manifest, signed by some other key: nothing offered
+    let forged = release::sign_doc("app", manifest.clone(), &release::generate()).unwrap();
+    let (st, _) = download_page_of(
+        public.clone(),
+        serve_forever(serde_json::to_string(&forged).unwrap()),
+    )
+    .await;
+    assert_eq!(st, 404);
+
+    // signed by the right key but edited on the way: nothing offered
+    let tampered = serde_json::to_string(&good)
+        .unwrap()
+        .replace("example.invalid/commonty.apk", "example.invalid/evil.apk");
+    let (st, _) = download_page_of(public, serve_forever(tampered)).await;
+    assert_eq!(st, 404);
 }

@@ -26,6 +26,7 @@
           <p class="note">{{ p.soon }}</p>
           {% else if p.files.len() == 1 %}
           <a class="get" href="{{ p.files[0].1 }}">Download</a>
+          <p class="hash" title="SHA-256 {{ p.files[0].2 }}">{{ p.files[0].2[..12] }}…</p>
           {% else %}
           {# a split button: the first format is what most people want and
              the button gets it, the arrow is for everyone else #}
@@ -34,10 +35,11 @@
             <details>
               <summary aria-label="Other formats"><span class="chev" aria-hidden="true"></span></summary>
               <div class="formats">
-                {% for f in p.files %}<a href="{{ f.1 }}">{{ f.0 }}</a>{% endfor %}
+                {% for f in p.files %}<a href="{{ f.1 }}" title="SHA-256 {{ f.2 }}">{{ f.0 }}</a>{% endfor %}
               </div>
             </details>
           </div>
+          <p class="hash" title="SHA-256 {{ p.files[0].2 }}">{{ p.files[0].2[..12] }}…</p>
           {% endif %}
         </li>
         {% endfor %}
@@ -49,10 +51,14 @@
     run it. Android asks you to allow installing from outside its store,
     once; there is no listing to install from, because this is not a
     product.</p>
-    <p class="note">Everything here is built from <a href="{{ repo }}">the
-    source</a>, by the same commands you can run. Nothing in the app is a
-    secret: it makes its own key on your device the first time you open
-    it, and that key never leaves.</p>
+    <p class="note">This is {{ tag }}, built from <a href="{{ source }}">the
+    source at that commit</a>, by the same commands you can run. Every file
+    offered here is named, with its SHA-256, in <a href="{{ manifest }}">a
+    manifest signed with the fleet's release key</a> - the key that signs
+    what the boxes themselves run - and a file that is not in it is not
+    offered. The short code under each button is the start of that hash.
+    Nothing in the app is a secret: it makes its own key on your device the
+    first time you open it, and that key never leaves.</p>
     <p class="note">The Windows installer carries
     <a href="https://github.com/winfsp/winfsp">WinFsp &mdash; Windows File
     System Proxy, Copyright &copy; Bill Zissimopoulos</a>, which is what

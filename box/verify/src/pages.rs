@@ -185,8 +185,9 @@ struct Photos<'a> {
 struct Platform {
     name: &'static str,
     icon: &'static str,
-    /// what to call the file, and where it is; empty means not yet
-    files: Vec<(&'static str, String)>,
+    /// what to call the file, where it is, and its sha256; empty means not
+    /// yet, or nothing signed for this platform
+    files: Vec<(&'static str, String, String)>,
     /// shown under the name when there is nothing to download
     soon: &'static str,
 }
@@ -200,8 +201,19 @@ struct Group {
 #[template(path = "download.html")]
 struct Download<'a> {
     domain: &'a str,
-    repo: &'a str,
+    /// the source the files were built from, at the commit
+    source: String,
+    tag: &'a str,
+    /// the signed manifest itself, for anyone who wants to check
+    manifest: &'a str,
     groups: Vec<Group>,
+}
+
+/// A file the release key has vouched for.
+#[derive(Clone)]
+pub struct AppFile {
+    pub url: String,
+    pub sha256: String,
 }
 
 /// the logo on a platform's card, from web/icons/os/
@@ -219,9 +231,25 @@ fn os_icon(key: &str) -> &'static str {
 /// and published as a release on the mirror, so the links point there by
 /// that tag, not at a file this box holds. A platform with no files is
 /// shown anyway, so the page says what is coming rather than hiding it.
-pub fn download(domain: &str, repo: &str, version: &str) -> String {
-    let at = |name: String| format!("{repo}/releases/download/{version}/{name}");
-    let v = version.trim_start_matches('v');
+/// The download page from a signed app manifest: a file is offered only if
+/// the manifest names it, with the hash the release key signed.
+pub fn download(
+    domain: &str,
+    from: &str,
+    commit: &str,
+    tag: &str,
+    manifest: &str,
+    signed: &std::collections::BTreeMap<String, AppFile>,
+) -> String {
+    let pick = |label: &'static str, name: &str| -> Option<(&'static str, String, String)> {
+        signed
+            .get(name)
+            .map(|f| (label, f.url.clone(), f.sha256.clone()))
+    };
+    let v = tag.trim_start_matches('v');
+    let files = |want: Vec<(&'static str, String)>| -> Vec<(&'static str, String, String)> {
+        want.into_iter().filter_map(|(l, n)| pick(l, &n)).collect()
+    };
     let groups = vec![
         Group {
             title: "Desktop",
@@ -229,17 +257,17 @@ pub fn download(domain: &str, repo: &str, version: &str) -> String {
                 Platform {
                     name: "Linux",
                     icon: os_icon("linux"),
-                    files: vec![
-                        (".deb", at(format!("commonty_{v}_amd64.deb"))),
-                        ("AppImage", at(format!("commonty_{v}_amd64.AppImage"))),
-                    ],
-                    soon: "",
+                    files: files(vec![
+                        (".deb", format!("commonty_{v}_amd64.deb")),
+                        ("AppImage", format!("commonty_{v}_amd64.AppImage")),
+                    ]),
+                    soon: "Nothing signed yet",
                 },
                 Platform {
                     name: "Windows",
                     icon: os_icon("windows"),
-                    files: vec![("Installer", at("commonty-setup.exe".into()))],
-                    soon: "",
+                    files: files(vec![("Installer", "commonty-setup.exe".into())]),
+                    soon: "Nothing signed yet",
                 },
                 Platform {
                     name: "macOS",
@@ -255,8 +283,8 @@ pub fn download(domain: &str, repo: &str, version: &str) -> String {
                 Platform {
                     name: "Android",
                     icon: os_icon("android"),
-                    files: vec![("APK", at("commonty.apk".into()))],
-                    soon: "",
+                    files: files(vec![("APK", "commonty.apk".into())]),
+                    soon: "Nothing signed yet",
                 },
                 Platform {
                     name: "iOS",
@@ -269,7 +297,9 @@ pub fn download(domain: &str, repo: &str, version: &str) -> String {
     ];
     render(Download {
         domain,
-        repo,
+        source: format!("https://github.com/{from}/tree/{commit}"),
+        tag,
+        manifest,
         groups,
     })
 }
@@ -522,8 +552,31 @@ mod tests {
 
     #[test]
     fn the_downloads_page_asks_for_nothing_and_points_at_the_release() {
-        let html = download("commonty.org", "https://github.com/x/y", "v0.2.0");
+        let at = |n: &str| AppFile {
+            url: format!("https://github.com/x/y/releases/download/v0.2.0/{n}"),
+            sha256: "ab".repeat(32),
+        };
+        let mut signed = std::collections::BTreeMap::new();
+        for n in [
+            "commonty.apk",
+            "commonty_0.2.0_amd64.deb",
+            "commonty_0.2.0_amd64.AppImage",
+            "commonty-setup.exe",
+        ] {
+            signed.insert(n.to_string(), at(n));
+        }
+        let html = download(
+            "commonty.org",
+            "x/y",
+            "abc123",
+            "v0.2.0",
+            "https://m/app.json",
+            &signed,
+        );
         assert!(html.contains("https://github.com/x/y/releases/download/v0.2.0/commonty.apk"));
+        // the source at the commit that was signed, and the manifest itself
+        assert!(html.contains("https://github.com/x/y/tree/abc123"));
+        assert!(html.contains("https://m/app.json"));
         assert!(html.contains("commonty_0.2.0_amd64.deb"));
         assert!(html.contains("commonty_0.2.0_amd64.AppImage"));
         // desktop and mobile, each with what is there and what is not
@@ -550,6 +603,20 @@ mod tests {
         // a stranger is who this is for: no name, no avatar, no menu
         assert!(!html.contains("class=\"me\"") && !html.contains("/_dd/logout"));
         assert!(html.contains("https://home.commonty.org/"));
+
+        // a platform the manifest does not name is greyed, not linked
+        signed.remove("commonty.apk");
+        let html = download(
+            "commonty.org",
+            "x/y",
+            "abc123",
+            "v0.2.0",
+            "https://m/app.json",
+            &signed,
+        );
+        assert!(!html.contains("commonty.apk"));
+        assert_eq!(html.matches("class=\"os off\"").count(), 3);
+        assert!(html.contains("Nothing signed yet"));
     }
 
     #[test]

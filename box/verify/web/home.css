@@ -514,6 +514,13 @@ button.inline { margin: 0; padding: 4px 10px; font-size: 12.5px; }
 }
 .os h3 { margin: 0; font-size: 15px; }
 .os .note { margin: 0; }
+/* the start of the file's signed sha256: something to compare, not to read */
+.os .hash {
+  margin: 0;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
 .oslogo svg {
   width: 40px;
   height: 40px;

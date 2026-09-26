@@ -7901,6 +7901,7 @@ dependencies = [
  "identity",
  "jsonwebtoken",
  "p256",
+ "release",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

@@ -61,8 +61,20 @@ struct App {
     library: Option<library::Gate>,
     network: Option<network::Door>,
     demo_library: Option<(String, String)>,
-    app_release: Option<(String, String)>,
+    app_manifest: Option<String>,
+    /// the app manifest as last read, and when: a good one for ten
+    /// minutes, the lack of one for one
+    app_seen: Mutex<Option<(Instant, Option<SignedApp>)>>,
     fleet: fleet::Fleet,
+}
+
+/// The app, as the release key vouched for it.
+#[derive(Clone)]
+struct SignedApp {
+    tag: String,
+    commit: String,
+    from: String,
+    files: std::collections::BTreeMap<String, pages::AppFile>,
 }
 
 enum Ceremony {
@@ -118,10 +130,10 @@ pub struct Config {
     /// The library the demo account reads: an id and its key, both in the
     /// open on purpose (see the option in modules/library/libraries.nix).
     pub demo_library: Option<(String, String)>,
-    /// Where the app is built and published, and the release to offer:
-    /// the downloads page links there rather than at a file this box
-    /// holds. None: no page, because there is nothing to send anyone to.
-    pub app_release: Option<(String, String)>,
+    /// Where the signed app manifest is published (the releases branch,
+    /// beside the box releases). The downloads page offers what it names,
+    /// and nothing else. None: no page.
+    pub app_manifest: Option<String>,
     /// Every box in the fleet and the address its prometheus answers on,
     /// for the Boxes and Backups pages. Empty on a box that is not told.
     pub fleet: fleet::Fleet,
@@ -225,6 +237,69 @@ impl App {
             .directory
             .entry(user)?
             .or_else(|| self.directory.held(user)))
+    }
+
+    /// The signed app manifest. A page that offers downloads to strangers
+    /// offers exactly the files the release key vouched for, so anything
+    /// that does not verify against it is as good as absent - including a
+    /// manifest this box was handed by a forge, a mirror, or a proxy that
+    /// had been got at.
+    async fn signed_app(&self) -> Option<SignedApp> {
+        let url = self.app_manifest.as_ref()?;
+        if let Some((at, seen)) = &*self.app_seen.lock().unwrap() {
+            let fresh = if seen.is_some() { 600 } else { 60 };
+            if at.elapsed() < Duration::from_secs(fresh) {
+                return seen.clone();
+            }
+        }
+        let read = async {
+            let key = self.directory.release()?;
+            let raw = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .ok()?
+                .get(url)
+                .send()
+                .await
+                .ok()?
+                .error_for_status()
+                .ok()?
+                .text()
+                .await
+                .ok()?;
+            let p = match release::verify_doc(&raw, "app", key) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("app manifest refused: {e}");
+                    return None;
+                }
+            };
+            let sha256 = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+            let files = p["files"]
+                .as_object()?
+                .iter()
+                .filter_map(|(name, f)| {
+                    let sha = f["sha256"].as_str().filter(|s| sha256(s))?;
+                    let url = f["url"].as_str().filter(|u| u.starts_with("https://"))?;
+                    Some((
+                        name.clone(),
+                        pages::AppFile {
+                            url: url.to_string(),
+                            sha256: sha.to_string(),
+                        },
+                    ))
+                })
+                .collect();
+            Some(SignedApp {
+                tag: p["tag"].as_str()?.to_string(),
+                commit: p["commit"].as_str()?.to_string(),
+                from: p["from"].as_str()?.to_string(),
+                files,
+            })
+        };
+        let seen = read.await;
+        *self.app_seen.lock().unwrap() = Some((Instant::now(), seen.clone()));
+        seen
     }
 
     /// on the member list by root, and not shut out
@@ -1091,9 +1166,20 @@ async fn fleet_json(State(app): State<Arc<App>>, headers: HeaderMap) -> Response
 /// Where a stranger gets the app. The only page here that asks for
 /// nothing: an invited person has no way in until they have it.
 async fn download_page(State(app): State<Arc<App>>) -> Response {
-    match &app.app_release {
-        Some((repo, version)) => Html(pages::download(&app.domain, repo, version)).into_response(),
-        None => (StatusCode::NOT_FOUND, "nothing to download yet").into_response(),
+    let Some(url) = app.app_manifest.clone() else {
+        return (StatusCode::NOT_FOUND, "nothing to download yet").into_response();
+    };
+    match app.signed_app().await {
+        Some(a) => Html(pages::download(
+            &app.domain,
+            &a.from,
+            &a.commit,
+            &a.tag,
+            &url,
+            &a.files,
+        ))
+        .into_response(),
+        None => (StatusCode::NOT_FOUND, "nothing signed to download yet").into_response(),
     }
 }
 
@@ -1380,7 +1466,8 @@ pub async fn start(
         library: cfg.library,
         network: cfg.network,
         demo_library: cfg.demo_library,
-        app_release: cfg.app_release,
+        app_manifest: cfg.app_manifest,
+        app_seen: Mutex::new(None),
         fleet: cfg.fleet,
     });
     // A held sign-up follows through when the member list names it: then it
