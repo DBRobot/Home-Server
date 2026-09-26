@@ -166,6 +166,15 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
             "-hide_banner",
             "-loglevel",
             "error",
+            // ffmpeg will happily open whatever a file asks it to. The
+            // input is a member's own media, decrypted here, and it goes
+            // through every demuxer ffmpeg has: the only things it may
+            // reach are the containers we expect, over the one protocol
+            // this process serves them on.
+            "-protocol_whitelist",
+            "http,tcp",
+            "-format_whitelist",
+            "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,mpeg,flv,asf,ogg",
             "-i",
             &format!("http://{}/plain/{id}", app.plain),
             "-c:v",

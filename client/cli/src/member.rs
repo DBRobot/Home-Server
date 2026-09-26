@@ -57,10 +57,11 @@ pub async fn resolve(who: &str, dirs: &[String]) -> Result<String> {
         return Ok(who.to_string());
     }
     let found = crate::who::fetch(dirs, who).await;
-    match crate::who::newest(&found) {
-        Some(e) => Ok(identity::member_id(&e.entry.root)),
-        None => bail!("no entry for {who} in any directory"),
-    }
+    // this id is about to be written into fleet/members.json and released
+    // to every box: a directory that made it up would be naming who joins
+    let e = directory::resolve(&found, directory::Anchor::FirstSight)
+        .with_context(|| format!("no usable entry for {who}"))?;
+    Ok(identity::member_id(&e.entry.root))
 }
 
 pub async fn add(repo: &str, who: &str, dirs: &[String]) -> Result<()> {

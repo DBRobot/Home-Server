@@ -11,6 +11,6 @@
     <option value="0"{% if f.default != "1" %} selected{% endif %}>no</option>
   </select>
   {% else %}
-  <input type="{% if f.kind == "number" %}number{% else if f.kind == "password" %}password{% else %}text{% endif %}" name="{{ f.var }}" value="{{ f.default }}"{% if f.kind == "password" %} autocomplete="new-password"{% endif %}>
+  <input type="{% if f.kind == "number" %}number{% else if f.kind == "password" %}password{% else %}text{% endif %}" name="{{ f.var }}" value="{% if f.kind != "password" %}{{ f.default }}{% endif %}"{% if f.kind == "password" %} autocomplete="new-password" placeholder="left empty: one is made for you"{% endif %}>
   {% endif %}
 </label>

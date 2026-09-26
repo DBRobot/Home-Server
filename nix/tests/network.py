@@ -21,7 +21,22 @@ assert all(r["value"] == ip for r in records), records
 # a member's device: made here, admitted by its own root, asks the gate
 env = "DD_KEYRING_FILE=/root/keys.json"
 box.wait_for_open_port(4181)
-box.succeed(f"{env} {nix['dd']} identity new --name sarah --directory http://127.0.0.1:4181/_dd/directory")
+dirs = "--directory http://127.0.0.1:4181/_dd/directory"
+box.succeed(f"{env} {nix['dd']} identity new --name sarah {dirs}")
+
+# a key on this network is for members. The list starts empty, so sarah has
+# to be in it before the door opens for her at all.
+box.succeed("mkdir -p /root/fleet/fleet")
+box.succeed(f"{env} {nix['dd']} member add sarah --repo /root/fleet {dirs}")
+box.succeed("mkdir -p /run/systemd/system/dd-verify.service.d")
+box.succeed(
+    "printf \"[Service]\\nEnvironment='VERIFY_MEMBERS=%s'\\n\" "
+    "\"$(jq -c . /root/fleet/fleet/members.json)\" "
+    "> /run/systemd/system/dd-verify.service.d/members.conf"
+)
+box.succeed("systemctl daemon-reload && systemctl restart dd-verify.service")
+box.wait_for_open_port(4181)
+
 token = box.succeed(f"{env} {nix['dd']} token").strip()
 got = json.loads(box.succeed(f"curl -sf -X POST -H 'Authorization: Bearer {token}' http://127.0.0.1:4181/_dd/network/join"))
 assert got["control_url"] == "http://127.0.0.1:8085", got
@@ -36,3 +51,15 @@ assert len(hers) == 1 and not hers[0].get("reusable"), keys
 # no token, no key; a stranger's token, no key
 box.fail("curl -sf -X POST http://127.0.0.1:4181/_dd/network/join")
 box.fail("curl -sf -X POST -H 'Authorization: Bearer nope' http://127.0.0.1:4181/_dd/network/join")
+
+# and a stranger who signed up is not a member: a real key, a real entry, a
+# real token, and no way onto the network the boxes trust
+box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} identity new --name tom {dirs}")
+tom = box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} token").strip()
+code = box.succeed(
+    f"curl -s -o /dev/null -w '%{{http_code}}' -X POST -H 'Authorization: Bearer {tom}' "
+    "http://127.0.0.1:4181/_dd/network/join"
+).strip()
+assert code == "403", code
+# headscale never heard of him
+box.fail("headscale users list -o json | jq -e '.[] | select(.name == \"tom\")'")

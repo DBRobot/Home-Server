@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::os::unix::fs::OpenOptionsExt as _;
 
 /// One game the catalogue knows: a pelican egg, resolved (games/resolve.py).
 /// The guest does what the egg's daemon would: install with steamcmd, fill
@@ -180,7 +181,9 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        if p.is_file() {
+        // the tree came from the guest: a link in it is the guest asking
+        // the host to read whatever it points at
+        if p.symlink_metadata().map(|m| m.is_file()).unwrap_or(false) {
             std::fs::copy(&p, &dest)?;
         }
     }
@@ -309,8 +312,12 @@ impl Manager {
         };
         for e in rd.flatten() {
             let p = e.path().join("instance.json");
+            // likewise here: a record that names another instance would put
+            // one member's server in another's list
+            let dir_name = e.file_name().to_string_lossy().into_owned();
             if let Ok(b) = std::fs::read(&p)
                 && let Ok(i) = serde_json::from_slice::<Instance>(&b)
+                && i.id == dir_name
             {
                 out.push(i);
             }
@@ -323,8 +330,15 @@ impl Manager {
         if !valid_id(id) {
             return None;
         }
-        serde_json::from_slice(&std::fs::read(self.instance_dir(id).join("instance.json")).ok()?)
-            .ok()
+        let i: Instance = serde_json::from_slice(
+            &std::fs::read(self.instance_dir(id).join("instance.json")).ok()?,
+        )
+        .ok()?;
+        // The record lives on the 9p share, so the guest can write it. Every
+        // caller then builds host paths from `i.id` - systemctl, save,
+        // remove_dir_all - so the name inside the file has to be the name of
+        // the directory it was found in, or the guest gets to choose.
+        (i.id == id).then_some(i)
     }
 
     fn save(&self, i: &Instance) -> Result<()> {
@@ -336,11 +350,45 @@ impl Manager {
         Ok(())
     }
 
-    /// the game's own output, as the guest appends it beside the record
-    pub fn log_tail(&self, id: &str, lines: usize) -> String {
-        let Ok(text) = std::fs::read_to_string(self.instance_dir(id).join("game.log")) else {
+    /// O_NOFOLLOW, without pulling in libc for one constant
+    fn nofollow() -> i32 {
+        0o400000
+    }
+
+    /// A file the guest writes, read the way anything a guest writes has to
+    /// be: no symlink followed, a regular file or nothing, and only the last
+    /// `cap` bytes. The instance directory is a 9p share the guest can write,
+    /// so every one of these is an untrusted file however ordinary it looks.
+    fn tail_of(path: &std::path::Path, cap: u64) -> String {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        let mut f = match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(Self::nofollow())
+            .open(path)
+        {
+            Ok(f) => f,
+            Err(_) => return String::new(),
+        };
+        let Ok(meta) = f.metadata() else {
             return String::new();
         };
+        if !meta.is_file() {
+            return String::new();
+        }
+        let from = meta.len().saturating_sub(cap);
+        if from > 0 && f.seek(SeekFrom::Start(from)).is_err() {
+            return String::new();
+        }
+        let mut buf = Vec::new();
+        if f.take(cap).read_to_end(&mut buf).is_err() {
+            return String::new();
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    /// the game's own output, as the guest appends it beside the record
+    pub fn log_tail(&self, id: &str, lines: usize) -> String {
+        let text = Self::tail_of(&self.instance_dir(id).join("game.log"), 64 * 1024);
         let all: Vec<&str> = text.lines().collect();
         let from = all.len().saturating_sub(lines);
         all[from..].join("\n")
@@ -360,10 +408,7 @@ impl Manager {
                 State::Stopped
             };
         }
-        match std::fs::read_to_string(self.instance_dir(&i.id).join("status"))
-            .unwrap_or_default()
-            .trim()
-        {
+        match Self::tail_of(&self.instance_dir(&i.id).join("status"), 64).trim() {
             "running" => State::Running,
             "updating" => State::Updating,
             _ => State::Starting,
@@ -452,7 +497,21 @@ impl Manager {
                     if s.kind == "number" && v.parse::<f64>().is_err() {
                         bail!("{}: not a number", s.label);
                     }
+                    Self::settable(&s.label, v)?;
                     env.insert(s.var.clone(), v.to_string());
+                }
+            }
+        }
+        // any password the catalogue suggested is one everybody knows
+        for s in &spec.settings {
+            if s.kind == "password" && !s.default.is_empty() {
+                let given = env.get(&s.var).map(String::as_str).unwrap_or("");
+                if given.is_empty() || given == s.default {
+                    let made = Self::made_up_secret();
+                    if made.is_empty() {
+                        bail!("{}: no randomness to make a password with", s.label);
+                    }
+                    env.insert(s.var.clone(), made);
                 }
             }
         }
@@ -460,17 +519,24 @@ impl Manager {
             env.insert(p.var.clone(), p.port.to_string());
         }
 
+        // The id is the game's name with a number after it, and it has to
+        // fit valid_id. Four catalogue games are already 24 characters or
+        // more, so the name has to give way to the number rather than the
+        // search running past every integer looking for a fit.
         let taken: HashSet<String> = all.iter().map(|i| i.id.clone()).collect();
-        let id = (1..)
-            .map(|n| format!("{game}{n}"))
-            .map(|s| {
-                s.chars()
-                    .filter(|c| c.is_ascii_alphanumeric())
-                    .collect::<String>()
-                    .to_lowercase()
+        let stem: String = game
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_lowercase();
+        let id = (1..=999)
+            .map(|n| {
+                let n = n.to_string();
+                let keep = 24usize.saturating_sub(n.len()).min(stem.len());
+                format!("{}{n}", &stem[..keep])
             })
             .find(|s| !taken.contains(s) && valid_id(s))
-            .context("no id")?;
+            .context("no free id for this game")?;
 
         // no more than the box has: the budget bounds memory, the cpu count
         // bounds cores (qemu warns past it, kvm crawls)
@@ -542,6 +608,38 @@ impl Manager {
     /// The settings a person may set, changed; they take effect when the
     /// server next starts (the guest fills its files at start). A running
     /// server is restarted for them, world kept.
+    /// A secret for this instance alone.
+    ///
+    /// A catalogue default for a password is a published password: the egg
+    /// is public and so is whatever it suggests. An empty one is left empty
+    /// on purpose - for most games that is "no password", and filling it in
+    /// would shut a member's friends out of their own server.
+    fn made_up_secret() -> String {
+        const ALPHABET: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        let mut raw = [0u8; 20];
+        if std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut raw))
+            .is_err()
+        {
+            // never silently fall back to something guessable
+            return String::new();
+        }
+        raw.iter()
+            .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+            .collect()
+    }
+
+    /// A setting's value, as it may safely be written into a config file
+    /// and an environment. The startup line does not need this - it takes
+    /// a shell reference to the variable, never the text - but a newline
+    /// in a value would still split a line in a config file in two.
+    fn settable(label: &str, v: &str) -> Result<()> {
+        if let Some(c) = v.chars().find(|c| c.is_control()) {
+            bail!("{label}: {c:?} cannot be used here");
+        }
+        Ok(())
+    }
+
     pub fn configure(
         &self,
         owner: &str,
@@ -568,6 +666,7 @@ impl Manager {
                 if s.kind == "number" && v.parse::<f64>().is_err() {
                     bail!("{}: not a number", s.label);
                 }
+                Self::settable(&s.label, v)?;
                 i.env.insert(s.var.clone(), v.to_string());
             }
         }
@@ -629,7 +728,10 @@ impl Manager {
             ) {
                 continue;
             }
-            let Ok(meta) = std::fs::metadata(&entry) else {
+            // symlink_metadata, not metadata: the server tree is the
+            // guest's, and a link in it would have the host copy whatever
+            // it points at into the member's saved world
+            let Ok(meta) = std::fs::symlink_metadata(&entry) else {
                 continue;
             };
             if meta.is_file() && meta.modified().map(|m| m > since).unwrap_or(false) {
@@ -715,6 +817,29 @@ impl Manager {
 
 #[cfg(test)]
 mod tests {
+
+    /// Everything in an instance directory is on a share the guest writes,
+    /// so every read of one is a read of something hostile.
+    #[test]
+    fn a_guest_cannot_make_the_host_read_forever() {
+        let d = std::env::temp_dir().join(format!("dd-games-tail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+
+        // a log far bigger than the cap: only the tail comes back
+        let big = d.join("game.log");
+        std::fs::write(&big, "x".repeat(300_000) + "\nlast line\n").unwrap();
+        let got = Manager::tail_of(&big, 64 * 1024);
+        assert!(got.len() <= 64 * 1024, "{}", got.len());
+        assert!(got.ends_with("last line\n"), "the tail, not the head");
+
+        // a symlink to something endless is not followed at all
+        let link = d.join("status");
+        std::os::unix::fs::symlink("/dev/zero", &link).unwrap();
+        assert_eq!(Manager::tail_of(&link, 64), "");
+
+        let _ = std::fs::remove_dir_all(&d);
+    }
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

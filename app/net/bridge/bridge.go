@@ -5,7 +5,12 @@
 // takes the engine's plain upgrade, opens a websocket to the control
 // server, and pipes. Everything else the engine asks of its control url
 // (the server's key, for one) is forwarded as the plain request it is.
-package main
+//
+// The app's engine runs one in-process; a box runs one as a service
+// (cmd/netbridge) in front of its stock tailscaled, which otherwise dials
+// the control server's address directly and, on a box already on another
+// tailnet, has no route to it.
+package bridge
 
 import (
 	"context"
@@ -27,23 +32,25 @@ const (
 	handshakeParam = "X-Tailscale-Handshake"
 )
 
-// bridge serves the engine's control traffic from a loopback address and
+// Bridge serves the engine's control traffic from a loopback address and
 // carries it to the real control server.
-type bridge struct {
+type Bridge struct {
 	control *url.URL
 	ln      net.Listener
 }
 
-func newBridge(control string) (*bridge, error) {
+// New listens on listen (a loopback address; port 0 for any) and carries
+// what arrives to the control server at control.
+func New(control, listen string) (*Bridge, error) {
 	u, err := url.Parse(control)
 	if err != nil {
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, err
 	}
-	b := &bridge{control: u, ln: ln}
+	b := &Bridge{control: u, ln: ln}
 	proxy := httputil.NewSingleHostReverseProxy(u)
 	director := proxy.Director
 	proxy.Director = func(r *http.Request) {
@@ -66,19 +73,19 @@ func newBridge(control string) (*bridge, error) {
 	return b, nil
 }
 
-// url is what the engine is told its control server is
-func (b *bridge) url() string {
+// URL is what the engine is told its control server is
+func (b *Bridge) URL() string {
 	return "http://" + b.ln.Addr().String()
 }
 
-func (b *bridge) close() {
+func (b *Bridge) Close() {
 	b.ln.Close()
 }
 
 // carry: one control connection, the engine's upgrade on one side and a
 // websocket to the server on the other, the handshake moved from the
 // header into the query as the websocket form has it
-func (b *bridge) carry(w http.ResponseWriter, r *http.Request) {
+func (b *Bridge) carry(w http.ResponseWriter, r *http.Request) {
 	init := r.Header.Get(handshakeParam)
 	if _, err := base64.StdEncoding.DecodeString(init); err != nil || init == "" {
 		http.Error(w, "missing handshake", http.StatusBadRequest)

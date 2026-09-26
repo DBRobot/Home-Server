@@ -20,7 +20,7 @@
     {% if !other_ports.is_empty() %}
     <p class="spec">Also open: {% for p in other_ports %}{{ p.port }} ({{ p.label }}){% if !loop.last %}, {% endif %}{% endfor %}</p>
     {% endif %}
-    {% if !settings.is_empty() %}<p class="spec">{{ settings }}</p>{% endif %}
+    {% if mine && !settings.is_empty() %}<p class="spec">{{ settings }}</p>{% endif %}
     {% if mine && !demo %}
     <div class="row">
       {% if idle %}

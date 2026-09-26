@@ -264,14 +264,31 @@ impl Remote {
             if !r.status().is_success() {
                 continue;
             }
-            if let Ok(e) = r.json::<identity::SignedEntry>()
-                && identity::verify(&e).is_ok()
-                && best
-                    .as_ref()
-                    .is_none_or(|b| e.entry.version > b.entry.version)
-            {
-                best = Some(e);
+            let Ok(e) = r.json::<identity::SignedEntry>() else {
+                continue;
+            };
+            // the entry has to verify, and to be the one asked for
+            if identity::verify(&e).is_err() || e.entry.name != self.owner {
+                continue;
             }
+            // and the directories have to agree whose root this name has.
+            // A stale one is fine - same root, lower version - but two
+            // different roots means one of them is making it up, and this
+            // is the moment a first sight of a remote is decided on.
+            if let Some(b) = &best {
+                if b.entry.root != e.entry.root {
+                    anyhow::bail!(
+                        "the directories disagree about {}: {} and {}",
+                        self.owner,
+                        b.entry.root,
+                        e.entry.root
+                    );
+                }
+                if e.entry.version <= b.entry.version {
+                    continue;
+                }
+            }
+            best = Some(e);
         }
         let e = best.with_context(|| format!("no directory has an entry for {}", self.owner))?;
         Ok(e.entry
@@ -568,6 +585,7 @@ fn run() -> Result<()> {
     // and `git-remote-dd readers <url>`. dd repo wraps these.
     match args.get(1).map(String::as_str) {
         Some("share") => return share(&args[2..]),
+        Some("unshare") => return unshare(&args[2..]),
         Some("readers") => return readers(&args[2..]),
         _ => {}
     }
@@ -647,7 +665,7 @@ fn do_push(
 ) -> Result<Vec<String>> {
     // first push to an empty remote: this device becomes the first reader
     // and signer, and the repository key is born here
-    let (mut keys, mut manifest, repo_key) = match state.take().or(remote.refresh()?) {
+    let (keys, mut manifest, repo_key) = match state.take().or(remote.refresh()?) {
         Some(s) => s,
         None => {
             let repo_key = crypto::new_repo_key();
@@ -718,9 +736,7 @@ fn do_push(
     }
     manifest.refs = new_refs;
     manifest.counter += 1;
-    keys.signers.retain(|_| true);
     remote.publish(&keys, &manifest, &repo_key, &new_packs)?;
-    let _ = &mut keys;
     Ok(results)
 }
 
@@ -768,6 +784,45 @@ fn share(args: &[String]) -> Result<()> {
     println!(
         "device {fp} can now read and push; state {}",
         manifest.counter
+    );
+    Ok(())
+}
+
+/// Take a device off the repository: it can no longer push, and no longer
+/// hand the key to anyone else.
+///
+/// What it does not do is take back what that device already has. The
+/// repository key is sealed to it in every state published so far, and
+/// those states are on a remote it can still fetch. Reading stops when the
+/// key changes, and the key changes by making the repository again. The
+/// command says so rather than letting the name imply otherwise.
+fn unshare(args: &[String]) -> Result<()> {
+    let (url, public_key) = match args {
+        [u, p] => (u, p),
+        _ => bail!("usage: git-remote-dd unshare <url> <device public key>"),
+    };
+    let remote = management_remote(url)?;
+    let (mut keys, mut manifest, repo_key) = remote
+        .load()?
+        .context("nothing has been pushed to that remote yet")?;
+    let fp = identity::fingerprint(public_key);
+    let before = keys.signers.len();
+    keys.signers.retain(|r| r.fingerprint != fp);
+    if keys.signers.len() == before {
+        bail!("device {fp} is not on this repository");
+    }
+    if keys.signers.is_empty() {
+        bail!("that is the last device; it would leave the repository unreadable");
+    }
+    manifest.counter += 1;
+    remote.publish(&keys, &manifest, &repo_key, &[])?;
+    println!(
+        "device {fp} can no longer push or share; state {}",
+        manifest.counter
+    );
+    println!(
+        "it can still read what is already published: the repository key is \n\
+         sealed to it in every earlier state. Make the repository again to change that."
     );
     Ok(())
 }

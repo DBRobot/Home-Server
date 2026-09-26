@@ -323,6 +323,19 @@ pub(crate) fn allowed(
             _ => refused(StatusCode::FORBIDDEN, "not your library"),
         };
     }
+    // the demo's library belongs to the box, not to a person: its id sits
+    // in this box's configuration where anyone can read it, and it is in
+    // nobody's entry, so no entry may claim it either
+    if app.demo_library.as_ref().is_some_and(|(id, _)| id == lib) {
+        return refused(StatusCode::FORBIDDEN, "not your library");
+    }
+    // a signed-up stranger is not a member. Everything below reads an
+    // entry, and an entry is a document you write about yourself, so an id
+    // in it proves nothing on its own; the release's member list is the
+    // only word on who belongs here.
+    if !app.member(&user) {
+        return refused(StatusCode::FORBIDDEN, "not your library");
+    }
     // the owner: the library is in their entry
     if let Ok(Some(e)) = app.directory.entry(&user)
         && e.entry.libraries.iter().any(|l| l.id == lib)

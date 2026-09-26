@@ -21,6 +21,9 @@ anyhow = "1"
 # pulling peers' directories
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 identity = { path = "../../client/identity" }
+# the release key's signed documents: the app manifest the download page
+# offers from
+release = { path = "../release" }
 base64 = "0.22"
 ed25519-dalek = "2"
 # the token format devices sign; the verifier only ever holds public keys

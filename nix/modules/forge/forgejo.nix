@@ -10,7 +10,12 @@
 let
   base = config.dd.domain;
   host = "git.${base}";
-  port = 3001; # 3000 is grafana
+  port = 3001; # 3000 is grafana; kept for the runner's own url only
+  # Forgejo believes X-WEBAUTH-USER from whoever reaches it, and this box
+  # runs CI jobs and game guests. A socket in a directory only forgejo's
+  # group may enter is how "from nginx, or from one of our own units" gets
+  # said in a way a job cannot say for itself.
+  sock = "/run/forgejo/forgejo.sock";
   cancelPort = 3003;
   cfg = config.dd.forgejo;
 in
@@ -46,8 +51,9 @@ in
         server = {
           DOMAIN = host;
           ROOT_URL = "https://${host}/";
-          HTTP_ADDR = "127.0.0.1";
-          HTTP_PORT = port;
+          PROTOCOL = "http+unix";
+          HTTP_ADDR = sock;
+          UNIX_SOCKET_PERMISSION = "660";
           # git over ssh goes through the box's own sshd on 22: forgejo keeps
           # the forgejo user's authorized_keys, sshd does the rest
           START_SSH_SERVER = false;
@@ -71,6 +77,7 @@ in
         };
         security = {
           REVERSE_PROXY_AUTHENTICATION_USER = "X-WEBAUTH-USER";
+          # the socket is the boundary; this stays for forgejo's own sake
           REVERSE_PROXY_TRUSTED_PROXIES = "127.0.0.0/8,::1";
           REVERSE_PROXY_LIMIT = 1;
         };
@@ -137,7 +144,7 @@ in
       };
       script = ''
         for i in $(seq 1 30); do
-          ${pkgs.curl}/bin/curl -fs http://127.0.0.1:${toString port}/api/healthz >/dev/null && break
+          ${pkgs.curl}/bin/curl -fs --unix-socket ${sock} http://forgejo/api/healthz >/dev/null && break
           sleep 2
         done
         if forgejo admin user list --admin | ${pkgs.gnugrep}/bin/grep -qw '${cfg.admin}'; then
@@ -171,7 +178,7 @@ in
       script = ddScript ./forgejo-setup.sh {
         ADMIN = cfg.admin;
         REPO = config.dd.repo;
-        PORT = toString port;
+        SOCK = sock;
         CI_SECRET_FILE = cfg.ciSecretFile;
         RULE = builtins.toJSON {
           rule_name = "main";
@@ -208,12 +215,13 @@ in
       serviceConfig = {
         Type = "simple";
         DynamicUser = true;
+        SupplementaryGroups = [ "forgejo" ]; # to open forgejo's socket
         LoadCredential = [ "secret:${cfg.ciSecretFile}" ];
         ExecStart = "${pkgs.python3}/bin/python3 ${./ci-cancel.py}";
         Restart = "on-failure";
       };
       environment = {
-        FORGE = "http://127.0.0.1:${toString port}";
+        FORGE = sock;
         ADMIN = cfg.admin;
         REPO = config.dd.repo;
         SECRET_FILE = "%d/secret";
@@ -227,11 +235,19 @@ in
         demo "";
       }
     '';
+    # the socket's directory: forgejo makes it, its group may enter it, and
+    # the runner's user - which is what a CI job runs as - is not in it
+    systemd.services.forgejo.serviceConfig.RuntimeDirectoryMode = lib.mkForce "0750";
+    # the whole attribute, not just its value: naming users.users.nginx
+    # where nginx does not run leaves a user with no group and no kind
+    users.users = lib.mkIf config.services.nginx.enable {
+      nginx.extraGroups = [ "forgejo" ];
+    };
     services.nginx.virtualHosts.${host} = {
       useACMEHost = base;
       forceSSL = true;
       locations."/" = {
-        proxyPass = "http://127.0.0.1:${toString port}";
+        proxyPass = "http://unix:${sock}:";
         extraConfig = ''
           client_max_body_size 0; # pushes over https, lfs
           # who is this? the verifier says. The header the client sent is
@@ -250,7 +266,7 @@ in
         proxyPass = "http://127.0.0.1:${toString cancelPort}";
       };
       locations."@anonymous" = {
-        proxyPass = "http://127.0.0.1:${toString port}";
+        proxyPass = "http://unix:${sock}:";
         extraConfig = ''
           client_max_body_size 0;
           proxy_set_header X-WEBAUTH-USER "";

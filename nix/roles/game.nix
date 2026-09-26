@@ -24,6 +24,11 @@
 
   # each server's directory (the game and its world, as the egg lays them
   # out) and its record; not the guest's own disk
-  dd.backup.paths = [ "/var/lib/dd-games/instances" ];
+  # ...and the worlds a member kept on purpose, which outlive the server
+  # they came from and were the one thing here nothing copied
+  dd.backup.paths = [
+    "/var/lib/dd-games/instances"
+    "/var/lib/dd-games/worlds"
+  ];
   dd.backup.exclude = [ "/var/lib/dd-games/instances/*/disk.qcow2" ];
 }

@@ -600,7 +600,8 @@ async fn main() -> Result<()> {
                     .context("no name here - `dd identity new` or `dd identity import`")?
                     .to_string();
                 let found = who::fetch(&directories, &name).await;
-                let e = who::newest(&found).context("no directory has an entry")?;
+                let e = directory::resolve(&found, directory::Anchor::FirstSight)
+                    .context("no directory has a usable entry")?;
                 if e.entry.passkeys.is_empty() {
                     println!("no passkeys - `dd enrol` adds one");
                 }
@@ -644,6 +645,13 @@ async fn main() -> Result<()> {
                         .get("library_key")
                         .and_then(|x| x.as_str())
                         .map(str::to_string);
+                    // the box that ran the ceremony says which domain it
+                    // was for; without one the assertion is checked as it
+                    // always was
+                    let rp_id = cred
+                        .get("rp_id")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string);
                     let signed = who::admit_passkey(
                         &directories,
                         &name,
@@ -653,6 +661,7 @@ async fn main() -> Result<()> {
                             cred,
                             added: identity::now(),
                             library_key,
+                            rp_id,
                         },
                     )
                     .await?;
@@ -731,7 +740,8 @@ async fn main() -> Result<()> {
                     .context("no name here - `dd identity new` or `dd identity import`")?
                     .to_string();
                 let found = who::fetch(&directories, &name).await;
-                let newest = who::newest(&found).context("no directory has an entry")?;
+                let newest = directory::resolve(&found, directory::Anchor::FirstSight)
+                    .context("no directory has a usable entry")?;
                 let behind: Vec<String> = found
                     .iter()
                     .filter(|(_, r)| !matches!(r, Ok(Some(e)) if e.entry.version >= newest.entry.version))
@@ -973,11 +983,16 @@ async fn main() -> Result<()> {
                 }
                 SecretCmd::Run { args } => {
                     let key = keys.get(AGE)?.context("no key here - `dd secret init`")?;
-                    // sops from PATH, else through nix, so a fresh machine works
+                    // sops from PATH, else through nix, so a fresh machine
+                    // works. Through nix it is this repo's own pinned sops,
+                    // not whatever nixpkgs-unstable is serving today: the
+                    // fleet's age key goes into that process's environment,
+                    // and an unpinned binary fetched at the moment of use is
+                    // a stranger to hand it to.
                     let (prog, pre): (&str, Vec<&str>) = if which("sops") {
                         ("sops", vec![])
                     } else {
-                        ("nix", vec!["run", "nixpkgs#sops", "--"])
+                        ("nix", vec!["run", ".#sops", "--"])
                     };
                     let status = std::process::Command::new(prog)
                         .args(pre)
@@ -1047,48 +1062,45 @@ async fn main() -> Result<()> {
                     }
                 }
                 GitCmd::Signers => {
-                    let http = reqwest::Client::new();
                     let mut lines = std::collections::BTreeSet::new();
                     let mut people = 0;
+                    // every name any directory lists, then each entry asked
+                    // of all of them: one directory's word is not enough to
+                    // put a key in the file git trusts signatures against
+                    let mut names = std::collections::BTreeSet::new();
                     for d in &directories {
-                        let Ok(r) = http.get(d.trim_end_matches('/')).send().await else {
+                        if let Ok(ns) = directory::names(d).await {
+                            names.extend(ns);
+                        }
+                    }
+                    for name in names {
+                        if !identity::valid_name(&name) {
+                            continue;
+                        }
+                        let found = who::fetch(&directories, &name).await;
+                        let Ok(e) = directory::resolve(&found, directory::Anchor::FirstSight)
+                        else {
                             continue;
                         };
-                        let Ok(list) = r.json::<Vec<serde_json::Value>>().await else {
+                        // the entry has to be the one asked for: a listing
+                        // is a directory's claim, the entry is the person's
+                        if e.entry.name != name {
                             continue;
-                        };
-                        for l in list {
-                            let Some(name) = l["name"].as_str() else {
+                        }
+                        people += 1;
+                        for dev in &e.entry.devices {
+                            let Ok(vk) = identity::decode_public(&dev.public_key) else {
                                 continue;
                             };
-                            let Ok(r) = http
-                                .get(format!("{}/{name}", d.trim_end_matches('/')))
-                                .send()
-                                .await
-                            else {
-                                continue;
-                            };
-                            let Ok(e) = r.json::<identity::SignedEntry>().await else {
-                                continue;
-                            };
-                            if identity::verify(&e).is_err() {
-                                continue;
-                            }
-                            people += 1;
-                            for dev in &e.entry.devices {
-                                let Ok(vk) = identity::decode_public(&dev.public_key) else {
-                                    continue;
-                                };
-                                let pk = ssh_key::PublicKey::from(
-                                    ssh_key::public::Ed25519PublicKey(vk.to_bytes()),
-                                );
-                                // git matches the principal against the signer's email;
-                                // name@domain is what `dd git setup` puts in user.email
-                                lines.insert(format!(
-                                    "{name}@dd {}",
-                                    pk.to_openssh().unwrap_or_default()
-                                ));
-                            }
+                            let pk = ssh_key::PublicKey::from(ssh_key::public::Ed25519PublicKey(
+                                vk.to_bytes(),
+                            ));
+                            // git matches the principal against the signer's email;
+                            // name@domain is what `dd git setup` puts in user.email
+                            lines.insert(format!(
+                                "{name}@dd {}",
+                                pk.to_openssh().unwrap_or_default()
+                            ));
                         }
                     }
                     let body: String = lines.iter().map(|l| format!("{l}\n")).collect();

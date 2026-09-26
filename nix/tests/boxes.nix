@@ -32,14 +32,27 @@ let
           (cfgs.${name}.config.users.users.admin.hashedPasswordFile != null)
           (cfgs.${name}.config.users.mutableUsers == false)
         ]
+        ++ [ (cfgs.${name}.config.services.prometheus.listenAddress == "127.0.0.1") ]
         ++ lib.optionals (builtins.elem "storage" box.roles) [
           # garage: this box's own address is public, its peers never include itself
           (cfgs.${name}.config.dd.garage.publicAddr == "${box.tailnet}:3901")
           (builtins.all (p: !lib.hasInfix box.tailnet p) cfgs.${name}.config.dd.garage.peers)
           (cfgs.${name}.config.dd.garage.zone == box.regionId)
         ]
-        ++ lib.optional (builtins.elem "observe" box.roles) (
-          builtins.attrNames cfgs.${name}.config.dd.grafana.boxes == builtins.attrNames boxes
+        ++ lib.optionals (builtins.elem "observe" box.roles) [
+          # the fleet view is thanos on this box; no box's prometheus is
+          # reachable from another
+          (builtins.length cfgs.${name}.config.dd.thanos.sidecars == builtins.length (builtins.attrNames boxes))
+          # "on loopback" is not an identity on a box that runs CI jobs and
+          # game guests. grafana believes X-WEBAUTH-USER, so it must not be
+          # reachable by anything but nginx: a socket, never a port.
+          (cfgs.${name}.config.services.grafana.settings.server.protocol == "socket")
+          (builtins.elem "grafana" cfgs.${name}.config.users.users.nginx.extraGroups)
+        ]
+        ++ lib.optional (builtins.elem "llm" box.roles) (
+          # llama-server answers whoever reaches it; the key nginx holds is
+          # what makes that nginx alone
+          cfgs.${name}.config.systemd.services.llama-cpp.serviceConfig ? EnvironmentFile
         )
       ) boxes
     )

@@ -61,8 +61,20 @@ struct App {
     library: Option<library::Gate>,
     network: Option<network::Door>,
     demo_library: Option<(String, String)>,
-    app_release: Option<(String, String)>,
+    app_manifest: Option<String>,
+    /// the app manifest as last read, and when: a good one for ten
+    /// minutes, the lack of one for one
+    app_seen: Mutex<Option<(Instant, Option<SignedApp>)>>,
     fleet: fleet::Fleet,
+}
+
+/// The app, as the release key vouched for it.
+#[derive(Clone)]
+struct SignedApp {
+    tag: String,
+    commit: String,
+    from: String,
+    files: std::collections::BTreeMap<String, pages::AppFile>,
 }
 
 enum Ceremony {
@@ -118,10 +130,10 @@ pub struct Config {
     /// The library the demo account reads: an id and its key, both in the
     /// open on purpose (see the option in modules/library/libraries.nix).
     pub demo_library: Option<(String, String)>,
-    /// Where the app is built and published, and the release to offer:
-    /// the downloads page links there rather than at a file this box
-    /// holds. None: no page, because there is nothing to send anyone to.
-    pub app_release: Option<(String, String)>,
+    /// Where the signed app manifest is published (the releases branch,
+    /// beside the box releases). The downloads page offers what it names,
+    /// and nothing else. None: no page.
+    pub app_manifest: Option<String>,
     /// Every box in the fleet and the address its prometheus answers on,
     /// for the Boxes and Backups pages. Empty on a box that is not told.
     pub fleet: fleet::Fleet,
@@ -152,6 +164,18 @@ fn demo_allowance(home: &[pages::Service], host: &str) -> Option<String> {
             .then(|| s.demo.clone())
             .flatten()
     })
+}
+
+/// Which name this request came in under: the vhost nginx was asked for,
+/// not the address the verifier happens to listen on. A token that names
+/// its audience names one of these.
+fn asked_host(headers: &HeaderMap) -> String {
+    headers
+        .get("x-original-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|v| v.to_str().ok())
+        .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
+        .unwrap_or_default()
 }
 
 /// fleet/members.json: ids let in, ids shut out. The file is either a bare
@@ -205,8 +229,85 @@ fn valid_user(s: &str) -> bool {
 }
 
 impl App {
+    /// The person's entry, or their held sign-up: this box took the hold,
+    /// so it answers for it - the name is taken here, they can sign in, and
+    /// they land on the waiting page, where a code finishes the job.
     fn entry(&self, user: &str) -> Result<Option<identity::SignedEntry>> {
-        self.directory.entry(user)
+        Ok(self
+            .directory
+            .entry(user)?
+            .or_else(|| self.directory.held(user)))
+    }
+
+    /// The signed app manifest. A page that offers downloads to strangers
+    /// offers exactly the files the release key vouched for, so anything
+    /// that does not verify against it is as good as absent - including a
+    /// manifest this box was handed by a forge, a mirror, or a proxy that
+    /// had been got at.
+    async fn signed_app(&self) -> Option<SignedApp> {
+        let url = self.app_manifest.as_ref()?;
+        if let Some((at, seen)) = &*self.app_seen.lock().unwrap() {
+            let fresh = if seen.is_some() { 600 } else { 60 };
+            if at.elapsed() < Duration::from_secs(fresh) {
+                return seen.clone();
+            }
+        }
+        let read = async {
+            let key = self.directory.release()?;
+            let raw = reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .ok()?
+                .get(url)
+                .send()
+                .await
+                .ok()?
+                .error_for_status()
+                .ok()?
+                .text()
+                .await
+                .ok()?;
+            let p = match release::verify_doc(&raw, "app", key) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("app manifest refused: {e}");
+                    return None;
+                }
+            };
+            let sha256 = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+            let files = p["files"]
+                .as_object()?
+                .iter()
+                .filter_map(|(name, f)| {
+                    let sha = f["sha256"].as_str().filter(|s| sha256(s))?;
+                    let url = f["url"].as_str().filter(|u| u.starts_with("https://"))?;
+                    Some((
+                        name.clone(),
+                        pages::AppFile {
+                            url: url.to_string(),
+                            sha256: sha.to_string(),
+                        },
+                    ))
+                })
+                .collect();
+            Some(SignedApp {
+                tag: p["tag"].as_str()?.to_string(),
+                commit: p["commit"].as_str()?.to_string(),
+                from: p["from"].as_str()?.to_string(),
+                files,
+            })
+        };
+        let seen = read.await;
+        *self.app_seen.lock().unwrap() = Some((Instant::now(), seen.clone()));
+        seen
+    }
+
+    /// on the member list by root, and not shut out
+    fn listed(&self, root: &str) -> bool {
+        let id = identity::member_id(root);
+        self.members
+            .as_ref()
+            .is_some_and(|m| m.members.contains(&id) && !m.revoked.contains(&id))
     }
 
     /// Signed in is not let in: the person's root has to be on the member
@@ -301,7 +402,19 @@ impl App {
     /// is what the request is for: a token minted for enrolment carries a
     /// check that only "enrol" satisfies, so a leaked enrol link cannot read
     /// a file, and an access token is not an enrol link.
+    /// A token, with no particular name asked for: anything it says about
+    /// its audience cannot match, so an audience-bearing token is refused.
+    /// Only the network door uses this, and it is this box's own door.
     pub(crate) fn verify_biscuit(&self, token: &str, operation: &str) -> Result<String> {
+        self.verify_biscuit_for(token, operation, &self.domain)
+    }
+
+    pub(crate) fn verify_biscuit_for(
+        &self,
+        token: &str,
+        operation: &str,
+        here: &str,
+    ) -> Result<String> {
         let unverified = UnverifiedBiscuit::from_base64(token).context("not a biscuit")?;
         // the user is named in the authority block; it has to be read before the
         // signature can be checked, because the key to check with depends on it
@@ -343,6 +456,16 @@ impl App {
             .map_err(|e| anyhow!("{e}"))?
             .fact(format!("operation({operation:?})").as_str())
             .map_err(|e| anyhow!("{e}"))?
+            .fact(format!("here({here:?})").as_str())
+            .map_err(|e| anyhow!("{e}"))?
+            // A token that says where it is for is only good there. Today
+            // none of them do, and one opens everything its holder owns on
+            // every box for as long as it lives; this is the half that has
+            // to be in place before minting can start saying so, and it
+            // costs nothing until then. Refusing comes first, so a token
+            // meant for another box cannot fall through to the allow below.
+            .policy("deny if audience($a), here($h), $a != $h")
+            .map_err(|e| anyhow!("{e}"))?
             // access takes any token of the user's; anything else demands a
             // token minted for exactly that, so an hour-long access token in
             // a script cannot enrol a passkey that outlives it
@@ -382,7 +505,7 @@ impl App {
         if let Some(tok) = bearer(headers)
             && UnverifiedBiscuit::from_base64(tok).is_ok()
         {
-            return match self.verify_biscuit(tok, operation) {
+            return match self.verify_biscuit_for(tok, operation, &asked_host(headers)) {
                 Ok(u) => Some(u),
                 Err(e) => {
                     eprintln!("biscuit refused: {e:#}");
@@ -528,6 +651,10 @@ async fn enrol_finish(
                 cred,
                 added: identity::now(),
                 library_key: library_key.clone(),
+                // which domain this passkey answers for; an assertion
+                // carries a hash of it, and every box can then tell one
+                // made here from one made somewhere else
+                rp_id: Some(app.domain.clone()),
             },
         ),
     );
@@ -651,7 +778,7 @@ async fn join_finish(
         }
     };
     let now = identity::now();
-    let root = format!("{}{id}", identity::WEBAUTHN_ROOT);
+    let root = identity::passkey_root(&id, &cred);
     // an invite code typed on the join page: the browser proved it for this
     // root; the invite itself is looked up here, and checked at admission
     let grant = match grant_claim(&app, &headers) {
@@ -668,6 +795,7 @@ async fn join_finish(
             cred,
             added: now,
             library_key: library_key.clone(),
+            rp_id: Some(app.domain.clone()),
         }],
         grant,
         libraries: vec![],
@@ -811,9 +939,18 @@ async fn join_sign(
         signature,
         recovery_signature: None,
     };
-    // the accept rule checks the assertion against the passkey the entry
-    // carries; a wrong or replayed signature is refused there
-    if let Err((status, why)) = app.directory.admit(signed).await {
+    // With a code, or already named by the member list, it is an entry and
+    // goes to the directory like any other. Without either it is held on
+    // this box until it follows through - the same page either way, the
+    // same sign-in, the same waiting screen for someone not yet in.
+    // The accept rule checks the assertion in both.
+    let earned = signed.entry.grant.is_some() || app.listed(&signed.entry.root);
+    if earned {
+        if let Err((status, why)) = app.directory.admit(signed).await {
+            return (status, why).into_response();
+        }
+        app.directory.unhold(&user);
+    } else if let Err((status, why)) = app.directory.hold(&signed) {
         return (status, why).into_response();
     }
     let mut r = Json(serde_json::json!({ "user": user })).into_response();
@@ -1029,9 +1166,20 @@ async fn fleet_json(State(app): State<Arc<App>>, headers: HeaderMap) -> Response
 /// Where a stranger gets the app. The only page here that asks for
 /// nothing: an invited person has no way in until they have it.
 async fn download_page(State(app): State<Arc<App>>) -> Response {
-    match &app.app_release {
-        Some((repo, version)) => Html(pages::download(&app.domain, repo, version)).into_response(),
-        None => (StatusCode::NOT_FOUND, "nothing to download yet").into_response(),
+    let Some(url) = app.app_manifest.clone() else {
+        return (StatusCode::NOT_FOUND, "nothing to download yet").into_response();
+    };
+    match app.signed_app().await {
+        Some(a) => Html(pages::download(
+            &app.domain,
+            &a.from,
+            &a.commit,
+            &a.tag,
+            &url,
+            &a.files,
+        ))
+        .into_response(),
+        None => (StatusCode::NOT_FOUND, "nothing signed to download yet").into_response(),
     }
 }
 
@@ -1095,13 +1243,18 @@ async fn photos_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Respo
         "api": p.api,
         "email": format!("{user}{}", p.email_suffix),
         "rpId": app.domain,
-        "code": p.code,
     });
     if user == pages::DEMO_USER {
+        // the demo has an account already and never makes one, so it has
+        // no use for the code. The code is one value for the whole fleet:
+        // whoever holds it can verify an address at users.<domain> that is
+        // not theirs, and the demo is the one session anybody may open.
         let Some(pw) = &p.demo_password else {
             return StatusCode::FORBIDDEN.into_response();
         };
         cfg["password"] = serde_json::Value::String(pw.clone());
+    } else {
+        cfg["code"] = serde_json::Value::String(p.code.clone());
     }
     Json(cfg).into_response()
 }
@@ -1313,9 +1466,51 @@ pub async fn start(
         library: cfg.library,
         network: cfg.network,
         demo_library: cfg.demo_library,
-        app_release: cfg.app_release,
+        app_manifest: cfg.app_manifest,
+        app_seen: Mutex::new(None),
         fleet: cfg.fleet,
     });
+    // A held sign-up follows through when the member list names it: then it
+    // is published like any entry, and the hold goes. (The other way, a code
+    // redeemed on the waiting page, publishes it there and then.) Reading
+    // each one also drops those past their time.
+    {
+        let a = app.clone();
+        tokio::spawn(async move {
+            loop {
+                for name in a.directory.held_names() {
+                    let Some(h) = a.directory.held(&name) else {
+                        continue;
+                    };
+                    if !a.listed(&h.entry.root) {
+                        continue;
+                    }
+                    match a.directory.admit(h).await {
+                        Ok(()) => a.directory.unhold(&name),
+                        Err((_, why)) => eprintln!("directory: publishing held {name}: {why}"),
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(300)).await;
+            }
+        });
+    }
+    // Devices of people who are no longer members come off the network. An
+    // empty member list is a broken release rather than everyone revoked,
+    // and it would take every device off at once, so that is left alone.
+    if app.network.is_some() {
+        let a = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Some(door) = &a.network
+                    && a.members.as_ref().is_some_and(|m| !m.members.is_empty())
+                    && let Err(e) = door.reap(|u| a.member(u) && u != pages::DEMO_USER).await
+                {
+                    eprintln!("network: reaping: {e:#}");
+                }
+                tokio::time::sleep(Duration::from_secs(300)).await;
+            }
+        });
+    }
     let router = Router::new()
         .route("/verify", get(verify))
         .route("/health", get(|| async { "ok" }))

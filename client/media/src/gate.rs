@@ -411,7 +411,11 @@ pub async fn openable(
 ) -> Result<Vec<(String, Library, library::Key)>> {
     let mut out = Vec::new();
     let found = directory::fetch(dirs, user).await;
-    let mine = directory::newest(&found).context("no directory has your entry")?;
+    // the library ids and sealed keys below go straight into rclone mounts
+    // and the app, so the entry they come out of has to verify and the
+    // directories have to agree about it
+    let mine = directory::resolve(&found, directory::Anchor::FirstSight)
+        .context("no directory has a usable entry for you")?;
     for lib in &mine.entry.libraries {
         if let Ok(k) = opener.open(lib) {
             out.push((user.to_string(), lib.clone(), k));
@@ -425,7 +429,9 @@ pub async fn openable(
     {
         for name in names.into_iter().filter(|n| n != user) {
             let f = directory::fetch(dirs, &name).await;
-            let Some(e) = directory::newest(&f) else {
+            // an owner who shared with us: the same rule. A forged entry
+            // here would name a library and a key of the liar's choosing
+            let Ok(e) = directory::resolve(&f, directory::Anchor::FirstSight) else {
                 continue;
             };
             for lib in &e.entry.libraries {
@@ -448,4 +454,34 @@ pub fn files_base(dirs: &[String]) -> Result<String> {
     // the gate is on the same host as the directory: https://files.<base>
     let d = dirs.first().context("no directory")?;
     Ok(d.trim_end_matches("/_dd/directory").to_string())
+}
+
+/// Just the host out of a base url: what a token names as its audience.
+pub fn host_of(base: &str) -> String {
+    base.rsplit("://")
+        .next()
+        .unwrap_or(base)
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+#[cfg(test)]
+mod audience_tests {
+    use super::*;
+
+    #[test]
+    fn a_base_url_names_one_host() {
+        assert_eq!(host_of("https://files.commonty.org"), "files.commonty.org");
+        assert_eq!(host_of("https://files.commonty.org/"), "files.commonty.org");
+        assert_eq!(host_of("http://100.95.10.10:4181"), "100.95.10.10");
+        assert_eq!(host_of("https://FILES.Commonty.ORG"), "files.commonty.org");
+        // the gate's own base, as files_base builds it
+        let dirs = ["https://files.commonty.org/_dd/directory".to_string()];
+        assert_eq!(host_of(&files_base(&dirs).unwrap()), "files.commonty.org");
+    }
 }

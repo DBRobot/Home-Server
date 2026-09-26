@@ -366,6 +366,15 @@
           });
           # the app's network engine (app/net): `nix build .#net` for the archive
           net = appNet;
+          # the engine's bridge on its own, for a box's stock tailscaled
+          netbridge = pkgs.buildGoModule {
+            pname = "commonty-net-bridge";
+            version = "0.1.0";
+            src = ./app/net;
+            inherit (appNet) vendorHash;
+            subPackages = [ "cmd/netbridge" ];
+            env.CGO_ENABLED = "0";
+          };
           # and for Android, one .so per abi
           net-android = appNetAndroid;
           # the Android toolchain, for the dev shell below
@@ -504,7 +513,17 @@
         "clippy"
         "tests"
         "android-sdk"
-      ];
+      ]
+      // {
+        # `dd secret run` falls back to this when sops is not on PATH. The
+        # fleet's age key goes into that process's environment, so it is
+        # this repo's pinned nixpkgs and not whatever unstable is serving
+        # at the moment of use.
+        inherit (pkgs) sops;
+        # `dd release app` checks a build's provenance with this; the
+        # distribution's gh is often too old to have `attestation`
+        inherit (pkgs) gh;
+      };
 
       # Boxes booted as vms and driven through the failure cases, so the
       # modules the real hosts import are proven before a host sees them.
@@ -626,9 +645,6 @@
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
               ++ lib.optional (builtins.pathExists ./nix/hosts/${name}/disko.nix) disko.nixosModules.disko
               ++ lib.optional (builtins.elem "observe" box.roles) {
-                dd.grafana.boxes = lib.mapAttrs (
-                  n: b: if n == name then "http://127.0.0.1:9090" else "http://${b.tailnet}:9090"
-                ) boxes;
                 # every box's sidecar, for the fleet-wide query
                 dd.thanos.sidecars = lib.mapAttrsToList (
                   n: b: if n == name then "127.0.0.1:10901" else "${b.tailnet}:10901"

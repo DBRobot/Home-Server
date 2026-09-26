@@ -123,6 +123,49 @@ impl Door {
             .collect())
     }
 
+    /// Take every device off the network whose owner is no longer a member.
+    ///
+    /// A node outlives everything that let it join: revoke the member, and
+    /// their laptop stays on the network with whatever the policy lets it
+    /// reach, for good. Boxes are left alone - they are tagged, and they
+    /// joined on the boxes' key, not a person's.
+    pub async fn reap(&self, member: impl Fn(&str) -> bool) -> Result<usize> {
+        let v = self
+            .call(reqwest::Method::GET, "/api/v1/node", None)
+            .await?;
+        let mut gone = 0;
+        for n in v["nodes"].as_array().into_iter().flatten() {
+            let tagged = ["tags", "forcedTags", "validTags"]
+                .iter()
+                .any(|k| n[*k].as_array().is_some_and(|a| !a.is_empty()));
+            if tagged {
+                continue;
+            }
+            let Some(user) = n["user"]["name"].as_str() else {
+                continue;
+            };
+            if member(user) {
+                continue;
+            }
+            let id = match &n["id"] {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(i) => i.to_string(),
+                _ => continue,
+            };
+            self.call(reqwest::Method::DELETE, &format!("/api/v1/node/{id}"), None)
+                .await?;
+            eprintln!(
+                "network: removed {} - {user} is not a member",
+                n["givenName"]
+                    .as_str()
+                    .or(n["name"].as_str())
+                    .unwrap_or(&id)
+            );
+            gone += 1;
+        }
+        Ok(gone)
+    }
+
     /// one key, one device, ten minutes
     pub async fn join_key(&self, name: &str) -> Result<(String, u64)> {
         let user = self.user_id(name).await?;
@@ -209,6 +252,13 @@ pub(crate) async fn join(State(app): State<Arc<App>>, headers: HeaderMap) -> Res
         Ok(u) => u,
         Err(e) => return (StatusCode::UNAUTHORIZED, e.to_string()).into_response(),
     };
+    // a key on the fleet's network is not something signing up earns: the
+    // network carries boxes, and every box trusts the interface it arrives
+    // on. Membership is the release's word, and the demo never leaves the
+    // browser it was made in.
+    if !app.member(&user) || user == crate::pages::DEMO_USER {
+        return (StatusCode::FORBIDDEN, "not a member of this fleet").into_response();
+    }
     match door.join_key(&user).await {
         Ok((key, expires)) => Json(serde_json::json!({
             "control_url": door.control_url,
@@ -224,6 +274,53 @@ pub(crate) async fn join(State(app): State<Arc<App>>, headers: HeaderMap) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fake headscale with three nodes: a box, a member's laptop and a
+    /// stranger's phone. Only the phone may go.
+    #[tokio::test]
+    async fn only_a_non_members_devices_come_off() {
+        use axum::{
+            Json, Router,
+            extract::{Path, State},
+            routing::{delete, get},
+        };
+        use std::sync::{Arc, Mutex};
+
+        let deleted: Arc<Mutex<Vec<String>>> = Arc::default();
+        let nodes = serde_json::json!({ "nodes": [
+            { "id": "1", "givenName": "node1", "user": { "name": "tagged-devices" }, "tags": ["tag:box"] },
+            { "id": "2", "givenName": "laptop", "user": { "name": "david" }, "tags": [] },
+            { "id": "3", "givenName": "phone", "user": { "name": "stranger" } },
+        ]});
+        let app = Router::new()
+            .route(
+                "/api/v1/node",
+                get(move || async move { Json(nodes.clone()) }),
+            )
+            .route(
+                "/api/v1/node/{id}",
+                delete(
+                    |State(d): State<Arc<Mutex<Vec<String>>>>, Path(id): Path<String>| async move {
+                        d.lock().unwrap().push(id);
+                        Json(serde_json::json!({}))
+                    },
+                ),
+            )
+            .with_state(deleted.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let door = Door {
+            api: format!("http://{addr}"),
+            control_url: String::new(),
+            key: "k".into(),
+            http: reqwest::Client::new(),
+        };
+        let gone = door.reap(|u| u == "david").await.unwrap();
+        assert_eq!(gone, 1);
+        assert_eq!(*deleted.lock().unwrap(), vec!["3".to_string()]);
+    }
 
     #[test]
     fn stamps() {

@@ -42,6 +42,29 @@ in
         ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.transcode}/bin/dd-transcode";
         Restart = "on-failure";
         NoNewPrivileges = true;
+        # ffmpeg here is a parser fed a member's own media, and a parser
+        # fed hostile bytes is where a crash becomes something else. A core
+        # dump of this process would be decoded frames on disk.
+        LimitCORE = 0;
+        SystemCallFilter = [
+          "@system-service"
+          "~@obsolete"
+          "~@privileged"
+          "~@resources"
+        ];
+        SystemCallArchitectures = "native";
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+          "AF_UNIX"
+        ];
+        RestrictNamespaces = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
@@ -56,6 +79,10 @@ in
         proxyPass = "http://127.0.0.1:${toString port}/";
         extraConfig = ''
           auth_request /_dd/verify;
+          # the session it makes is its own credential; it never replays
+          # the caller's
+          proxy_set_header Authorization "";
+          proxy_set_header Cookie $dd_cookie_stripped;
           client_max_body_size 8m;
           proxy_read_timeout 120s;
         '';

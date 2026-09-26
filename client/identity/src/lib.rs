@@ -20,7 +20,8 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+pub use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -76,6 +77,13 @@ pub struct Passkey {
     /// the whole credential as webauthn-rs serialises it; opaque here
     pub cred: serde_json::Value,
     pub added: u64,
+    /// The relying party this passkey was made for: the domain the box
+    /// serving the enrolment answers on. An assertion carries a hash of
+    /// it, so recording it here is what lets any box tell a signature made
+    /// for this fleet from one made somewhere else. Absent on passkeys
+    /// enrolled before this, which are checked as they always were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rp_id: Option<String>,
     /// The public half of a key only this passkey can make: the browser
     /// derives it from the passkey's own PRF secret, which never leaves
     /// the tab. Library keys are sealed to it, so any browser holding this
@@ -233,6 +241,34 @@ fn check(sig_b64: &str, entry: &Entry, key: &VerifyingKey) -> Result<()> {
 
 pub const WEBAUTHN_ROOT: &str = "webauthn:";
 
+/// A passkey root, naming the credential and committing to its key:
+/// `webauthn:<credential id>:<base64url sha256 of the COSE key>`.
+///
+/// The second half is the whole point. A credential id is a public label -
+/// it rides in every entry anyone may read - so on its own it is something
+/// to copy, not something to prove. And `member_id` hashes the root string,
+/// so a copied root is a copied membership: a brand new name, self-signed
+/// with the copier's own key, inheriting whatever the fleet grants the
+/// member whose id it borrowed.
+pub fn passkey_root(id: &str, cred: &serde_json::Value) -> String {
+    format!("{WEBAUTHN_ROOT}{id}:{}", cose_digest(cred))
+}
+
+/// the key inside a serialised webauthn-rs credential, hashed
+fn cose_digest(cred: &serde_json::Value) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
+    use sha2::Digest as _;
+    let cose = &cred["cred"]["cred"];
+    B64_URL.encode(sha2::Sha256::digest(
+        serde_json::to_vec(cose).unwrap_or_default(),
+    ))
+}
+
+/// the credential id and the key digest a passkey root carries
+fn root_parts(root: &str) -> Option<(&str, &str)> {
+    root.strip_prefix(WEBAUTHN_ROOT)?.split_once(':')
+}
+
 /// An invitation: a code the owner hands to a person, good for minutes.
 /// The code is a seed; only the public key it derives is written down,
 /// signed by the release key, so a box can check a redemption and the code
@@ -321,7 +357,29 @@ pub fn verify_invite(s: &SignedInvite, release: &VerifyingKey) -> Result<()> {
 
 /// The bytes the code's key signs. Compact json in this order; the browser
 /// builds the same string.
+/// What a grant's proof binds to.
+///
+/// For a passkey root, the credential id and not the key digest. The browser
+/// makes this claim with the credential it has just created, before the box
+/// has serialised it, so the digest does not exist yet on the side doing the
+/// proving. Binding to the id is what can honestly be proved at that moment.
+///
+/// It is narrower than binding the whole root, and the narrowness is bounded:
+/// membership comes from `member_id` over the *whole* root, digest included,
+/// so a grant lifted onto another key does not bring the original's
+/// membership with it - only the invite, which `grant_taken` already refuses
+/// to let two roots redeem. Binding the whole root wants the box to hand the
+/// browser its root before the entry is built, which is a round trip the
+/// join flow does not have yet.
+pub fn grant_subject(root: &str) -> &str {
+    match root_parts(root) {
+        Some((id, _)) => &root[..WEBAUTHN_ROOT.len() + id.len()],
+        None => root,
+    }
+}
+
 pub fn proof_bytes(invite_public_key: &str, root: &str, redeemed: u64) -> Vec<u8> {
+    let root = grant_subject(root);
     format!(
         "{{\"invite\":{},\"root\":{},\"redeemed\":{redeemed}}}",
         serde_json::to_string(invite_public_key).unwrap_or_default(),
@@ -377,13 +435,33 @@ pub fn challenge(entry: &Entry) -> Result<Vec<u8>> {
 }
 
 fn check_assertion(sig_b64: &str, entry: &Entry) -> Result<()> {
+    check_assertion_with(sig_b64, entry, &entry.passkeys)
+}
+
+/// The assertion over `entry`, checked with the key found in `trusted`.
+///
+/// Which list that is decides everything. A `webauthn:` root is a credential
+/// id, and a credential id is public - it travels in the entry anyone may
+/// read. So the key it names has to come from what is already on file; taken
+/// from the entry under check it would only say that whoever wrote the entry
+/// also chose the key, which is no statement at all.
+fn check_assertion_with(sig_b64: &str, entry: &Entry, trusted: &[Passkey]) -> Result<()> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
     use sha2::Digest as _;
-    let id = &entry.root[WEBAUTHN_ROOT.len()..];
-    let passkey =
-        entry.passkeys.iter().find(|p| p.id == id).ok_or_else(|| {
-            Error::Key("the root names a passkey the entry does not carry".into())
-        })?;
+    let (id, digest) = root_parts(&entry.root)
+        .ok_or_else(|| Error::Key("a passkey root must commit to its key".into()))?;
+    let passkey = trusted
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| Error::Key("the root names a passkey the entry does not carry".into()))?;
+    // the root says which key, not just which credential: a credential id
+    // is public and copying one would otherwise copy the membership that
+    // member_id derives from the root string
+    if cose_digest(&passkey.cred) != digest {
+        return Err(Error::Key(
+            "the root does not name this passkey's key".into(),
+        ));
+    }
     // the credential as webauthn-rs serialises it: Passkey { cred: Credential { cred: COSEKey } }
     let key: webauthn_rs_core::proto::COSEKey =
         serde_json::from_value(passkey.cred["cred"]["cred"].clone())
@@ -448,10 +526,34 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
     for d in &new.entry.devices {
         decode_public(&d.public_key)?;
     }
-    verify(new)?;
     let Some(old) = existing else {
+        // a first sight: there is nothing on file to check against, which
+        // is why a box takes one only under the agreement rule
+        verify(new)?;
         return Ok(());
     };
+    // An update to a passkey root proves itself with the key on file, and
+    // must keep carrying that very credential. Without both halves the root
+    // - a public credential id - is a name anyone can sign under, and the
+    // owner has no recovery key to take it back with.
+    if old.entry.root.starts_with(WEBAUTHN_ROOT) && new.entry.root == old.entry.root {
+        let (id, _) = root_parts(&old.entry.root)
+            .ok_or_else(|| Error::Key("a passkey root must commit to its key".into()))?;
+        let was = old.entry.passkeys.iter().find(|p| p.id == id);
+        let now = new.entry.passkeys.iter().find(|p| p.id == id);
+        match (was, now) {
+            (Some(w), Some(n)) if w.cred == n.cred => {}
+            (Some(_), _) => {
+                return Err(Error::Rejected(
+                    "the root's passkey may not be changed or dropped".into(),
+                ));
+            }
+            (None, _) => return Err(Error::Key("the entry on file has no root passkey".into())),
+        }
+        check_assertion_with(&new.signature, &new.entry, &old.entry.passkeys)?;
+    } else {
+        verify(new)?;
+    }
     if new.entry.name != old.entry.name {
         return Err(Error::Rejected("name mismatch".into()));
     }
@@ -542,6 +644,119 @@ mod tests {
         e.grant.as_mut().unwrap().proof = prove(&ck, &inv.invite.public_key, root, 500);
         e.grant.as_mut().unwrap().redeemed = 500;
         assert!(verify_grant(&e, &release.verifying_key()).is_err());
+    }
+
+    /// A passkey root is a credential id, and a credential id is public.
+    /// The whole of it: if the key that checks an update can come from the
+    /// update, anyone who can read an entry can publish the next one.
+    #[test]
+    fn a_passkey_root_cannot_have_its_key_swapped_under_it() {
+        let passkey = |cred: serde_json::Value| Passkey {
+            id: "AbC".into(),
+            cred,
+            added: 1,
+            library_key: None,
+            rp_id: None,
+        };
+        let hers_cred = serde_json::json!({ "cred": { "cred": "hers" } });
+        let root = passkey_root("AbC", &hers_cred);
+        let entry = |pk: Passkey, version: u64| SignedEntry {
+            entry: Entry {
+                name: "alice".into(),
+                root: root.clone(),
+                recovery: String::new(),
+                devices: vec![],
+                passkeys: vec![pk],
+                grant: None,
+                libraries: vec![],
+                version,
+                updated: version,
+            },
+            signature: "not reached".into(),
+            recovery_signature: None,
+        };
+        let hers = entry(passkey(hers_cred.clone()), 7);
+
+        // the attack: alice's root, alice's name, a newer version, and the
+        // attacker's own key under the same credential id
+        let theirs = entry(
+            passkey(serde_json::json!({ "cred": { "cred": "theirs" } })),
+            8,
+        );
+        let e = accept(Some(&hers), &theirs).unwrap_err();
+        assert!(format!("{e}").contains("may not be changed"), "{e}");
+
+        // and dropping it is the same move by another name
+        let mut gone = theirs.clone();
+        gone.entry.passkeys.clear();
+        let e = accept(Some(&hers), &gone).unwrap_err();
+        assert!(format!("{e}").contains("may not be changed"), "{e}");
+
+        // a root that is simply replaced has no way back either: a passkey
+        // root has no recovery key, so this is refused as it always was
+        let mut other = theirs.clone();
+        other.entry.root = passkey_root("XyZ", &hers_cred);
+        assert!(accept(Some(&hers), &other).is_err());
+
+        // F6: a NEW name copying her root. First sight has nothing on file
+        // to check against, so this is the copier's own key self-verifying -
+        // and member_id hashes the root string, so it would be her
+        // membership under their name. The key digest in the root is what
+        // refuses it.
+        let mut mallory = entry(
+            passkey(serde_json::json!({ "cred": { "cred": "theirs" } })),
+            1,
+        );
+        mallory.entry.name = "mallory".into();
+        let e = accept(None, &mallory).unwrap_err();
+        assert!(
+            format!("{e}").contains("does not name this passkey's key"),
+            "{e}"
+        );
+    }
+
+    /// What an assertion has to say beyond "this key signed something":
+    /// somebody was there, and it was here.
+    #[test]
+    fn an_assertion_must_show_presence_and_the_right_relying_party() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
+        use sha2::Digest as _;
+
+        // authData is rpIdHash(32) || flags(1) || counter(4)
+        let auth = |rp: &str, flags: u8| {
+            let mut v = sha2::Sha256::digest(rp.as_bytes()).to_vec();
+            v.push(flags);
+            v.extend_from_slice(&[0, 0, 0, 1]);
+            v
+        };
+        let with_presence = auth("commonty.org", 0b0000_0001);
+        let without = auth("commonty.org", 0b0000_0000);
+        let elsewhere = auth("evil.example", 0b0000_0001);
+
+        assert_eq!(with_presence.len(), 37);
+        assert_eq!(with_presence[32] & 1, 1, "user present");
+        assert_eq!(without[32] & 1, 0, "nobody was there");
+        assert_ne!(
+            with_presence[..32],
+            elsewhere[..32],
+            "a different relying party hashes differently"
+        );
+
+        // and the origin has to be that domain or below it
+        let below = |origin: &str, rp: &str| {
+            let host = origin
+                .strip_prefix("https://")
+                .unwrap_or(origin)
+                .split('/')
+                .next()
+                .unwrap_or_default();
+            host == rp || host.ends_with(&format!(".{rp}"))
+        };
+        assert!(below("https://commonty.org", "commonty.org"));
+        assert!(below("https://home.commonty.org/x", "commonty.org"));
+        assert!(!below("https://commonty.org.evil.example", "commonty.org"));
+        assert!(!below("https://evil.example", "commonty.org"));
+        let _ = B64_URL;
     }
 
     fn dev(k: &SigningKey) -> Device {

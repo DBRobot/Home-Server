@@ -7,10 +7,12 @@
 let
   cfg = config.dd.forgejo;
   port = 3001;
-  # From this box, forgejo takes the reverse-proxy header at face value
-  # (127.0.0.0/8 is its trusted proxy), so the admin's name is the whole
-  # credential here. No forgejo token to mint or keep.
-  api = "http://127.0.0.1:${toString port}/api/v1";
+  # Over forgejo's socket the reverse-proxy header is taken at face value,
+  # so the admin's name is the whole credential here. What makes that safe
+  # is who can open the socket: this unit runs as root, a CI job does not.
+  # No forgejo token to mint or keep.
+  api = "http://forgejo/api/v1";
+  sock = "/run/forgejo/forgejo.sock";
 in
 {
   # Repositories mirrored out to GitHub after every push, so the public
@@ -58,7 +60,7 @@ in
       script = ''
         set -euo pipefail
         token=$(cat "$CREDENTIALS_DIRECTORY/token")
-        as_admin() { curl -fsS -H 'X-WEBAUTH-USER: ${cfg.admin}' "$@"; }
+        as_admin() { curl -fsS --unix-socket ${sock} -H 'X-WEBAUTH-USER: ${cfg.admin}' "$@"; }
         ${lib.concatMapStringsSep "\n" (m: ''
           if as_admin ${api}/repos/${m.repo}/push_mirrors | jq -e '.[] | select(.remote_address == "${m.to}")' >/dev/null; then
             echo "${m.repo} -> ${m.to}: present"

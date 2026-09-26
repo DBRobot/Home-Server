@@ -111,7 +111,7 @@ async fn encrypted_remote_end_to_end() {
         home: vec![],
         fleet: Default::default(),
         demo_library: None,
-        app_release: None,
+        app_manifest: None,
         bind: "127.0.0.1:0".parse().unwrap(),
         dir,
         peers: vec![],

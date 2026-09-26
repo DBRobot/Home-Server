@@ -12,6 +12,21 @@ box.wait_for_open_port(4181)
 env = "DD_KEYRING_FILE=/root/keys.json"
 dirs = "--directory http://127.0.0.1:4181/_dd/directory"
 box.succeed(f"{env} {nix['dd']} identity new --name sarah {dirs}")
+
+# The gate asks the release's member list who belongs here, not the person's
+# own entry: an entry is a document you write about yourself. The list starts
+# empty, so sarah opens nothing until she is in it.
+box.succeed("mkdir -p /root/fleet/fleet")
+box.succeed(f"{env} {nix['dd']} member add sarah --repo /root/fleet {dirs}")
+box.succeed("mkdir -p /run/systemd/system/dd-verify.service.d")
+box.succeed(
+    "printf \"[Service]\\nEnvironment='VERIFY_MEMBERS=%s'\\n\" "
+    "\"$(jq -c . /root/fleet/fleet/members.json)\" "
+    "> /run/systemd/system/dd-verify.service.d/members.conf"
+)
+box.succeed("systemctl daemon-reload && systemctl restart dd-verify.service")
+box.wait_for_open_port(4181)
+
 out = box.succeed(f"{env} {nix['dd']} library new {dirs}")
 lib = out.split("library ")[1].split(":")[0].strip()
 assert len(lib) == 32, out
@@ -103,3 +118,34 @@ box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} identity new --name tom
 tom = box.succeed(f"DD_KEYRING_FILE=/root/tom.json {nix['dd']} token").strip()
 box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -X PROPFIND -H 'Authorization: Bearer {tom}' http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 403")
 box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -X PROPFIND http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 401")
+
+# ...and a stranger who claims her library id in his own entry opens nothing
+# either. Library ids are public - they ride in entries anyone may read - so
+# the claim itself has to fail, and the gate has to refuse even if one got in.
+as_tom = f"-H 'Authorization: Bearer {tom}'"
+keys = "/var/lib/dd-verify/keys"
+claim = f'.entry.libraries = [{{"id": "{lib}", "keys": [], "readers": [], "created": 1}}]'
+# through the front door it never even reaches the claim rule: the entry is
+# not his to edit, so the signature settles it. The claim rule itself - one
+# entry may not name a library another already claims - is covered by the
+# unit test in box/verify/src/directory.rs, which can sign for real.
+box.succeed(f"jq '{claim} | .entry.version = 9' {keys}/tom.json > /root/claim.json")
+code = box.succeed(
+    "curl -s -o /root/claim.out -w '%{http_code}' -X PUT -H 'Content-Type: application/json' "
+    "--data @/root/claim.json http://127.0.0.1:4181/_dd/directory/tom"
+).strip()
+assert code == "403", (code, box.succeed("cat /root/claim.out"))
+assert "signature" in box.succeed("cat /root/claim.out")
+# and with the claim planted behind the directory's back, where no signature
+# is checked because the store is only ever written through that rule, the
+# gate still says no
+box.succeed(f"cp /root/claim.json {keys}/tom.json")
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_tom} -X PROPFIND http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 403")
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_tom} -X PUT --data x http://127.0.0.1:4181/_dd/dav/{lib}/wreck | grep -q 403")
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_tom} -X DELETE http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 403")
+# nor may a member claim the demo's library, whose id and key are both in
+# this box's configuration in the open
+greedy = f'.entry.libraries += [{{"id": "{demo_lib}", "keys": [], "readers": [], "created": 1}}]'
+box.succeed(f"jq '{greedy}' {keys}/sarah.json > /root/greedy.json")
+box.succeed(f"cp /root/greedy.json {keys}/sarah.json")
+box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Authorization: Bearer {token}' -X PUT --data x http://127.0.0.1:4181/_dd/dav/{demo_lib}/wreck | grep -q 403")

@@ -26,6 +26,29 @@ committed encrypted rather than kept out of tree.
 `--refresh` matters: nix caches flake tarballs for an hour and will otherwise
 silently redeploy the previous revision.
 
+## TODO
+
+- **No box talks to another box.** A box is reached by people and by
+  services through its front door, the way any client reaches it, and never
+  through a channel that exists because the other end is also a box. Today
+  three such channels remain, all over the owner's tailnet and fenced to the
+  peer's address: garage RPC (3901), the directory pull (4181), and the
+  thanos sidecar (10901). Each goes when the change it waits on lands.
+- **One Garage per box, or per trust domain, not one cluster.** A Garage
+  cluster shares one RPC secret and every member of it is an admin, so a box
+  in someone else's house cannot be a peer. What replaces the cluster has to
+  let contributed boxes *grow* the usable pool, not only hold copies:
+  placement and replication across independent stores, each with its own
+  credentials. Erasure coding is the eventual shape and nothing off the shelf
+  fits (Garage has none by design, MinIO is archived, SeaweedFS shares a
+  signing key across volume servers, Tahoe-LAFS fits the trust model but not
+  S3). It stops mattering until there are five or six houses; below that,
+  replication is optimal anyway.
+- **Metrics without pulling.** Once each box's store is its own, the thanos
+  sidecar channel goes too and a box's history reaches the fleet view only
+  through the bucket.
+- **An off-site copy.** Every copy of every member's data is in one building.
+
 ## License
 
 Copyright (C) 2026 David Bascom

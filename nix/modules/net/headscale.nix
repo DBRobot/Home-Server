@@ -18,6 +18,18 @@
 let
   cfg = config.dd.headscale;
   base = config.dd.domain;
+  # the range the games manager hands out, where this box runs one
+  gamePorts =
+    if config.dd ? games then
+      {
+        from = config.dd.games.portBase;
+        to = config.dd.games.portBase + config.dd.games.portCount - 1;
+      }
+    else
+      {
+        from = 27000;
+        to = 27199;
+      };
   host = "headscale.${base}";
   port = 8085;
   state = "/var/lib/headscale";
@@ -26,11 +38,19 @@ let
   policy = pkgs.writeText "headscale-policy.json" (
     builtins.toJSON {
       tagOwners."tag:box" = [ "boxes@" ];
+      # A person's devices reach a box's front door and its game servers,
+      # and that is the whole policy. No rule has a box as its source, so a
+      # box reaches nothing here; no rule has a person's device as its
+      # destination, so devices do not see one another. Everything else a
+      # box runs is reached through the gate on 443 or not at all.
       acls = [
         {
           action = "accept";
-          src = [ "*" ];
-          dst = [ "tag:box:*" ];
+          src = [ "autogroup:member" ];
+          dst = [
+            "tag:box:443"
+            "tag:box:${toString gamePorts.from}-${toString gamePorts.to}"
+          ];
         }
       ];
     }

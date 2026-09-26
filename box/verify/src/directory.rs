@@ -30,6 +30,8 @@ pub struct Directory {
     dir: PathBuf,
     /// signed invites, by the code's public key; next to the entries
     invites: PathBuf,
+    /// sign-ups that have not followed through yet: this box's alone
+    held: PathBuf,
     /// the release key: what signs an invite. None: grants cannot be
     /// checked here and are refused
     release: Option<ed25519_dalek::VerifyingKey>,
@@ -59,10 +61,16 @@ impl Directory {
             .map(|p| p.join("invites"))
             .unwrap_or_else(|| dir.join("invites"));
         std::fs::create_dir_all(&invites)?;
+        let held = dir
+            .parent()
+            .map(|p| p.join("held"))
+            .unwrap_or_else(|| dir.join("held"));
+        std::fs::create_dir_all(&held)?;
         let synced = AtomicBool::new(peers.is_empty());
         Ok(Self {
             dir,
             invites,
+            held,
             release,
             peers,
             http: reqwest::Client::builder()
@@ -75,6 +83,11 @@ impl Directory {
 
     /// The person's own signed entry, as last accepted by this box.
     pub fn entry(&self, name: &str) -> Result<Option<identity::SignedEntry>> {
+        // the name is a path component here, and this is reached from a PUT
+        // before the accept rule has had a look at it
+        if !identity::valid_name(name) {
+            return Ok(None);
+        }
         let p = self.dir.join(format!("{name}.json"));
         match std::fs::read(&p) {
             Ok(b) => {
@@ -118,11 +131,119 @@ impl Directory {
 
     fn store(&self, signed: &identity::SignedEntry) -> Result<()> {
         let name = &signed.entry.name;
+        anyhow::ensure!(identity::valid_name(name), "bad name");
         let p = self.dir.join(format!("{name}.json"));
         let tmp = self.dir.join(format!(".{name}.tmp"));
         std::fs::write(&tmp, serde_json::to_vec_pretty(signed)?)?;
         std::fs::rename(&tmp, &p)?;
         Ok(())
+    }
+
+    /// A library id belongs to the entry that claimed it first. Ids are
+    /// public - they ride in entries anyone may read - and the gate asks
+    /// the entry whether it owns one, so without this rule naming someone
+    /// else's id in your own entry makes you its owner.
+    fn claims_free(&self, new: &identity::SignedEntry) -> std::result::Result<(), String> {
+        if new.entry.libraries.is_empty() {
+            return Ok(());
+        }
+        let listed = self.list().map_err(|e| {
+            eprintln!("directory: {e:#}");
+            "cannot read the directory".to_string()
+        })?;
+        for l in listed {
+            if l.name == new.entry.name {
+                continue;
+            }
+            let Ok(Some(e)) = self.entry(&l.name) else {
+                continue;
+            };
+            for theirs in &e.entry.libraries {
+                if new.entry.libraries.iter().any(|ours| ours.id == theirs.id) {
+                    return Err(format!("library {} is already {}'s", theirs.id, l.name));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A sign-up that has not followed through: no code, and not on the
+    /// member list. It is kept on the box that took it and nowhere else -
+    /// never served from the directory, never pulled by a peer - so a name
+    /// is not claimed across the fleet by someone who may never come back.
+    /// It becomes an entry when it earns one: a code redeemed, or the member
+    /// list naming it. Unfollowed, it is gone after a week and the name is
+    /// free again.
+    pub fn hold(
+        &self,
+        signed: &identity::SignedEntry,
+    ) -> std::result::Result<(), (StatusCode, String)> {
+        let name = &signed.entry.name;
+        if !identity::valid_name(name) {
+            return Err((StatusCode::BAD_REQUEST, "bad name".into()));
+        }
+        if let Err(e) = identity::accept(None, signed) {
+            return Err((StatusCode::FORBIDDEN, format!("refused: {e}")));
+        }
+        let taken = || (StatusCode::CONFLICT, "that name is taken".to_string());
+        if self.entry(name).ok().flatten().is_some() {
+            return Err(taken());
+        }
+        if self
+            .held(name)
+            .is_some_and(|h| h.entry.root != signed.entry.root)
+        {
+            return Err(taken());
+        }
+        let write = || -> Result<()> {
+            let tmp = self.held.join(format!(".{name}.tmp"));
+            std::fs::write(&tmp, serde_json::to_vec_pretty(signed)?)?;
+            std::fs::rename(&tmp, self.held.join(format!("{name}.json")))?;
+            Ok(())
+        };
+        write().map_err(|e| {
+            eprintln!("directory: holding {name}: {e:#}");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })?;
+        eprintln!("directory: holding {name} until it follows through");
+        Ok(())
+    }
+
+    /// a held sign-up, if it is still within its time
+    pub fn held(&self, name: &str) -> Option<identity::SignedEntry> {
+        if !identity::valid_name(name) {
+            return None;
+        }
+        let p = self.held.join(format!("{name}.json"));
+        let e: identity::SignedEntry = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
+        let ttl = if is_guest(name) { GUEST_TTL } else { HELD_TTL };
+        if e.entry.updated + ttl < identity::now() {
+            let _ = std::fs::remove_file(&p);
+            return None;
+        }
+        Some(e)
+    }
+
+    pub fn unhold(&self, name: &str) {
+        if identity::valid_name(name) {
+            let _ = std::fs::remove_file(self.held.join(format!("{name}.json")));
+        }
+    }
+
+    /// every held name still within its time
+    pub fn held_names(&self) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(&self.held) else {
+            return vec![];
+        };
+        rd.flatten()
+            .filter_map(|f| {
+                f.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_suffix(".json"))
+                    .map(str::to_string)
+            })
+            .filter(|n| self.held(n).is_some())
+            .collect()
     }
 
     /// A first sight from the network: may this box take it? Every peer has
@@ -216,6 +337,10 @@ impl Directory {
                     eprintln!("directory: refused {} from {peer}: grant", l.name);
                     continue;
                 }
+            }
+            if let Err(e) = self.claims_free(&theirs) {
+                eprintln!("directory: refused {} from {peer}: {e}", l.name);
+                continue;
             }
             match identity::accept(ours.as_ref(), &theirs) {
                 Ok(()) => {
@@ -346,6 +471,9 @@ async fn put_entry(
 pub const GUEST_PREFIX: &str = "guest";
 pub const GUEST_TTL: u64 = 15 * 60;
 
+/// how long a sign-up that has not followed through is kept
+pub const HELD_TTL: u64 = 7 * 24 * 3600;
+
 pub fn is_guest(name: &str) -> bool {
     name.starts_with(GUEST_PREFIX)
 }
@@ -471,6 +599,10 @@ impl Directory {
             eprintln!("directory: refused update for {name}: {e}");
             return Err((StatusCode::CONFLICT, e));
         }
+        if let Err(e) = self.claims_free(&signed) {
+            eprintln!("directory: refused update for {name}: {e}");
+            return Err((StatusCode::CONFLICT, e));
+        }
         if existing.is_none()
             && let Err((status, why)) = self.first_sight_allowed(&signed).await
         {
@@ -493,5 +625,133 @@ impl Directory {
             }
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use identity::{Device, Entry, Library, encode_public, fingerprint, generate, sign};
+
+    fn scratch(what: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("dd-dir-{what}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn entry(name: &str, key: &ed25519_dalek::SigningKey, libs: &[&str], version: u64) -> Entry {
+        Entry {
+            name: name.into(),
+            root: encode_public(&key.verifying_key()),
+            recovery: encode_public(&generate().verifying_key()),
+            devices: vec![{
+                let p = encode_public(&generate().verifying_key());
+                Device {
+                    fingerprint: fingerprint(&p),
+                    public_key: p,
+                    added: 1,
+                }
+            }],
+            passkeys: vec![],
+            grant: None,
+            libraries: libs
+                .iter()
+                .map(|id| Library {
+                    id: (*id).into(),
+                    keys: vec![],
+                    readers: vec![],
+                    created: 1,
+                })
+                .collect(),
+            version,
+            updated: identity::now(),
+        }
+    }
+
+    /// A sign-up without a code stays here: not served, not listed, not a
+    /// claim on the name anywhere else - until it follows through.
+    #[tokio::test]
+    async fn a_sign_up_without_a_code_is_held_and_not_published() {
+        let dir = scratch("held");
+        let d = Directory::open(dir.clone(), vec![], None).unwrap();
+        let eve = generate();
+        let held = sign(entry("eve", &eve, &[], 1), &eve).unwrap();
+
+        d.hold(&held).unwrap();
+        assert!(d.entry("eve").unwrap().is_none(), "not in the directory");
+        assert!(d.held("eve").is_some(), "but held here");
+        assert!(
+            d.list().unwrap().iter().all(|l| l.name != "eve"),
+            "and not listed"
+        );
+        assert_eq!(d.held_names(), vec!["eve".to_string()]);
+
+        // someone else cannot take the name out from under the hold here
+        let mallory = generate();
+        let (status, _) = d
+            .hold(&sign(entry("eve", &mallory, &[], 1), &mallory).unwrap())
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // following through: published, and the hold goes
+        d.admit(held).await.unwrap();
+        d.unhold("eve");
+        assert!(d.entry("eve").unwrap().is_some());
+        assert!(d.held("eve").is_none());
+
+        // and a name already in the directory cannot be held at all
+        let (status, _) = d
+            .hold(&sign(entry("eve", &mallory, &[], 1), &mallory).unwrap())
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // one that never follows through is gone after its time
+        let late = generate();
+        let mut old = entry("zed", &late, &[], 1);
+        old.updated = identity::now() - HELD_TTL - 1;
+        d.hold(&sign(old, &late).unwrap()).unwrap();
+        assert!(d.held("zed").is_none(), "past its time");
+        assert!(
+            d.held_names().is_empty(),
+            "eve followed through and zed expired"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_library_belongs_to_whoever_claimed_it_first() {
+        let dir = scratch("claims");
+        let d = Directory::open(dir.clone(), vec![], None).unwrap();
+        let hers = "a996a28ca51c9cf1d3f8e2038c8339c8";
+        let his = "b0071e4bd2c34aa19d5e6f7081c2d3e4";
+
+        let sarah = generate();
+        d.admit(sign(entry("sarah", &sarah, &[hers], 1), &sarah).unwrap())
+            .await
+            .unwrap();
+
+        // the whole of C1: tom's entry is validly signed, by tom, about tom,
+        // and it names sarah's library. The gate would read it and agree.
+        let tom = generate();
+        let (status, why) = d
+            .admit(sign(entry("tom", &tom, &[hers], 1), &tom).unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT, "{why}");
+        assert!(why.contains("already sarah's"), "{why}");
+        assert!(d.entry("tom").unwrap().is_none(), "nothing of tom's stored");
+
+        // his own id is his, and claiming it does not disturb hers
+        d.admit(sign(entry("tom", &tom, &[his], 1), &tom).unwrap())
+            .await
+            .unwrap();
+        // and sarah keeps publishing her own without tripping over herself
+        d.admit(sign(entry("sarah", &sarah, &[hers], 2), &sarah).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(d.entry("sarah").unwrap().unwrap().entry.version, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

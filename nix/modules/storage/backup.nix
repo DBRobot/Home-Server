@@ -105,6 +105,14 @@ in
         ];
         serviceConfig = {
           Type = "oneshot";
+          # As garage, not as root. The directory being pruned belongs to
+          # garage, so the names `find` collects are names garage chooses,
+          # and `rm -rf` looks each one up again a moment later - long
+          # enough for its owner to have pointed it somewhere else. Root
+          # doing that is how a compromised garage deletes /etc; garage
+          # doing it can reach nothing it could not already reach.
+          User = "garage";
+          Group = "garage";
           EnvironmentFile = config.dd.garage.envFile;
         };
         script = ''
@@ -174,7 +182,12 @@ in
         serviceConfig.Type = "oneshot";
         script = ''
           last=$(${pkgs.gawk}/bin/awk '/^dd_backup_last_success_seconds/ {print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
-          age=$(( $(date +%s) - ''${last:-0} ))
+          # that file is written by node-exporter, which is not root, and
+          # this unit is. Bash expands command substitutions inside an
+          # arithmetic context, so a value that is not a number is a way to
+          # run one.
+          case "$last" in "" | *[!0-9]*) last=0 ;; esac
+          age=$(( $(date +%s) - last ))
           if [ "$age" -gt $((26 * 3600)) ]; then
             echo "last good backup was $((age / 3600)) hours ago"; exit 1
           fi

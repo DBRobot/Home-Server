@@ -27,12 +27,21 @@ env.setdefault("SERVER_PORT", str(next(p["port"] for p in rec["ports"] if p["var
 env["SERVER_MEMORY"] = str(rec["memory"])
 env["STARTUP"] = recipe["startup"]
 
-def fill(template, extra=None):
-    """{{VAR}} and {{server.build.env.VAR}} the way the eggs write them"""
+def fill(template, extra=None, shell=False):
+    """{{VAR}} and {{server.build.env.VAR}} the way the eggs write them
+
+    With shell=True the value is not written in at all: the placeholder
+    becomes a reference to the variable, which is already in the process
+    environment. bash does not re-read what an expansion produced, so a
+    member's server name cannot be a command however it is punctuated -
+    and an egg that wrote "{{SERVER_NAME}}" still gets it quoted.
+    """
     def one(m):
         k = m.group(1).split(".")[-1]
         if extra and k in extra: return extra[k]
-        return env.get(k, m.group(0) if k not in env else "")
+        if k not in env: return m.group(0)
+        if shell and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k): return "$" + k
+        return env[k]
     return re.sub(r"{{\s*([A-Za-z0-9_.]+)\s*}}", one, template)
 
 def install():
@@ -166,7 +175,7 @@ def rewrite_file(path, find):
     open(path, "w").write("\n".join(lines))
 
 def run():
-    cmd = fill(recipe["startup"]).replace("\r", "")
+    cmd = fill(recipe["startup"], shell=True).replace("\r", "")
     say("starting")
     ready = recipe.get("ready")
     print("== %s" % cmd, flush=True)
