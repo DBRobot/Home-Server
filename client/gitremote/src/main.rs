@@ -234,18 +234,29 @@ impl Remote {
                     self.store.to_str().unwrap(),
                 ],
             )?;
-        } else {
-            git(
+        } else if let Err(e) = git(
+            &self.store,
+            &[
+                "fetch",
+                "-q",
+                "--force",
+                "origin",
+                "+refs/heads/dd:refs/heads/dd",
+            ],
+        ) {
+            // the one fetch that may fail: nothing pushed yet, ever. A
+            // forge that cannot be reached, or that stops showing a
+            // branch we have already seen, is not "up to date".
+            let seen = git(
                 &self.store,
-                &[
-                    "fetch",
-                    "-q",
-                    "--force",
-                    "origin",
-                    "+refs/heads/dd:refs/heads/dd",
-                ],
+                &["rev-parse", "-q", "--verify", "refs/heads/dd"],
             )
-            .ok();
+            .is_ok();
+            let there = git(&self.store, &["ls-remote", "--heads", "origin", "dd"])
+                .with_context(|| format!("fetching {}", self.url))?;
+            if seen || !there.is_empty() {
+                return Err(e.context(format!("fetching {}", self.url)));
+            }
         }
         Ok(git(
             &self.store,
@@ -420,10 +431,16 @@ impl Remote {
             let (keys, sig) = self.verify_state(c, prev_keys.as_ref())?;
             match (&keys.repo, prev_keys.as_ref().and_then(|p| p.repo.as_ref())) {
                 (Some(r), _) if *r != self.repo => {
-                    bail!("the remote serves a state of {r} as {}: refusing", self.repo)
+                    bail!(
+                        "the remote serves a state of {r} as {}: refusing",
+                        self.repo
+                    )
                 }
                 (None, Some(was)) => {
-                    bail!("a state of {} stopped saying which repository it is (was {was}): refusing", self.repo)
+                    bail!(
+                        "a state of {} stopped saying which repository it is (was {was}): refusing",
+                        self.repo
+                    )
                 }
                 _ => {}
             }
