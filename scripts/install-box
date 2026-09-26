@@ -22,12 +22,13 @@ set -euo pipefail
 
 box=${1:?box}
 ref=${2:-main}
-case "$box" in
-  node1) lan=10.10.10.2 ;;
-  node2) lan=10.10.10.135 ;;
-  *) echo "unknown box $box" >&2; exit 1 ;;
-esac
-link=enp5s0 # the Legion's side of the direct link
+# The box's address on a network this machine shares, and the interface
+# here that reaches it: the installer comes up on another address and is
+# found by the box's MAC, which only a shared network shows. This named a
+# direct cable once; any shared network does (DD_LAN=192.168.1.20).
+lan=${DD_LAN:?set DD_LAN to the address of the box on a network this machine shares, e.g. 192.168.1.20}
+link=$(ip -o route get "$lan" | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+[ -n "$link" ] || { echo "no route to $lan from here" >&2; exit 1; }
 repo=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 work=$(mktemp -d)

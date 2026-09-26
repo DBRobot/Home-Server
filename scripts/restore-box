@@ -13,11 +13,18 @@
 set -euo pipefail
 
 box=${1:?box}
-case "$box" in
-  node1) addr=admin@10.10.10.2 ;;
-  node2) addr=admin@10.10.10.135 ;;
-  *) echo "unknown box $box" >&2; exit 1 ;;
-esac
+# Where the box is: its tailnet address from the fleet's own list, or
+# DD_ADDR when the tailnet is the thing that is broken (the house LAN, say:
+# DD_ADDR=admin@192.168.1.20). This used to name a direct cable that no
+# longer exists, which left the one way in for when releases fail pointing
+# at nothing.
+repo=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
+addr=${DD_ADDR:-}
+if [ -z "$addr" ]; then
+  tailnet=$(jq -er --arg b "$box" '.[$b].tailnet' "$repo/fleet/boxes.json") \
+    || { echo "no box $box in fleet/boxes.json" >&2; exit 1; }
+  addr=admin@$tailnet
+fi
 ssh "$addr" 'sudo bash -s' <<'EOF'
 set -euo pipefail
 echo "== garage back in the cluster"
