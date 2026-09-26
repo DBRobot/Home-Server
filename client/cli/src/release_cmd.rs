@@ -495,14 +495,21 @@ fn recorded_builds(
         if git(root, &["rev-parse", &format!("{sha}^{{tree}}")])? != tree {
             continue;
         }
-        let out = Command::new("curl")
-            .args([
-                "-sf",
-                "-H",
-                &format!("Authorization: Bearer {token}"),
-                &format!("{api}/commits/{sha}/statuses?limit=50"),
-            ])
-            .output()?;
+        // the header on stdin, not the command line: an argument is readable
+        // by every process on this machine while curl runs
+        let out = {
+            use std::io::Write as _;
+            let mut c = Command::new("curl")
+                .args(["-sf", "-H", "@-", &format!("{api}/commits/{sha}/statuses?limit=50")])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()?;
+            c.stdin
+                .take()
+                .context("curl's stdin")?
+                .write_all(format!("Authorization: Bearer {token}\n").as_bytes())?;
+            c.wait_with_output()?
+        };
         if !out.status.success() {
             continue;
         }
