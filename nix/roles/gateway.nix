@@ -39,9 +39,10 @@
     CF_DNS_API_TOKEN=${config.sops.placeholder.cloudflare-token}
   '';
 
-  # the bare domain: where the front door is
-  # the app the invited person needs before they can sign in to anything,
-  # so it answers on the bare name and asks for nothing
+  # the bare domain: where the front door is, on the tailnet. The app the
+  # invited person needs before they can sign in to anything answers here
+  # and asks for nothing; the pages a stranger sees link to home.<domain>'s
+  # copy, since the bare name is not behind the tunnel.
   dd.verify.appManifest = "https://git.${config.dd.domain}/${config.dd.repo}/raw/branch/releases/app.json";
 
   services.nginx.virtualHosts.${config.dd.domain} = {
