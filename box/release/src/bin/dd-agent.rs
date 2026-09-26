@@ -129,12 +129,16 @@ fn run(args: &Args) -> Result<String> {
         Err(e) => return Err(e).with_context(|| format!("fetching {}", args.url)),
     };
     let body = response.body_mut().read_to_string()?;
-    let signed: release::Signed =
-        serde_json::from_str(&body).context("release file is not json")?;
-    if let Err(e) = release::verify(&signed, &trusted) {
-        record(args, &name, 0, "refused");
-        bail!("release refused: {e}");
-    }
+    // checked against the bytes as published, unknown fields and all: a
+    // newer publisher may add one, and this agent must still be able to
+    // take the release that brings its own replacement
+    let signed = match release::verify_json(&body, &trusted) {
+        Ok(s) => s,
+        Err(e) => {
+            record(args, &name, 0, "refused");
+            bail!("release refused: {e}");
+        }
+    };
     let counter = signed.payload.counter;
 
     let last = read_counter(&args.state);

@@ -261,8 +261,8 @@ fn publish(
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    let counter = match fetch(url)? {
-        Some(current) => {
+    let counter = match ureq_get(url).ok() {
+        Some(raw) => {
             // The forge serves this file and does not sign it. Taking the
             // counter from it unverified means whoever serves it chooses
             // the next one, and a u64::MAX would leave every box refusing
@@ -273,7 +273,7 @@ fn publish(
                 std::fs::read_to_string(root.join("fleet/release.pub"))?.trim(),
             )
             .map_err(|e| anyhow::anyhow!("fleet/release.pub: {e}"))?;
-            release::verify(&current, &trusted)
+            let current = release::verify_json(&raw, &trusted)
                 .map_err(|e| anyhow::anyhow!("the published release does not verify: {e}"))?;
             current
                 .payload
@@ -288,7 +288,22 @@ fn publish(
         }
         None => 1,
     };
-    let signed = release::sign(
+    // DD_RELEASE_FORM=legacy for exactly one release: the one that carries
+    // an agent able to read the newer form to boxes whose agent cannot. It
+    // signs the old way and leaves out every field the old agent has never
+    // heard of - which today is the closure digest.
+    let form = match std::env::var("DD_RELEASE_FORM").as_deref() {
+        Ok("legacy") => release::Form::Legacy,
+        Ok("v2") | Err(_) => release::Form::V2,
+        Ok(other) => bail!("DD_RELEASE_FORM={other}: legacy or v2"),
+    };
+    if form == release::Form::Legacy {
+        eprintln!("== the old form: no closure digest, so the agents running now accept it");
+        for b in built.values_mut() {
+            b.closure = None;
+        }
+    }
+    let signed = release::sign_as(
         release::Payload {
             counter,
             rev: rev.clone(),
@@ -296,6 +311,7 @@ fn publish(
             boxes: built,
         },
         &key,
+        form,
     )?;
     let body = serde_json::to_string_pretty(&signed)?;
     if dry_run {

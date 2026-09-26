@@ -120,13 +120,105 @@ pub fn canonical(p: &Payload) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(p)?)
 }
 
+/// What a release is signed over, from the payload as it arrived rather
+/// than as this build's struct would write it back out: every field, known
+/// or not, keys in sorted order, no whitespace.
+///
+/// The first form signed the struct. An agent reading it drops any field
+/// it has never heard of, writes the rest back out, and checks the
+/// signature over that - so the first release to add a field is refused by
+/// every box running the agent before it, and the release that would have
+/// fixed the agent is the one it refuses. Signed this way, a field an
+/// older agent does not know is still in the bytes it checks.
+pub fn canonical_v2(payload: &serde_json::Value) -> Result<Vec<u8>> {
+    // sorted here rather than trusted to serde_json's map, whose order is a
+    // feature flag any crate in the build can turn on
+    let mut out = Vec::new();
+    write_sorted(payload, &mut out)?;
+    Ok(out)
+}
+
+// keys sorted at every level, so the output does not depend on how the
+// map it came from happens to iterate
+fn write_sorted(v: &serde_json::Value, out: &mut Vec<u8>) -> Result<()> {
+    match v {
+        serde_json::Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            out.push(b'{');
+            for (i, k) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                out.extend(serde_json::to_vec(k)?);
+                out.push(b':');
+                write_sorted(&m[*k], out)?;
+            }
+            out.push(b'}');
+        }
+        serde_json::Value::Array(a) => {
+            out.push(b'[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                write_sorted(x, out)?;
+            }
+            out.push(b']');
+        }
+        other => out.extend(serde_json::to_vec(other)?),
+    }
+    Ok(())
+}
+
+/// Which bytes a new release is signed over. `Legacy` exists for one
+/// release: the one that carries an agent able to read `V2` to a fleet
+/// whose agents cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Form {
+    Legacy,
+    V2,
+}
+
 pub fn sign(payload: Payload, key: &SigningKey) -> Result<Signed> {
-    let sig: Signature = key.sign(&canonical(&payload)?);
+    sign_as(payload, key, Form::V2)
+}
+
+pub fn sign_as(payload: Payload, key: &SigningKey, form: Form) -> Result<Signed> {
+    let bytes = match form {
+        Form::Legacy => canonical(&payload)?,
+        Form::V2 => canonical_v2(&serde_json::to_value(&payload)?)?,
+    };
+    let sig: Signature = key.sign(&bytes);
     Ok(Signed {
         payload,
         signer: encode_public(&key.verifying_key()),
         signature: B64.encode(sig.to_bytes()),
     })
+}
+
+/// A release file, checked against the bytes it was published as. Either
+/// form verifies; the payload comes back as this build understands it,
+/// which is only after the whole of it - unknown fields included - was
+/// found to be signed.
+pub fn verify_json(raw: &str, trusted: &VerifyingKey) -> Result<Signed> {
+    let v: serde_json::Value = serde_json::from_str(raw)?;
+    let signed: Signed = serde_json::from_value(v.clone())?;
+    if signed.signer != encode_public(trusted) {
+        return Err(Error::Signer(signed.signer.clone()));
+    }
+    let sig = B64
+        .decode(&signed.signature)
+        .map_err(|_| Error::Signature)?;
+    let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
+    let v2 = canonical_v2(&v["payload"])?;
+    if trusted.verify(&v2, &sig).is_ok() {
+        return Ok(signed);
+    }
+    trusted
+        .verify(&canonical(&signed.payload)?, &sig)
+        .map_err(|_| Error::Signature)?;
+    Ok(signed)
 }
 
 /// Signed by exactly `trusted`? Any other signer, however valid, is refused.
@@ -138,6 +230,13 @@ pub fn verify(signed: &Signed, trusted: &VerifyingKey) -> Result<()> {
         .decode(&signed.signature)
         .map_err(|_| Error::Signature)?;
     let sig = Signature::from_slice(&sig).map_err(|_| Error::Signature)?;
+    // a struct in hand has only the fields this build knows, so this is
+    // for releases this build made; one read off the wire goes through
+    // verify_json, which keeps the rest
+    let v2 = canonical_v2(&serde_json::to_value(&signed.payload)?)?;
+    if trusted.verify(&v2, &sig).is_ok() {
+        return Ok(());
+    }
     trusted
         .verify(&canonical(&signed.payload)?, &sig)
         .map_err(|_| Error::Signature)
@@ -274,5 +373,94 @@ mod closure_tests {
             closure_digest("{}").is_err(),
             "nothing listed is not a closure"
         );
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+
+    fn payload(closure: Option<&str>) -> Payload {
+        let mut boxes = BTreeMap::new();
+        boxes.insert(
+            "node2".into(),
+            BoxRelease {
+                path: "/nix/store/aaaa-nixos-system-node2".into(),
+                nar_hash: "sha256-AAAA".into(),
+                closure: closure.map(str::to_string),
+            },
+        );
+        Payload {
+            counter: 7,
+            rev: "deadbeef".into(),
+            issued: 1,
+            boxes,
+        }
+    }
+
+    /// What the agent deployed today does with a release: reads it into a
+    /// struct that has never heard of `closure`, and checks the signature
+    /// over that struct written back out.
+    fn old_agent_accepts(published: &str, key: &VerifyingKey) -> bool {
+        let mut v: serde_json::Value = serde_json::from_str(published).unwrap();
+        for b in v["payload"]["boxes"].as_object_mut().unwrap().values_mut() {
+            b.as_object_mut().unwrap().remove("closure");
+        }
+        let s: Signed = serde_json::from_value(v).unwrap();
+        verify(&s, key).is_ok()
+    }
+
+    #[test]
+    fn the_release_that_ships_the_new_agent_is_one_the_old_agent_takes() {
+        let k = generate();
+        let vk = k.verifying_key();
+
+        // the trap: a closure digest in a release the old agent must read
+        let trap = serde_json::to_string(&sign_as(payload(Some("abc")), &k, Form::Legacy).unwrap())
+            .unwrap();
+        assert!(
+            !old_agent_accepts(&trap, &vk),
+            "this is what would strand the fleet"
+        );
+
+        // the bridge: the old form, no closure - taken by the old agent...
+        let bridge =
+            serde_json::to_string(&sign_as(payload(None), &k, Form::Legacy).unwrap()).unwrap();
+        assert!(old_agent_accepts(&bridge, &vk));
+        // ...and by the new one
+        assert!(verify_json(&bridge, &vk).is_ok());
+
+        // after it: the new form, closure and all, read by the new agent
+        let next = serde_json::to_string_pretty(&sign(payload(Some("abc")), &k).unwrap()).unwrap();
+        assert_eq!(
+            verify_json(&next, &vk).unwrap().payload.boxes["node2"]
+                .closure
+                .as_deref(),
+            Some("abc")
+        );
+    }
+
+    /// And never again: a publisher newer than this agent adds a field
+    /// this agent has not heard of, and the release is still taken.
+    #[test]
+    fn a_field_this_agent_has_never_heard_of_does_not_break_it() {
+        let k = generate();
+        let mut v = serde_json::to_value(payload(Some("abc"))).unwrap();
+        v["waves"] = serde_json::json!({ "node2": 2 });
+        v["boxes"]["node2"]["something_new"] = serde_json::json!(true);
+        let sig: Signature = k.sign(&canonical_v2(&v).unwrap());
+        let published = serde_json::to_string_pretty(&serde_json::json!({
+            "payload": v,
+            "signer": encode_public(&k.verifying_key()),
+            "signature": B64.encode(sig.to_bytes()),
+        }))
+        .unwrap();
+        assert!(verify_json(&published, &k.verifying_key()).is_ok());
+
+        // but a change to any of it, known or not, is caught
+        let tampered = published.replace("\"something_new\": true", "\"something_new\": false");
+        assert!(verify_json(&tampered, &k.verifying_key()).is_err());
+        let moved = published.replace("sha256-AAAA", "sha256-BBBB");
+        assert!(verify_json(&moved, &k.verifying_key()).is_err());
     }
 }
