@@ -342,6 +342,18 @@ impl Directory {
                 eprintln!("directory: refused {} from {peer}: {e}", l.name);
                 continue;
             }
+            // A name this box has never seen, on one peer's word: the same
+            // agreement a sign-up gets - every peer answers, and none holds
+            // the name under another root. Without it a peer that lies can
+            // seed a new box with `david` under its own root before an
+            // honest peer is asked, and the accept rule then refuses the
+            // real one for good, because by then it is a different root.
+            if ours.is_none()
+                && let Err((_, why)) = self.first_sight_allowed(&theirs).await
+            {
+                eprintln!("directory: not yet taking {} from {peer}: {why}", l.name);
+                continue;
+            }
             match identity::accept(ours.as_ref(), &theirs) {
                 Ok(()) => {
                     self.store(&theirs)?;
@@ -373,6 +385,9 @@ impl Directory {
             }
             if ok.iter().all(|b| *b) && !self.synced.swap(true, Ordering::Relaxed) {
                 eprintln!("directory: every peer pulled once; new names accepted from now");
+                // the names this round had to leave, now that they can be
+                // checked: at once, not a whole interval later
+                continue;
             }
             tokio::time::sleep(Duration::from_secs(every)).await;
         }
