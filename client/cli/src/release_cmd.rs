@@ -178,12 +178,26 @@ fn publish(
             }
             let nar_hash =
                 release::nar_hash_from_path_info(&String::from_utf8_lossy(&info.stdout), path)?;
+            // every path underneath, too: the toplevel's own hash pins the
+            // names of its dependencies and nothing about their contents
+            let rec = Command::new("nix")
+                .args(["path-info", "--json", "--recursive", "--store", cache, path])
+                .env("AWS_ACCESS_KEY_ID", &key_id)
+                .env("AWS_SECRET_ACCESS_KEY", &key_secret)
+                .output()?;
+            if !rec.status.success() {
+                eprintln!("   {name}: cannot read the closure from the cache; building instead");
+                ok = false;
+                break;
+            }
+            let closure = release::closure_digest(&String::from_utf8_lossy(&rec.stdout))?;
             eprintln!("== {name} as CI built it\n   {path}");
             built.insert(
                 name.clone(),
                 release::BoxRelease {
                     path: path.clone(),
                     nar_hash,
+                    closure: Some(closure),
                 },
             );
         }
@@ -220,8 +234,21 @@ fn publish(
         info_args.push(&path);
         let info = sh("nix", &info_args)?;
         let nar_hash = release::nar_hash_from_path_info(&info, &path)?;
+        let mut rec_args = vec!["path-info", "--json", "--recursive"];
+        if let Some(st) = &store {
+            rec_args.extend(["--store", st]);
+        }
+        rec_args.push(&path);
+        let closure = release::closure_digest(&sh("nix", &rec_args)?)?;
         eprintln!("   {path}");
-        built.insert(name.clone(), release::BoxRelease { path, nar_hash });
+        built.insert(
+            name.clone(),
+            release::BoxRelease {
+                path,
+                nar_hash,
+                closure: Some(closure),
+            },
+        );
     }
 
     // The counter only ever goes up. A current release that cannot be

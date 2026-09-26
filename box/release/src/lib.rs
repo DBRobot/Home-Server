@@ -39,6 +39,60 @@ pub struct BoxRelease {
     /// its nar hash as `nix path-info` prints it; what the box checks after
     /// fetching, since the store path alone does not pin the contents
     pub nar_hash: String,
+    /// One hash over the whole closure: every path it depends on, with its
+    /// own nar hash, sorted and digested.
+    ///
+    /// The top path's hash is not enough on its own. A nixos toplevel is a
+    /// tree of symlinks, so its nar pins the *names* of what it points at
+    /// and nothing about the contents. Everything underneath arrives from
+    /// the cache bucket, which more than one machine can write, and a
+    /// poisoned dependency would install unremarked. Absent on releases
+    /// made before this existed; a box checks it when it is there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<String>,
+}
+
+/// The digest a `closure` carries: every path in `nix path-info -r --json`,
+/// as "<path> <narHash>" lines, sorted, sha256, hex.
+pub fn closure_digest(path_info_json: &str) -> Result<String> {
+    use sha2::Digest as _;
+    let v: serde_json::Value = serde_json::from_str(path_info_json)?;
+    let mut lines: Vec<String> = Vec::new();
+    match &v {
+        serde_json::Value::Object(m) => {
+            for (path, e) in m {
+                let h = e
+                    .get("narHash")
+                    .and_then(|h| h.as_str())
+                    .ok_or_else(|| Error::Key(format!("no narHash for {path}")))?;
+                lines.push(format!("{path} {h}"));
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for e in a {
+                let path = e
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .ok_or_else(|| Error::Key("path-info entry has no path".into()))?;
+                let h = e
+                    .get("narHash")
+                    .and_then(|h| h.as_str())
+                    .ok_or_else(|| Error::Key(format!("no narHash for {path}")))?;
+                lines.push(format!("{path} {h}"));
+            }
+        }
+        _ => return Err(Error::Key("path-info is neither object nor array".into())),
+    }
+    if lines.is_empty() {
+        return Err(Error::Key("path-info listed nothing".into()));
+    }
+    lines.sort();
+    let mut h = sha2::Sha256::new();
+    for l in &lines {
+        h.update(l.as_bytes());
+        h.update(b"\n");
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,6 +179,7 @@ mod tests {
             BoxRelease {
                 path: "/nix/store/aaaa-nixos-system-node2".into(),
                 nar_hash: "sha256-AAAA".into(),
+                closure: None,
             },
         );
         Payload {
@@ -172,5 +227,52 @@ mod tests {
             serde_json::from_str(&serde_json::to_string_pretty(&s).unwrap()).unwrap();
         verify(&back, &k.verifying_key()).unwrap();
         assert_eq!(back.payload, payload(7));
+    }
+}
+
+#[cfg(test)]
+mod closure_tests {
+    use super::*;
+
+    /// The point of the digest: change anything anywhere under the top
+    /// path and it stops matching. The top path's own hash would not.
+    #[test]
+    fn every_path_under_the_top_one_is_pinned() {
+        let honest = r#"{
+          "/nix/store/aaa-system": {"narHash": "sha256-top"},
+          "/nix/store/bbb-openssl": {"narHash": "sha256-ssl"},
+          "/nix/store/ccc-glibc": {"narHash": "sha256-libc"}
+        }"#;
+        let a = closure_digest(honest).unwrap();
+
+        // the same closure, listed in another order and in the array shape
+        let reordered = r#"[
+          {"path": "/nix/store/ccc-glibc", "narHash": "sha256-libc"},
+          {"path": "/nix/store/aaa-system", "narHash": "sha256-top"},
+          {"path": "/nix/store/bbb-openssl", "narHash": "sha256-ssl"}
+        ]"#;
+        assert_eq!(
+            a,
+            closure_digest(reordered).unwrap(),
+            "order must not matter"
+        );
+
+        // one dependency swapped for different contents at the same path
+        let poisoned = honest.replace("sha256-ssl", "sha256-someone-elses");
+        assert_ne!(a, closure_digest(&poisoned).unwrap());
+
+        // a dependency added, the top path untouched
+        let extra = r#"{
+          "/nix/store/aaa-system": {"narHash": "sha256-top"},
+          "/nix/store/bbb-openssl": {"narHash": "sha256-ssl"},
+          "/nix/store/ccc-glibc": {"narHash": "sha256-libc"},
+          "/nix/store/ddd-extra": {"narHash": "sha256-extra"}
+        }"#;
+        assert_ne!(a, closure_digest(extra).unwrap());
+
+        assert!(
+            closure_digest("{}").is_err(),
+            "nothing listed is not a closure"
+        );
     }
 }

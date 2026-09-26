@@ -147,11 +147,62 @@ fn run(args: &Args) -> Result<String> {
         record(args, &name, last, "absent");
         return Ok(format!("release {counter} has nothing for {name}"));
     };
+    // A release this box has already tried and rolled back from is not
+    // worth trying every five minutes for the rest of its life: each go
+    // costs the probe window twice over in a system that does not work.
+    // It is remembered by counter AND path, so a republished fix comes in.
+    let tried = args.state.join("refused");
+    let stamp = format!("{counter} {}", mine.path);
+    if fs::read_to_string(&tried)
+        .map(|t| t.lines().any(|l| l.trim() == stamp))
+        .unwrap_or(false)
+    {
+        record(args, &name, last, "refused");
+        return Ok(format!(
+            "release {counter} was tried here and rolled back; not trying it again"
+        ));
+    }
     let current = fs::read_link("/run/current-system")
         .context("/run/current-system")?
         .to_string_lossy()
         .into_owned();
+    // Running it is not the same as having proved it. The profile is set
+    // before the switch and the guard is a transient unit, so a box that
+    // power-cycles inside the probe window comes back running the new
+    // system with nothing having ever checked it - and this shortcut would
+    // then write it down as good. A marker put down before switching says
+    // "not proved yet", and it is this path, after a reboot, that owes the
+    // probe.
+    let pending = args.state.join("pending");
     if current == mine.path {
+        let owed = fs::read_to_string(&pending)
+            .map(|t| t.trim() == stamp)
+            .unwrap_or(false);
+        if owed {
+            let ok = probe_until(args, Duration::from_secs(args.probe_secs), &failed_units());
+            if !ok {
+                let mut seen = fs::read_to_string(&tried).unwrap_or_default();
+                seen.push_str(&stamp);
+                seen.push('\n');
+                let _ = fs::write(&tried, seen);
+                let previous = fs::read_to_string(args.state.join("previous")).unwrap_or_default();
+                let previous = previous.trim();
+                if !previous.is_empty() {
+                    let _ = sh(
+                        "nix-env",
+                        &["-p", "/nix/var/nix/profiles/system", "--set", previous],
+                    );
+                    let _ = sh(
+                        &format!("{previous}/bin/switch-to-configuration"),
+                        &["switch"],
+                    );
+                }
+                let _ = fs::remove_file(&pending);
+                record(args, &name, last, "refused");
+                bail!("release {counter} came up after a reboot and did not probe; rolled back");
+            }
+        }
+        let _ = fs::remove_file(&pending);
         write_counter(&args.state, counter)?;
         record(args, &name, counter, "ok");
         return Ok(format!("release {counter}: already running {}", mine.path));
@@ -187,14 +238,44 @@ fn run(args: &Args) -> Result<String> {
             mine.nar_hash
         );
     }
+    // and everything underneath. A toplevel is a tree of symlinks: its own
+    // nar pins the names of its dependencies, not their contents, and the
+    // contents came from a bucket more than one machine can write to.
+    if let Some(want) = &mine.closure {
+        let rec = sh(
+            "nix",
+            &[
+                "--extra-experimental-features",
+                "nix-command",
+                "path-info",
+                "--json",
+                "--recursive",
+                &mine.path,
+            ],
+        )
+        .context("reading the closure")?;
+        let got = release::closure_digest(&rec).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if got != *want {
+            record(args, &name, last, "refused");
+            bail!(
+                "the closure under {} is not the one that was signed",
+                mine.path
+            );
+        }
+    }
 
     // switch, with a way back: the previous system is kept by name, and a
     // transient unit brings it back if this process dies mid-way
     fs::write(args.state.join("previous"), &current)?;
+    // before anything changes: if the box reboots from here, the next run
+    // finds this and owes the probe it never got to do
+    fs::write(&pending, &stamp)?;
     let guard_secs = (args.probe_secs + 300).to_string();
     let _ = disarm();
-    // what this box could reach before the switch, to compare after
+    // what this box could reach, and what was already broken on it,
+    // before the switch - both only mean anything as a comparison
     let reached_before = reaches_any(&args.reach);
+    let failed_before = failed_units();
     sh(
         "systemd-run",
         &[
@@ -216,10 +297,16 @@ fn run(args: &Args) -> Result<String> {
     );
 
     let healthy = switched.is_ok()
-        && probe_until(args, Duration::from_secs(args.probe_secs))
+        && probe_until(args, Duration::from_secs(args.probe_secs), &failed_before)
         // and it may not have cost this box its way off itself
         && (!reached_before || reaches_within(&args.reach, Duration::from_secs(args.probe_secs)));
     if !healthy {
+        // remember it before undoing, so a crash between the two does not
+        // leave this box to meet the same release again in five minutes
+        let mut seen = fs::read_to_string(&tried).unwrap_or_default();
+        seen.push_str(&stamp);
+        seen.push('\n');
+        let _ = fs::write(&tried, seen);
         let _ = sh(
             "nix-env",
             &["-p", "/nix/var/nix/profiles/system", "--set", &current],
@@ -241,6 +328,8 @@ fn run(args: &Args) -> Result<String> {
         );
     }
     let _ = disarm();
+    // probed and good: nothing is owed any more
+    let _ = fs::remove_file(&pending);
     write_counter(&args.state, counter)?;
     record(args, &name, counter, "ok");
     Ok(format!("release {counter}: now running {}", mine.path))
@@ -256,14 +345,26 @@ fn disarm() -> Result<String> {
     )
 }
 
-/// The box is a box: nothing failed, ssh answers, the verifier answers.
-fn probe(args: &Args) -> Result<()> {
-    // a member's game that crashed is that game's trouble, not a release's:
-    // it must never make a box refuse or undo one
-    let failed: Vec<String> = sh("systemctl", &["--failed", "--no-legend", "--plain"])?
+/// Which units are failed right now, games aside: a member's game that
+/// crashed is that game's trouble, not a release's.
+fn failed_units() -> Vec<String> {
+    sh("systemctl", &["--failed", "--no-legend", "--plain"])
+        .unwrap_or_default()
         .lines()
         .filter(|l| !l.trim_start().starts_with("dd-game@"))
-        .map(str::to_string)
+        .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+        .collect()
+}
+
+/// The box is a box: nothing newly failed, ssh answers, the verifier answers.
+///
+/// `before` is what was already failing when the switch began. Something
+/// broken beforehand is not this release's doing, and counting it would
+/// make every later release roll back - including the one that fixes it.
+fn probe(args: &Args, before: &[String]) -> Result<()> {
+    let failed: Vec<String> = failed_units()
+        .into_iter()
+        .filter(|u| !before.contains(u))
         .collect();
     if !failed.is_empty() {
         bail!("failed units: {}", failed.join(" ").trim());
@@ -280,10 +381,10 @@ fn probe(args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn probe_until(args: &Args, window: Duration) -> bool {
+fn probe_until(args: &Args, window: Duration, before: &[String]) -> bool {
     let start = Instant::now();
     loop {
-        match probe(args) {
+        match probe(args, before) {
             Ok(()) => return true,
             Err(e) => {
                 eprintln!("probe: {e:#}");

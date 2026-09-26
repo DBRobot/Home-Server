@@ -12,6 +12,7 @@ name = "dd-agent"
 path = "src/bin/dd-agent.rs"
 
 [dependencies]
+sha2 = "0.10"
 identity = { path = "../../client/identity" }
 ed25519-dalek = "2"
 serde = { version = "1", features = ["derive"] }
