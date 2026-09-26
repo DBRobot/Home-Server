@@ -262,7 +262,25 @@ fn publish(
         .map(|s| s.success())
         .unwrap_or(false);
     let counter = match fetch(url)? {
-        Some(current) => current.payload.counter + 1,
+        Some(current) => {
+            // The forge serves this file and does not sign it. Taking the
+            // counter from it unverified means whoever serves it chooses
+            // the next one, and a u64::MAX would leave every box refusing
+            // everything after it, for good, with nothing to publish over
+            // the top. It is signed by the key whose public half is in the
+            // repo, so check it here before believing a number out of it.
+            let trusted = release::decode_public(
+                std::fs::read_to_string(root.join("fleet/release.pub"))?.trim(),
+            )
+            .map_err(|e| anyhow::anyhow!("fleet/release.pub: {e}"))?;
+            release::verify(&current, &trusted)
+                .map_err(|e| anyhow::anyhow!("the published release does not verify: {e}"))?;
+            current
+                .payload
+                .counter
+                .checked_add(1)
+                .context("the release counter is at its limit")?
+        }
         None if has_history => {
             bail!(
                 "no current release could be read, yet the releases branch exists: the forge is not answering; not starting over at 1"

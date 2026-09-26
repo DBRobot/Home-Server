@@ -105,6 +105,14 @@ in
         ];
         serviceConfig = {
           Type = "oneshot";
+          # As garage, not as root. The directory being pruned belongs to
+          # garage, so the names `find` collects are names garage chooses,
+          # and `rm -rf` looks each one up again a moment later - long
+          # enough for its owner to have pointed it somewhere else. Root
+          # doing that is how a compromised garage deletes /etc; garage
+          # doing it can reach nothing it could not already reach.
+          User = "garage";
+          Group = "garage";
           EnvironmentFile = config.dd.garage.envFile;
         };
         script = ''
