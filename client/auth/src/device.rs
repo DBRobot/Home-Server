@@ -75,6 +75,28 @@ pub fn mint_for(
     ttl: Duration,
     operation: Option<&str>,
 ) -> Result<String> {
+    mint_at(kp, user, ttl, operation, None)
+}
+
+/// The same again, good at one name and nowhere else.
+///
+/// `audience` is the host this token will be sent to - `files.example`,
+/// not the box behind it. A box refuses a token whose audience is some
+/// other name, so one taken from a service that has been got at opens
+/// that service and nothing else on the fleet. Minting happens here, on
+/// the device, with no round trip, so a caller can make exactly the token
+/// for the call it is about to make and it costs nothing to be narrow.
+///
+/// None keeps the old shape: good anywhere the user is known. `dd token`
+/// still prints one of those unless asked otherwise, because a token
+/// typed into curl by hand has no one host in mind.
+pub fn mint_at(
+    kp: &KeyPair,
+    user: &str,
+    ttl: Duration,
+    operation: Option<&str>,
+    audience: Option<&str>,
+) -> Result<String> {
     let exp = (SystemTime::now() + ttl)
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -91,6 +113,16 @@ pub fn mint_for(
         .map_err(err)?;
     // both directions: the check keeps this token out of everything else,
     // the fact is what an operation that demands a purpose-built token asks for
+    let token = match audience {
+        // both directions again: the fact is what the box's deny rule reads,
+        // the check is what keeps this token out of any other name
+        Some(a) => token
+            .fact(format!("audience({a:?})").as_str())
+            .map_err(err)?
+            .check(format!("check if here({a:?})").as_str())
+            .map_err(err)?,
+        None => token,
+    };
     let token = match operation {
         Some(op) => token
             .fact(format!("purpose({op:?})").as_str())

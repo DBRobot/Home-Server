@@ -90,9 +90,17 @@ pub async fn media_open(
         let kp = auth::device::load(&keys.0)
             .map_err(|e| e.to_string())?
             .ok_or("no device key here")?;
-        let token = auth::device::mint(&kp, &user, std::time::Duration::from_secs(24 * 3600))
-            .map_err(|e| e.to_string())?;
         let base = media::gate::files_base(&dirs).map_err(|e| e.to_string())?;
+        // a day is a long time for a token to sit in a mount, so it is good
+        // at the one host that mount talks to and nowhere else
+        let token = auth::device::mint_at(
+            &kp,
+            &user,
+            std::time::Duration::from_secs(24 * 3600),
+            None,
+            Some(&media::gate::host_of(&base)),
+        )
+        .map_err(|e| e.to_string())?;
         let mut mounts = Vec::new();
         for (owner, lib, key) in media::gate::openable(&dirs, &user, &opener)
             .await

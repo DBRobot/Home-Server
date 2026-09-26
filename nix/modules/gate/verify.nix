@@ -353,6 +353,26 @@ in
       };
     };
 
+    # The session cookie says who you are to the *gate*. It is HttpOnly and
+    # Secure, so no page can read it, and it is set for the whole domain so
+    # that one sign-in covers every service here. That last part is what put
+    # it in every request nginx then forwarded to a backend - jellyfin,
+    # grafana, the games manager - none of which need it and any of which,
+    # compromised, could have replayed it as that member anywhere.
+    #
+    # It comes out on the way in, and only it: a backend's own cookies are
+    # untouched, and the browser keeps sending it to the gate, so nothing
+    # about signing in changes.
+    # defined wherever nginx runs, not only on a full gate: a location that
+    # names a variable nginx does not know stops nginx starting at all, and
+    # nginx is the whole box's front door
+    services.nginx.appendHttpConfig = lib.mkIf config.services.nginx.enable ''
+      map $http_cookie $dd_cookie_stripped {
+        default $http_cookie;
+        "~^(?<dd_a>.*?)dd_session=[^;]*;?[ ]?(?<dd_b>.*)$" "$dd_a$dd_b";
+      }
+    '';
+
     # The verifier's browser side on every vhost that has one: the passkey
     # login and enrolment pages, the directory, and on jellyfin's the per-box
     # issuer. /_dd/verify is the auth_request target and internal to nginx. A

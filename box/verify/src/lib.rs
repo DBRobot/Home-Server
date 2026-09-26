@@ -154,6 +154,18 @@ fn demo_allowance(home: &[pages::Service], host: &str) -> Option<String> {
     })
 }
 
+/// Which name this request came in under: the vhost nginx was asked for,
+/// not the address the verifier happens to listen on. A token that names
+/// its audience names one of these.
+fn asked_host(headers: &HeaderMap) -> String {
+    headers
+        .get("x-original-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|v| v.to_str().ok())
+        .map(|h| h.split(':').next().unwrap_or(h).to_lowercase())
+        .unwrap_or_default()
+}
+
 /// fleet/members.json: ids let in, ids shut out. The file is either a bare
 /// list (the first shape) or {"members": [...], "revoked": [...]}.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -301,7 +313,19 @@ impl App {
     /// is what the request is for: a token minted for enrolment carries a
     /// check that only "enrol" satisfies, so a leaked enrol link cannot read
     /// a file, and an access token is not an enrol link.
+    /// A token, with no particular name asked for: anything it says about
+    /// its audience cannot match, so an audience-bearing token is refused.
+    /// Only the network door uses this, and it is this box's own door.
     pub(crate) fn verify_biscuit(&self, token: &str, operation: &str) -> Result<String> {
+        self.verify_biscuit_for(token, operation, &self.domain)
+    }
+
+    pub(crate) fn verify_biscuit_for(
+        &self,
+        token: &str,
+        operation: &str,
+        here: &str,
+    ) -> Result<String> {
         let unverified = UnverifiedBiscuit::from_base64(token).context("not a biscuit")?;
         // the user is named in the authority block; it has to be read before the
         // signature can be checked, because the key to check with depends on it
@@ -343,7 +367,7 @@ impl App {
             .map_err(|e| anyhow!("{e}"))?
             .fact(format!("operation({operation:?})").as_str())
             .map_err(|e| anyhow!("{e}"))?
-            .fact(format!("here({:?})", self.domain).as_str())
+            .fact(format!("here({here:?})").as_str())
             .map_err(|e| anyhow!("{e}"))?
             // A token that says where it is for is only good there. Today
             // none of them do, and one opens everything its holder owns on
@@ -392,7 +416,7 @@ impl App {
         if let Some(tok) = bearer(headers)
             && UnverifiedBiscuit::from_base64(tok).is_ok()
         {
-            return match self.verify_biscuit(tok, operation) {
+            return match self.verify_biscuit_for(tok, operation, &asked_host(headers)) {
                 Ok(u) => Some(u),
                 Err(e) => {
                     eprintln!("biscuit refused: {e:#}");

@@ -119,6 +119,7 @@ in
           # the name is the whole credential here; the token that proved it
           # has no business going any further
           proxy_set_header Authorization "";
+          proxy_set_header Cookie $dd_cookie_stripped;
           error_page 401 = @login;
           error_page 403 = @waiting;
         '';

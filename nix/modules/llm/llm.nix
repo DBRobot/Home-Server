@@ -26,6 +26,7 @@ in
         # the caller's own bearer never reaches llama-server: it is replaced
         # by the one llama-server was started with
         include ${run}/proxy.conf;
+        proxy_set_header Cookie $dd_cookie_stripped;
         # a browser with no credential gets the box's passkey page (@login is
         # defined for every browser-facing vhost in modules/verify.nix)
         error_page 401 = @login;

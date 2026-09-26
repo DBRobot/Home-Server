@@ -130,6 +130,7 @@ in
         # needs a member's device token. It used to receive one anyway,
         # on every request, and this is the box's most exposed service.
         proxy_set_header Authorization "";
+        proxy_set_header Cookie $dd_cookie_stripped;
         client_max_body_size 0;
         proxy_buffering off; # streams, not pages
       '';
