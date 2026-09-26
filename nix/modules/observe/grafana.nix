@@ -3,6 +3,7 @@ let
   base = config.dd.domain;
   host = "grafana.${base}";
   cfg = config.dd.grafana;
+  sock = "/run/grafana/grafana.sock";
 in
 {
   options.dd.grafana.boxes = lib.mkOption {
@@ -18,9 +19,14 @@ in
     services.grafana = {
       enable = true;
       settings = {
+        # A unix socket, not a port. auth.proxy believes the header it is
+        # given, and grafana has no way to tell nginx from anything else on
+        # this box - which runs CI jobs and game guests. A socket nginx
+        # alone can open is the way to say "from nginx" that holds.
         server = {
-          http_addr = "127.0.0.1";
-          http_port = 3000;
+          protocol = "socket";
+          socket = sock;
+          socket_mode = "0660";
           domain = host;
           root_url = "https://${host}/";
         };
@@ -28,7 +34,7 @@ in
 
         # No oidc. nginx asks the verifier who this is (a passkey session on
         # this box, or a device-signed token) and passes the name in a header
-        # grafana is told to trust from this proxy alone.
+        # grafana trusts because nothing else can reach the socket.
         "auth.proxy" = {
           enabled = true;
           header_name = "X-WEBAUTH-USER";
@@ -82,16 +88,25 @@ in
       };
     };
 
+    # grafana makes the socket; nginx needs the group to open it, and the
+    # directory keeps anything else on the box out of the path entirely
+    systemd.services.grafana.serviceConfig.RuntimeDirectoryMode = lib.mkForce "0750";
+    # the whole attribute, not just its value: naming users.users.nginx
+    # where nginx does not run leaves a user with no group and no kind
+    users.users = lib.mkIf config.services.nginx.enable {
+      nginx.extraGroups = [ "grafana" ];
+    };
     services.nginx.virtualHosts.${host} = {
       useACMEHost = base;
       forceSSL = true;
       locations."/" = {
-        proxyPass = "http://127.0.0.1:3000";
+        proxyPass = "http://unix:${sock}:";
         proxyWebsockets = true; # live dashboards
         extraConfig = ''
           # who is this? the verifier says, from a passkey session on this box
-          # or a device-signed token. grafana trusts the header from this proxy
-          # only (auth.proxy above), so nothing else can set it.
+          # or a device-signed token. grafana listens on a socket in a
+          # directory only nginx and grafana may enter, so nothing else on
+          # this box can set the header for itself.
           auth_request /_dd/verify;
           auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;
           proxy_set_header X-WEBAUTH-USER $auth_user;

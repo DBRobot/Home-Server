@@ -8,7 +8,11 @@
 let
   cfg = config.dd.games;
   base = config.dd.domain;
-  port = 4182;
+  port = 4182; # only a test binds this; a box serves on the socket
+  # the manager takes the caller's name from a header nginx sets from the
+  # verifier. A port would let anything else on this box set it too, and
+  # this box runs CI jobs and game guests
+  sock = "/run/dd-games/dd-games.sock";
   dir = "/var/lib/dd-games";
   # steamcmd and what steam-run wraps are unfree. The guest gets a package
   # set of its own that allows exactly those, so the box's does not change
@@ -119,6 +123,11 @@ in
 
     # fixed ids: the guest's game user has the same, so a 9p share needs no
     # id mapping (modules/game-guest.nix)
+    # nginx opens the manager's socket; naming users.users.nginx where nginx
+    # does not run would leave a user with no group and no kind
+    users.users.nginx = lib.mkIf config.services.nginx.enable {
+      extraGroups = [ "dd-games" ];
+    };
     users.users.dd-games = {
       uid = 951;
       isSystemUser = true;
@@ -154,7 +163,7 @@ in
         DD_GAMES_DIR = dir;
         DD_GAMES_CATALOGUE = cfg.catalogue;
         DD_GAMES_COVERS = cfg.covers;
-        DD_GAMES_BIND = "127.0.0.1:${toString port}";
+        DD_GAMES_BIND = sock;
         DD_GAMES_PORT_BASE = toString cfg.portBase;
         DD_GAMES_PER_MEMBER = toString cfg.perMember;
         DD_GAMES_MEMORY_MIB = toString cfg.memoryMiB;
@@ -164,6 +173,8 @@ in
       serviceConfig = {
         User = "dd-games";
         Group = "dd-games";
+        RuntimeDirectory = "dd-games";
+        RuntimeDirectoryMode = "0750";
         ExecStartPre = "+${pkgs.coreutils}/bin/install -d -o dd-games -g dd-games -m 0750 ${dir} ${dir}/instances";
         ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.games}/bin/dd-games";
         Restart = "on-failure";
@@ -192,7 +203,7 @@ in
       useACMEHost = base;
       forceSSL = true;
       locations."/" = {
-        proxyPass = "http://127.0.0.1:${toString port}";
+        proxyPass = "http://unix:${sock}:";
         extraConfig = ''
           auth_request /_dd/verify;
           auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;

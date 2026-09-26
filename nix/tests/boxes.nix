@@ -38,8 +38,18 @@ let
           (builtins.all (p: !lib.hasInfix box.tailnet p) cfgs.${name}.config.dd.garage.peers)
           (cfgs.${name}.config.dd.garage.zone == box.regionId)
         ]
-        ++ lib.optional (builtins.elem "observe" box.roles) (
-          builtins.attrNames cfgs.${name}.config.dd.grafana.boxes == builtins.attrNames boxes
+        ++ lib.optionals (builtins.elem "observe" box.roles) [
+          (builtins.attrNames cfgs.${name}.config.dd.grafana.boxes == builtins.attrNames boxes)
+          # "on loopback" is not an identity on a box that runs CI jobs and
+          # game guests. grafana believes X-WEBAUTH-USER, so it must not be
+          # reachable by anything but nginx: a socket, never a port.
+          (cfgs.${name}.config.services.grafana.settings.server.protocol == "socket")
+          (builtins.elem "grafana" cfgs.${name}.config.users.users.nginx.extraGroups)
+        ]
+        ++ lib.optional (builtins.elem "llm" box.roles) (
+          # llama-server answers whoever reaches it; the key nginx holds is
+          # what makes that nginx alone
+          cfgs.${name}.config.systemd.services.llama-cpp.serviceConfig ? EnvironmentFile
         )
       ) boxes
     )

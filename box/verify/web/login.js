@@ -1,8 +1,8 @@
 // Sign in: a name, then the passkey.
 
-import { requestOptions, assertion, post, say } from './webauthn.js';
+import { requestOptions, assertion, post, say, safeRd } from './webauthn.js';
 
-const rd = new URLSearchParams(location.search).get('rd') || '/';
+const rd = safeRd(new URLSearchParams(location.search).get('rd'));
 
 async function go() {
   say('…');

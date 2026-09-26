@@ -1,10 +1,10 @@
 // Add a passkey to an entry the terminal made: the link carries a token;
 // the terminal signs the new passkey into the entry once it appears.
 
-import { creationOptions, attestation, post, say } from './webauthn.js';
+import { creationOptions, attestation, post, say, safeRd } from './webauthn.js';
 
 const q = new URLSearchParams(location.search);
-const rd = q.get('rd') || '/';
+const rd = safeRd(q.get('rd'));
 const token = q.get('t');
 const auth = token ? { authorization: 'Bearer ' + token } : {};
 

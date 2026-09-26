@@ -8,6 +8,15 @@ export const u8b64 = a =>
   btoa(String.fromCharCode(...new Uint8Array(a)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+// Where a page may send you after signing in. Only a path on this box:
+// anything else - another origin, a protocol-relative //host, a
+// javascript: url - is someone else's idea of where you should go, and the
+// `rd` it travels in comes from the query string.
+export function safeRd(raw) {
+  const p = raw || '/';
+  return p.startsWith('/') && !p.startsWith('//') && !p.includes('\\') ? p : '/';
+}
+
 // the options the verifier sends, with their byte fields decoded
 export function creationOptions(publicKey) {
   publicKey.challenge = b64u(publicKey.challenge);

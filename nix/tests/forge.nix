@@ -31,6 +31,7 @@
   };
   scriptEnv = {
     admin = "tester";
-    port = 3001;
+    port = 3001; # nothing listens here now; the test checks that
+    sock = "/run/forgejo/forgejo.sock";
   };
 }

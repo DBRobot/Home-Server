@@ -91,6 +91,11 @@ async fn server_state(State(a): State<Arc<App>>, h: HeaderMap, Path(id): Path<St
     let Some(i) = a.m.instance(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // the log is the owner's: a game server writes passwords, addresses and
+    // whatever a player types into it
+    if user(&h).is_none_or(|u| u != i.owner) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let st = a.m.state(&i);
     axum::Json(serde_json::json!({
         "state": pages::state_name(st),
@@ -285,9 +290,20 @@ async fn main() -> Result<()> {
         .route("/worlds/{name}/start", post(restore_world))
         .route("/worlds/{name}/delete", post(delete_world))
         .with_state(app);
+    // A path is a unix socket, and that is what a box serves on: the name
+    // above comes from a header, honestly set by nginx from the verifier's
+    // answer and settable by anything else that can reach a port. Only what
+    // systemd puts in this service's group can open the socket.
     let bind = env_or("DD_GAMES_BIND", "127.0.0.1:4182");
-    let listener = tokio::net::TcpListener::bind(&bind).await?;
     eprintln!("games listening on {bind}");
-    axum::serve(listener, router).await?;
+    if bind.starts_with('/') {
+        let _ = std::fs::remove_file(&bind);
+        let listener = tokio::net::UnixListener::bind(&bind)?;
+        std::fs::set_permissions(&bind, std::os::unix::fs::PermissionsExt::from_mode(0o660))?;
+        axum::serve(listener, router).await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(&bind).await?;
+        axum::serve(listener, router).await?;
+    }
     Ok(())
 }

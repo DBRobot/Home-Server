@@ -125,15 +125,20 @@ box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -X PROPFIND http://127.0.
 as_tom = f"-H 'Authorization: Bearer {tom}'"
 keys = "/var/lib/dd-verify/keys"
 claim = f'.entry.libraries = [{{"id": "{lib}", "keys": [], "readers": [], "created": 1}}]'
-# the directory refuses to store it: first claim wins
+# through the front door it never even reaches the claim rule: the entry is
+# not his to edit, so the signature settles it. The claim rule itself - one
+# entry may not name a library another already claims - is covered by the
+# unit test in box/verify/src/directory.rs, which can sign for real.
 box.succeed(f"jq '{claim} | .entry.version = 9' {keys}/tom.json > /root/claim.json")
 code = box.succeed(
     "curl -s -o /root/claim.out -w '%{http_code}' -X PUT -H 'Content-Type: application/json' "
-    f"--data @/root/claim.json http://127.0.0.1:4181/_dd/directory/tom"
+    "--data @/root/claim.json http://127.0.0.1:4181/_dd/directory/tom"
 ).strip()
-assert code == "409", (code, box.succeed("cat /root/claim.out"))
-assert "already sarah's" in box.succeed("cat /root/claim.out")
-# and with the claim planted behind the directory's back, the gate still says no
+assert code == "403", (code, box.succeed("cat /root/claim.out"))
+assert "signature" in box.succeed("cat /root/claim.out")
+# and with the claim planted behind the directory's back, where no signature
+# is checked because the store is only ever written through that rule, the
+# gate still says no
 box.succeed(f"cp /root/claim.json {keys}/tom.json")
 box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_tom} -X PROPFIND http://127.0.0.1:4181/_dd/dav/{lib}/ | grep -q 403")
 box.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {as_tom} -X PUT --data x http://127.0.0.1:4181/_dd/dav/{lib}/wreck | grep -q 403")

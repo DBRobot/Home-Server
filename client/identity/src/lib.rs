@@ -377,13 +377,23 @@ pub fn challenge(entry: &Entry) -> Result<Vec<u8>> {
 }
 
 fn check_assertion(sig_b64: &str, entry: &Entry) -> Result<()> {
+    check_assertion_with(sig_b64, entry, &entry.passkeys)
+}
+
+/// The assertion over `entry`, checked with the key found in `trusted`.
+///
+/// Which list that is decides everything. A `webauthn:` root is a credential
+/// id, and a credential id is public - it travels in the entry anyone may
+/// read. So the key it names has to come from what is already on file; taken
+/// from the entry under check it would only say that whoever wrote the entry
+/// also chose the key, which is no statement at all.
+fn check_assertion_with(sig_b64: &str, entry: &Entry, trusted: &[Passkey]) -> Result<()> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
     use sha2::Digest as _;
     let id = &entry.root[WEBAUTHN_ROOT.len()..];
-    let passkey =
-        entry.passkeys.iter().find(|p| p.id == id).ok_or_else(|| {
-            Error::Key("the root names a passkey the entry does not carry".into())
-        })?;
+    let passkey = trusted.iter().find(|p| p.id == id).ok_or_else(|| {
+        Error::Key("the root names a passkey the entry does not carry".into())
+    })?;
     // the credential as webauthn-rs serialises it: Passkey { cred: Credential { cred: COSEKey } }
     let key: webauthn_rs_core::proto::COSEKey =
         serde_json::from_value(passkey.cred["cred"]["cred"].clone())
@@ -448,10 +458,33 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
     for d in &new.entry.devices {
         decode_public(&d.public_key)?;
     }
-    verify(new)?;
     let Some(old) = existing else {
+        // a first sight: there is nothing on file to check against, which
+        // is why a box takes one only under the agreement rule
+        verify(new)?;
         return Ok(());
     };
+    // An update to a passkey root proves itself with the key on file, and
+    // must keep carrying that very credential. Without both halves the root
+    // - a public credential id - is a name anyone can sign under, and the
+    // owner has no recovery key to take it back with.
+    if old.entry.root.starts_with(WEBAUTHN_ROOT) && new.entry.root == old.entry.root {
+        let id = &old.entry.root[WEBAUTHN_ROOT.len()..];
+        let was = old.entry.passkeys.iter().find(|p| p.id == id);
+        let now = new.entry.passkeys.iter().find(|p| p.id == id);
+        match (was, now) {
+            (Some(w), Some(n)) if w.cred == n.cred => {}
+            (Some(_), _) => {
+                return Err(Error::Rejected(
+                    "the root's passkey may not be changed or dropped".into(),
+                ));
+            }
+            (None, _) => return Err(Error::Key("the entry on file has no root passkey".into())),
+        }
+        check_assertion_with(&new.signature, &new.entry, &old.entry.passkeys)?;
+    } else {
+        verify(new)?;
+    }
     if new.entry.name != old.entry.name {
         return Err(Error::Rejected("name mismatch".into()));
     }
@@ -542,6 +575,53 @@ mod tests {
         e.grant.as_mut().unwrap().proof = prove(&ck, &inv.invite.public_key, root, 500);
         e.grant.as_mut().unwrap().redeemed = 500;
         assert!(verify_grant(&e, &release.verifying_key()).is_err());
+    }
+
+    /// A passkey root is a credential id, and a credential id is public.
+    /// The whole of it: if the key that checks an update can come from the
+    /// update, anyone who can read an entry can publish the next one.
+    #[test]
+    fn a_passkey_root_cannot_have_its_key_swapped_under_it() {
+        let passkey = |cred: serde_json::Value| Passkey {
+            id: "AbC".into(),
+            cred,
+            added: 1,
+            library_key: None,
+        };
+        let entry = |pk: Passkey, version: u64| SignedEntry {
+            entry: Entry {
+                name: "alice".into(),
+                root: "webauthn:AbC".into(),
+                recovery: String::new(),
+                devices: vec![],
+                passkeys: vec![pk],
+                grant: None,
+                libraries: vec![],
+                version,
+                updated: version,
+            },
+            signature: "not reached".into(),
+            recovery_signature: None,
+        };
+        let hers = entry(passkey(serde_json::json!({ "cred": { "cred": "hers" } })), 7);
+
+        // the attack: alice's root, alice's name, a newer version, and the
+        // attacker's own key under the same credential id
+        let theirs = entry(passkey(serde_json::json!({ "cred": { "cred": "theirs" } })), 8);
+        let e = accept(Some(&hers), &theirs).unwrap_err();
+        assert!(format!("{e}").contains("may not be changed"), "{e}");
+
+        // and dropping it is the same move by another name
+        let mut gone = theirs.clone();
+        gone.entry.passkeys.clear();
+        let e = accept(Some(&hers), &gone).unwrap_err();
+        assert!(format!("{e}").contains("may not be changed"), "{e}");
+
+        // a root that is simply replaced has no way back either: a passkey
+        // root has no recovery key, so this is refused as it always was
+        let mut other = theirs.clone();
+        other.entry.root = "webauthn:XyZ".into();
+        assert!(accept(Some(&hers), &other).is_err());
     }
 
     fn dev(k: &SigningKey) -> Device {

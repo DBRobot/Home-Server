@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The forge after it starts: the admin, the repo, the branch protection.
 set -euo pipefail
-api=http://127.0.0.1:$PORT/api/v1
-as_admin() { curl -fsS -H "X-WEBAUTH-USER: $ADMIN" "$@"; }
+api=http://forgejo/api/v1
+# the socket, not a port: forgejo trusts the header below from whoever
+# reaches it, and jobs run on this box
+as_admin() { curl -fsS --unix-socket "$SOCK" -H "X-WEBAUTH-USER: $ADMIN" "$@"; }
 # the repository is pushed to the forge, not made by it: until it is
 # there, there is nothing to protect, and this unit will run again
 for i in $(seq 1 30); do
