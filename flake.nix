@@ -633,9 +633,6 @@
               ++ lib.optional (needsSops box.roles) sops-nix.nixosModules.sops
               ++ lib.optional (builtins.pathExists ./nix/hosts/${name}/disko.nix) disko.nixosModules.disko
               ++ lib.optional (builtins.elem "observe" box.roles) {
-                dd.grafana.boxes = lib.mapAttrs (
-                  n: b: if n == name then "http://127.0.0.1:9090" else "http://${b.tailnet}:9090"
-                ) boxes;
                 # every box's sidecar, for the fleet-wide query
                 dd.thanos.sidecars = lib.mapAttrsToList (
                   n: b: if n == name then "127.0.0.1:10901" else "${b.tailnet}:10901"

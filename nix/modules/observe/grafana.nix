@@ -2,16 +2,9 @@
 let
   base = config.dd.domain;
   host = "grafana.${base}";
-  cfg = config.dd.grafana;
   sock = "/run/grafana/grafana.sock";
 in
 {
-  options.dd.grafana.boxes = lib.mkOption {
-    type = lib.types.attrsOf lib.types.str;
-    default = { };
-    description = "Every box's prometheus, by box name, as a url grafana can reach.";
-  };
-
   config = {
     # reads plaintext: only on a box whose owner is trusted with it (modules/box.nix)
     dd.box.plaintext = [ "grafana (metrics)" ];
@@ -54,36 +47,23 @@ in
         security.secret_key = "$__file{${config.sops.secrets.grafana-secret-key.path}}";
       };
 
-      # One datasource per box, each box's own prometheus over the tailnet:
-      # nothing is scraped centrally, this reads. The list is the box list,
-      # by hand until the box list is data. The "Box" dashboard picks one.
+      # One datasource: every box through thanos on this box, told apart by
+      # the box label. There used to be one per box, grafana reaching into
+      # each box's prometheus over the tailnet - a box talking to a box for
+      # no reason the fleet view does not already cover.
       provision = {
         enable = true;
         datasources.settings = {
-          # datasources.yaml is authoritative: a box that leaves the list is
-          # removed here too
-          deleteDatasources = [
-            {
-              name = "prometheus";
-              orgId = 1;
-            }
-          ];
-          datasources =
-            lib.mapAttrsToList (name: url: {
-              inherit name url;
-              type = "prometheus";
-              uid = name;
-              isDefault = name == "node1";
-              jsonData.timeInterval = "15s";
-            }) cfg.boxes
-            # every box at once, through thanos: the box label tells them apart
-            ++ lib.optional config.services.thanos.query.enable {
-              name = "fleet";
-              uid = "fleet";
-              type = "prometheus";
-              url = "http://127.0.0.1:10903";
-              jsonData.timeInterval = "15s";
-            };
+          # what is not listed here goes, including the per-box ones
+          prune = true;
+          datasources = lib.optional config.services.thanos.query.enable {
+            name = "fleet";
+            uid = "fleet";
+            type = "prometheus";
+            url = "http://127.0.0.1:10903";
+            isDefault = true;
+            jsonData.timeInterval = "15s";
+          };
         };
         dashboards.settings.providers = [
           {

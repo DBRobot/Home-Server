@@ -1360,6 +1360,23 @@ pub async fn start(
         app_release: cfg.app_release,
         fleet: cfg.fleet,
     });
+    // Devices of people who are no longer members come off the network. An
+    // empty member list is a broken release rather than everyone revoked,
+    // and it would take every device off at once, so that is left alone.
+    if app.network.is_some() {
+        let a = app.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Some(door) = &a.network
+                    && a.members.as_ref().is_some_and(|m| !m.members.is_empty())
+                    && let Err(e) = door.reap(|u| a.member(u) && u != pages::DEMO_USER).await
+                {
+                    eprintln!("network: reaping: {e:#}");
+                }
+                tokio::time::sleep(Duration::from_secs(300)).await;
+            }
+        });
+    }
     let router = Router::new()
         .route("/verify", get(verify))
         .route("/health", get(|| async { "ok" }))

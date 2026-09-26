@@ -1,4 +1,18 @@
 { config, lib, ... }:
+let
+  # the other boxes, by the address they reach this one from
+  peers = lib.mapAttrsToList (_: b: b.tailnet) (
+    lib.filterAttrs (n: _: n != config.networking.hostName) (
+      builtins.fromJSON (builtins.readFile ../../fleet/boxes.json)
+    )
+  );
+  # the channels between boxes that are still here, each waiting on the
+  # change that ends it (README: no box talks to another box)
+  #   3901  garage RPC - one cluster, until there is one per box
+  #   4181  a box's directory, pulled by the others
+  #  10901  the thanos sidecar, read by the fleet view
+  boxPorts = "3901,4181,10901";
+in
 {
   # What every box is, before any role: its identity in the directory, a
   # replica of the directory, its own metrics, and a way in for the admin.
@@ -96,12 +110,33 @@
   # until every address has moved to this network; then it is the one
   # tailscaled a box runs, not a second.
   dd.net.enable = true;
-  # both tunnels are the trusted side; whatever cable or wifi a box has
-  # stays as it is
-  networking.firewall.trustedInterfaces = [
-    "tailscale0"
-    "commonty0"
-  ];
+  # Neither tunnel is trusted wholesale. Trusting an interface opens every
+  # port on it to everything that can reach it, which on the fleet's network
+  # meant any member's device could talk to postgres, garage and prometheus
+  # on every box. What is open is what a person needs:
+  #
+  #   the owner's tailnet  ssh, the gate, and dns for the fleet's names; the
+  #                        s3 port too, because a release is pushed to the
+  #                        cache from the laptop (it wants a key regardless)
+  #   the fleet's network  the gate, and nothing else
+  #
+  # and between boxes only the channels still listed above, only from the
+  # other boxes' addresses. Cable and wifi are untouched: ssh from the LAN
+  # is the way in if any of this is ever wrong.
+  networking.firewall.interfaces.tailscale0 = {
+    allowedTCPPorts = [
+      22
+      53
+      80
+      443
+      3900
+    ];
+    allowedUDPPorts = [ 53 ];
+  };
+  networking.firewall.interfaces.commonty0.allowedTCPPorts = [ 443 ];
+  networking.firewall.extraCommands = lib.concatMapStrings (a: ''
+    iptables -A nixos-fw -i tailscale0 -s ${a} -p tcp -m multiport --dports ${boxPorts} -j nixos-fw-accept
+  '') peers;
   networking.networkmanager.enable = true;
   # never invent a "Wired connection 1": on a first boot NetworkManager can
   # see the cable before the declared profile exists, make a dhcp profile

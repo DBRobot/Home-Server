@@ -134,7 +134,6 @@ in
     # the control server by its name, straight to the control box
     networking.hosts.${cfg.controlAddress} = [ "headscale.${base}" ];
 
-    networking.firewall.trustedInterfaces = [ "commonty0" ];
     networking.firewall.allowedUDPPorts = [ 41642 ];
     networking.networkmanager.unmanaged = [ "interface-name:commonty0" ];
   };

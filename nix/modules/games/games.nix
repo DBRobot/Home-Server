@@ -104,7 +104,12 @@ in
     portBase = lib.mkOption {
       type = lib.types.port;
       default = 27000;
-      description = "first of the ports handed to instances; reachable on the tailnet, which the firewall already admits";
+      description = "first of the ports handed to instances";
+    };
+    portCount = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 200;
+      description = "how many ports from portBase instances may be handed; the firewall opens exactly these on both tunnels";
     };
     kvm = lib.mkOption {
       type = lib.types.bool;
@@ -119,6 +124,26 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Players reach a server on its own port, from either tunnel: the range
+    # the manager hands out and nothing around it. Both protocols, because
+    # games use udp and tcp on the same number.
+    networking.firewall.interfaces =
+      let
+        range = [
+          {
+            from = cfg.portBase;
+            to = cfg.portBase + cfg.portCount - 1;
+          }
+        ];
+        open = {
+          allowedTCPPortRanges = range;
+          allowedUDPPortRanges = range;
+        };
+      in
+      {
+        tailscale0 = open;
+        commonty0 = open;
+      };
     dd.box.plaintext = [ "games (servers members start; their worlds)" ];
 
     # fixed ids: the guest's game user has the same, so a 9p share needs no
@@ -165,6 +190,7 @@ in
         DD_GAMES_COVERS = cfg.covers;
         DD_GAMES_BIND = sock;
         DD_GAMES_PORT_BASE = toString cfg.portBase;
+        DD_GAMES_PORT_COUNT = toString cfg.portCount;
         DD_GAMES_PER_MEMBER = toString cfg.perMember;
         DD_GAMES_MEMORY_MIB = toString cfg.memoryMiB;
         DD_GAMES_ADDRESS = config.dd.box.tailnet;

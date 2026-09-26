@@ -22,9 +22,8 @@ in
   services.prometheus = {
     enable = true;
     port = 9090;
-    # the tailnet is the only interface the firewall admits; the cable and
-    # the wifi see nothing
-    listenAddress = "0.0.0.0";
+    # this box only: thanos's sidecar beside it is how the fleet reads it
+    listenAddress = "127.0.0.1";
     retentionTime = "180d"; # a few hundred MB; enough to answer "when did this start"
 
     exporters.node = {
