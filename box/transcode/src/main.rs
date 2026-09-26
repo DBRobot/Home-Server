@@ -109,7 +109,7 @@ struct App {
 
 #[derive(Deserialize)]
 struct Start {
-    /// where the sealed file is, for a few minutes, ranges allowed
+    /// where the sealed file is, for as long as a film plays, ranges allowed
     url: String,
     /// the library's data key, sealed to this box's public key
     key: String,

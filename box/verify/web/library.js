@@ -118,7 +118,7 @@ export async function trash(lib, path) {
 }
 
 /// A film this tab cannot open: the box does the work instead. It is
-/// given a url it can fetch ranges from for a few minutes and the
+/// given a url it can fetch ranges from while the film plays and the
 /// library's data key sealed to a key it made when it started, so the
 /// plaintext exists in its memory for this one file and nowhere else.
 /// What comes back is a playlist on the same host as this page.

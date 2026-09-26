@@ -22,6 +22,10 @@ use crate::App;
 
 /// how long a presigned url lives: a chunk fetch or upload, not a session
 const URL_SECS: u64 = 600;
+/// a url handed to a box's transcoder, which reads ranges as the film
+/// plays: long enough for a film someone pauses. It reaches one object,
+/// sealed, and the key to it went to the transcoder alone.
+pub const HANDOFF_SECS: u64 = 6 * 3600;
 
 #[derive(Clone)]
 pub struct Gate {
@@ -138,6 +142,10 @@ impl Gate {
 
     /// a url a client may use once for `method` on `object`, for URL_SECS
     pub fn presign(&self, method: &str, object: &str) -> String {
+        self.presign_for(method, object, URL_SECS)
+    }
+
+    pub fn presign_for(&self, method: &str, object: &str, secs: u64) -> String {
         let (stamp, date) = now_stamps();
         let path = format!("/{}/{}", self.bucket, uri_encode(object, true));
         let credential = format!("{}/{}/{}/s3/aws4_request", self.key_id, date, self.region);
@@ -145,7 +153,7 @@ impl Gate {
             ("X-Amz-Algorithm", "AWS4-HMAC-SHA256".to_string()),
             ("X-Amz-Credential", credential),
             ("X-Amz-Date", stamp.clone()),
-            ("X-Amz-Expires", URL_SECS.to_string()),
+            ("X-Amz-Expires", secs.to_string()),
             ("X-Amz-SignedHeaders", "host".to_string()),
         ];
         query.sort();
