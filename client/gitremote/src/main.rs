@@ -264,14 +264,31 @@ impl Remote {
             if !r.status().is_success() {
                 continue;
             }
-            if let Ok(e) = r.json::<identity::SignedEntry>()
-                && identity::verify(&e).is_ok()
-                && best
-                    .as_ref()
-                    .is_none_or(|b| e.entry.version > b.entry.version)
-            {
-                best = Some(e);
+            let Ok(e) = r.json::<identity::SignedEntry>() else {
+                continue;
+            };
+            // the entry has to verify, and to be the one asked for
+            if identity::verify(&e).is_err() || e.entry.name != self.owner {
+                continue;
             }
+            // and the directories have to agree whose root this name has.
+            // A stale one is fine - same root, lower version - but two
+            // different roots means one of them is making it up, and this
+            // is the moment a first sight of a remote is decided on.
+            if let Some(b) = &best {
+                if b.entry.root != e.entry.root {
+                    anyhow::bail!(
+                        "the directories disagree about {}: {} and {}",
+                        self.owner,
+                        b.entry.root,
+                        e.entry.root
+                    );
+                }
+                if e.entry.version <= b.entry.version {
+                    continue;
+                }
+            }
+            best = Some(e);
         }
         let e = best.with_context(|| format!("no directory has an entry for {}", self.owner))?;
         Ok(e.entry

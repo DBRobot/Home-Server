@@ -174,6 +174,16 @@ pub async fn ours(
     root: &ed25519_dalek::SigningKey,
 ) -> Result<SignedEntry> {
     let found = fetch(dirs, name).await;
+    // verified, and the directories have to agree - but not that the root
+    // is the one in hand. After a recovery run elsewhere this machine's
+    // root is legitimately the old one, and finding that out is part of
+    // what this call is for.
+    if let Err(e) = directory::resolve(&found, directory::Anchor::FirstSight)
+        && found.iter().any(|(_, r)| matches!(r, Ok(Some(_))))
+    {
+        bail!("{e:#}");
+    }
+    let _ = root;
     let cur = newest(&found).with_context(|| {
         let why: Vec<String> = found
             .iter()
@@ -310,7 +320,13 @@ pub async fn recover(
 ) -> Result<zeroize::Zeroizing<String>> {
     let recovery = identity::decode_secret(recovery_secret).context("bad recovery key")?;
     let found = fetch(dirs, name).await;
-    let cur = newest(&found).with_context(|| format!("no directory has an entry for {name}"))?;
+    // Verified, and every directory asked has to agree about whose root
+    // this name has. What follows reseals library keys out of this entry
+    // and co-signs the result with the real recovery key, so a made-up one
+    // would be the fleet accepting a key the liar chose. The recovery key
+    // matching is not the check it looks like: it is public.
+    let cur = directory::resolve(&found, directory::Anchor::FirstSight)
+        .with_context(|| format!("no directory has a usable entry for {name}"))?;
     if cur.entry.recovery != identity::encode_public(&recovery.verifying_key()) {
         bail!("that recovery key does not match the entry for {name}");
     }

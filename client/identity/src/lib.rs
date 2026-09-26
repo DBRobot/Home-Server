@@ -20,7 +20,8 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+pub use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
