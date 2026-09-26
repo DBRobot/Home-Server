@@ -370,11 +370,16 @@ fn status(repo: &str, url: &str) -> Result<()> {
     }
     for (name, b) in boxes.as_object().context("boxes.json is not an object")? {
         let tailnet = b["tailnet"].as_str().unwrap_or("-");
+        // a box's prometheus answers on its own loopback only; the owner
+        // reaches it the way he reaches the box
         let q = |expr: &str| -> Option<serde_json::Value> {
-            let out = Command::new("curl")
-                .args(["-sf", "-m", "5", "--get", "--data-urlencode"])
-                .arg(format!("query={expr}"))
-                .arg(format!("http://{tailnet}:9090/api/v1/query"))
+            let out = Command::new("ssh")
+                .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+                .arg(format!("admin@{tailnet}"))
+                .arg(format!(
+                    "curl -sf -m 5 --get --data-urlencode 'query={expr}' http://127.0.0.1:9090/api/v1/query"
+                ))
+                .stdin(std::process::Stdio::null())
                 .output()
                 .ok()?;
             let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
