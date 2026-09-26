@@ -28,7 +28,15 @@
   };
 
   # prometheus history cannot be backfilled, so it is in the box's backup
-  dd.backup.paths = [ "/var/lib/prometheus2" ];
+  # The verifier's state, and the measurements. The first is the only copy
+  # of every member's sealed library keys and of the directory this box
+  # holds; its only protection until now was replication, which is not a
+  # backup - it copies a deletion as faithfully as anything else. That
+  # metrics history was backed up and this was not is the wrong way round.
+  dd.backup.paths = [
+    "/var/lib/dd-verify"
+    "/var/lib/prometheus2"
+  ];
   # the write-ahead log of a running prometheus does not restore (segments
   # out of order); the blocks do, at the cost of the last two hours
   dd.backup.exclude = [ "/var/lib/prometheus2/data/wal" ];
