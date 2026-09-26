@@ -534,6 +534,9 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
     for d in &new.entry.devices {
         decode_public(&d.public_key)?;
     }
+    if let Some(l) = new.entry.libraries.iter().find(|l| !valid_library_id(&l.id)) {
+        return Err(Error::Rejected(format!("{:?} is not a library id", l.id)));
+    }
     let Some(old) = existing else {
         // a first sight: there is nothing on file to check against, which
         // is why a box takes one only under the agreement rule
@@ -583,6 +586,14 @@ pub fn accept(existing: Option<&SignedEntry>, new: &SignedEntry) -> Result<()> {
         return Err(Error::Rejected("a passkey root has no recovery key".into()));
     }
     check(rs, &new.entry, &decode_public(&old.entry.recovery)?)
+}
+
+/// A library id: 32 hex characters, and nothing else. It becomes a folder
+/// name, a bucket prefix and a command-line argument on every machine that
+/// opens the library, so it can be nothing that means anything there - no
+/// separator, no dot, no leading dash.
+pub fn valid_library_id(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 pub fn valid_name(s: &str) -> bool {
@@ -765,6 +776,36 @@ mod tests {
         assert!(!below("https://commonty.org.evil.example", "commonty.org"));
         assert!(!below("https://evil.example", "commonty.org"));
         let _ = B64_URL;
+    }
+
+    /// An id is about to be a folder and an argument everywhere the library
+    /// opens: anything but 32 hex characters is refused at the door.
+    #[test]
+    fn a_library_id_that_could_mean_something_is_refused() {
+        let root = generate();
+        let with = |id: &str| {
+            let e = Entry {
+                passkeys: vec![],
+                grant: None,
+                libraries: vec![Library {
+                    id: id.into(),
+                    keys: vec![],
+                    readers: vec![],
+                    created: 1,
+                }],
+                name: "sarah".into(),
+                root: encode_public(&root.verifying_key()),
+                recovery: encode_public(&generate().verifying_key()),
+                devices: vec![dev(&generate())],
+                version: 1,
+                updated: 1,
+            };
+            accept(None, &sign(e, &root).unwrap())
+        };
+        assert!(with(&"ab".repeat(16)).is_ok());
+        for bad in ["../../etc", "-rf", "a".repeat(31).as_str(), &"g".repeat(32), "", &"ab/".repeat(11)] {
+            assert!(with(bad).is_err(), "{bad:?} was taken as a library id");
+        }
     }
 
     fn dev(k: &SigningKey) -> Device {
