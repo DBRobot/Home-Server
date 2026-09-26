@@ -22,12 +22,14 @@ import (
 	"unsafe"
 
 	"tailscale.com/tsnet"
+
+	"commonty.org/app/net/bridge"
 )
 
 var (
 	mu    sync.Mutex
 	srv   *tsnet.Server
-	door  *bridge
+	door  *bridge.Bridge
 	proxy *proxyServer
 )
 
@@ -79,7 +81,7 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	_ = os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
 	// the control server is reached through the bridge: the front door
 	// carries websockets, not the engine's own upgrade
-	b, err := newBridge(C.GoString(control))
+	b, err := bridge.New(C.GoString(control), "127.0.0.1:0")
 	if err != nil {
 		return reply(started{Error: err.Error()})
 	}
@@ -90,7 +92,7 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	}
 	s := &tsnet.Server{
 		Dir:        state,
-		ControlURL: b.url(),
+		ControlURL: b.URL(),
 		AuthKey:    C.GoString(key),
 		Hostname:   C.GoString(hostname),
 		Ephemeral:  false,
@@ -101,13 +103,13 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	defer cancel()
 	if _, err := s.Up(ctx); err != nil {
 		s.Close()
-		b.close()
+		b.Close()
 		return reply(started{Error: err.Error()})
 	}
 	p, err := newProxy(s)
 	if err != nil {
 		s.Close()
-		b.close()
+		b.Close()
 		return reply(started{Error: err.Error()})
 	}
 	srv = s
@@ -174,7 +176,7 @@ func commonty_net_stop() {
 		srv = nil
 	}
 	if door != nil {
-		door.close()
+		door.Close()
 		door = nil
 	}
 }

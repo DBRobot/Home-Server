@@ -366,6 +366,15 @@
           });
           # the app's network engine (app/net): `nix build .#net` for the archive
           net = appNet;
+          # the engine's bridge on its own, for a box's stock tailscaled
+          netbridge = pkgs.buildGoModule {
+            pname = "commonty-net-bridge";
+            version = "0.1.0";
+            src = ./app/net;
+            inherit (appNet) vendorHash;
+            subPackages = [ "cmd/netbridge" ];
+            env.CGO_ENABLED = "0";
+          };
           # and for Android, one .so per abi
           net-android = appNetAndroid;
           # the Android toolchain, for the dev shell below
