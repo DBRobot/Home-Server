@@ -45,6 +45,7 @@
         "transcode"
         "network"
         "library"
+        "pgrestore"
       ];
       rust =
         let

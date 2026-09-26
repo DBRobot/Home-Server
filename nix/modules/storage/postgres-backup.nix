@@ -20,19 +20,24 @@ let
 
     # restoring into a scratch database is the only thing that proves a dump is
     # restorable rather than merely present
+    # Restored by a role that can do nothing, connected as it - not switched
+    # into from a superuser session, which a function body could switch back
+    # out of. What ente's database contains is up to whoever can write to
+    # it, and the dump carries it: an index built on a function runs that
+    # function during the restore, with the restoring role's rights.
     $psql -q -c 'drop database if exists ente_restore_test' postgres
-    $psql -q -c 'create database ente_restore_test' postgres
+    $psql -q -c 'create database ente_restore_test owner ente_restore' postgres
     # belt and braces: never feed a dump containing \connect into psql
     if ${pkgs.zstd}/bin/zstd -dc ${dump} | ${pkgs.gnugrep}/bin/grep -qE '^\\connect'; then
       echo "dump contains \\connect - refusing to restore, it would target the live db"
       exit 1
     fi
-    ${pkgs.zstd}/bin/zstd -dc ${dump} | $psql -q -v ON_ERROR_STOP=1 -d ente_restore_test >/dev/null
+    ${pkgs.zstd}/bin/zstd -dc ${dump} | $psql -q -v ON_ERROR_STOP=1 -U ente_restore -d ente_restore_test >/dev/null
 
     # the key hierarchy is the thing worth asserting on: without these rows the
     # blobs on vault cannot be decrypted by anyone
-    keys=$($psql -tAd ente_restore_test -c 'select count(*) from key_attributes')
-    files=$($psql -tAd ente_restore_test -c 'select count(*) from collection_files')
+    keys=$($psql -tA -U ente_restore -d ente_restore_test -c 'select count(*) from key_attributes')
+    files=$($psql -tA -U ente_restore -d ente_restore_test -c 'select count(*) from collection_files')
     $psql -q -c 'drop database ente_restore_test' postgres
 
     [ "$keys" -ge 1 ] || { echo "restored dump has $keys key_attributes rows"; exit 1; }
@@ -75,6 +80,19 @@ in
     compression = "zstd";
     compressionLevel = 6;
     startAt = "hourly";
+  };
+
+  # the role the restore check runs as: it may log in and own the scratch
+  # database, and nothing else. The check itself runs as postgres, so the
+  # postgres OS user is allowed to be it, for that database alone.
+  services.postgresql = {
+    ensureUsers = [ { name = "ente_restore"; } ];
+    identMap = ''
+      restore postgres ente_restore
+    '';
+    authentication = ''
+      local ente_restore_test ente_restore peer map=restore
+    '';
   };
 
   systemd.services =
