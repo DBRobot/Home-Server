@@ -317,6 +317,15 @@ async fn encrypted_remote_end_to_end() {
     laptop.fails(&work, "git", &["fetch", "origin"], "refusing");
     laptop.git(&backing, &["update-ref", "refs/heads/dd", &head]);
 
+    // the box stops showing the branch, or cannot be reached: not "up to date"
+    laptop.git(&backing, &["update-ref", "-d", "refs/heads/dd"]);
+    laptop.fails(&work, "git", &["fetch", "origin"], "fetching");
+    laptop.git(&backing, &["update-ref", "refs/heads/dd", &head]);
+    let away = backing.with_extension("away");
+    std::fs::rename(&backing, &away).unwrap();
+    laptop.fails(&work, "git", &["fetch", "origin"], "fetching");
+    std::fs::rename(&away, &backing).unwrap();
+
     // the box forges a reader list
     let keys = laptop.git(&backing, &["cat-file", "-p", "dd:keys.json"]);
     let mut forged: serde_json::Value = serde_json::from_str(&keys).unwrap();
