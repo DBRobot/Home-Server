@@ -651,7 +651,7 @@ async fn join_finish(
         }
     };
     let now = identity::now();
-    let root = format!("{}{id}", identity::WEBAUTHN_ROOT);
+    let root = identity::passkey_root(&id, &cred);
     // an invite code typed on the join page: the browser proved it for this
     // root; the invite itself is looked up here, and checked at admission
     let grant = match grant_claim(&app, &headers) {

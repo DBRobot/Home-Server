@@ -210,7 +210,15 @@ in
               garage bucket create ${q} 2>/dev/null || true
             ''
             + lib.optionalString (b.key != null) ''
-              garage key import ${id} ${secret} --yes -n ${lib.escapeShellArg b.key.name} 2>/dev/null || true
+              # The secret goes in argv, and /proc/<pid>/cmdline is readable
+              # by anyone on the box. Once, when the key is new, is a moment;
+              # every ten minutes for the life of the fleet is a place to
+              # come and look. The bucket grant takes the key id, which is
+              # not a secret, so it stays where it was.
+              case "$(garage key list 2>/dev/null || true)" in
+                *${lib.escapeShellArg b.key.name}*) ;;
+                *) garage key import ${id} ${secret} --yes -n ${lib.escapeShellArg b.key.name} 2>/dev/null || true ;;
+              esac
               garage bucket allow ${allow} ${q} --key ${id} 2>/dev/null || true
             ''
             + lib.optionalString (b.cors != null && b.key != null) ''

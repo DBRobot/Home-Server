@@ -42,7 +42,13 @@ in
           auto_sign_up = true;
           enable_login_token = false;
         };
+        # disable_login_form only hides the form. Grafana's built-in admin
+        # keeps whatever password it was created with - nixpkgs' default is
+        # published - and basic auth answers it whether or not a form is
+        # drawn. The account is never wanted here: nginx says who you are.
         auth.disable_login_form = true;
+        "auth.basic".enabled = false;
+        security.disable_initial_admin_creation = true;
         # $__file{} is grafana's own indirection, so the key never enters the
         # nix store - same property as every other secret here.
         security.secret_key = "$__file{${config.sops.secrets.grafana-secret-key.path}}";

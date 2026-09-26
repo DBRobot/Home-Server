@@ -174,7 +174,12 @@ in
         serviceConfig.Type = "oneshot";
         script = ''
           last=$(${pkgs.gawk}/bin/awk '/^dd_backup_last_success_seconds/ {print $2}' ${facts}/backup.prom 2>/dev/null || echo 0)
-          age=$(( $(date +%s) - ''${last:-0} ))
+          # that file is written by node-exporter, which is not root, and
+          # this unit is. Bash expands command substitutions inside an
+          # arithmetic context, so a value that is not a number is a way to
+          # run one.
+          case "$last" in "" | *[!0-9]*) last=0 ;; esac
+          age=$(( $(date +%s) - last ))
           if [ "$age" -gt $((26 * 3600)) ]; then
             echo "last good backup was $((age / 3600)) hours ago"; exit 1
           fi

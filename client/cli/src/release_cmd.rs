@@ -136,15 +136,36 @@ fn publish(
 
     let (key_id, key_secret, signing_key) = cache_writer(&root)?;
 
-    // What CI built is what ships. build_host records each box's store path
-    // as a status on the commit it ran on; main is a merge of that commit
-    // with the same tree, so the paths are the same and already in the
-    // cache. Nothing to build, nothing to copy: read, check, sign.
+    // What CI built is what ships, but only once this machine has worked
+    // out for itself what that should be. A commit status is written by
+    // whoever holds a job token, a runner credential, or the forge: taking
+    // the path from one and signing it is letting them choose what every
+    // box runs. So each path is compared against an evaluation of the very
+    // same ref, done here. Evaluation, not a build - seconds, no store
+    // written - which settles "is this the closure this commit describes".
+    // What it cannot settle is whether the bytes behind that path are the
+    // ones the derivation makes; only building here, or a second builder
+    // agreeing, would say that.
     let mut built = BTreeMap::new();
     let mut from_ci = false;
     if let Some(paths) = recorded_builds(&root, url, &rev, &names, keys)? {
         let mut ok = true;
         for (name, path) in &paths {
+            let flake = format!(
+                "git+file://{}?ref={ref}#nixosConfigurations.{name}.config.system.build.toplevel.outPath",
+                root.display()
+            );
+            let want = sh("nix", &["eval", "--raw", &flake])
+                .with_context(|| format!("evaluating {name} from {ref}"))?
+                .trim()
+                .to_owned();
+            if want != *path {
+                bail!(
+                    "{name}: CI reported {path}, but {ref} evaluates to {want}.\n\
+                     Nothing is signed. Whoever posted that status does not agree \
+                     with the commit."
+                );
+            }
             let info = Command::new("nix")
                 .args(["path-info", "--json", "--store", cache, path])
                 .env("AWS_ACCESS_KEY_ID", &key_id)
