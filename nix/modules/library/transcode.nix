@@ -56,6 +56,9 @@ in
         proxyPass = "http://127.0.0.1:${toString port}/";
         extraConfig = ''
           auth_request /_dd/verify;
+          # the session it makes is its own credential; it never replays
+          # the caller's
+          proxy_set_header Authorization "";
           client_max_body_size 8m;
           proxy_read_timeout 120s;
         '';

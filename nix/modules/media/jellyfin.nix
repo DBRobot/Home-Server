@@ -126,6 +126,10 @@ in
       proxyPass = "http://127.0.0.1:8096";
       proxyWebsockets = true;
       extraConfig = ''
+        # jellyfin has its own sign-in (oidc, from this box) and never
+        # needs a member's device token. It used to receive one anyway,
+        # on every request, and this is the box's most exposed service.
+        proxy_set_header Authorization "";
         client_max_body_size 0;
         proxy_buffering off; # streams, not pages
       '';

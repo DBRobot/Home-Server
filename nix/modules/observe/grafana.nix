@@ -116,6 +116,9 @@ in
           auth_request /_dd/verify;
           auth_request_set $auth_user $upstream_http_x_auth_request_preferred_username;
           proxy_set_header X-WEBAUTH-USER $auth_user;
+          # the name is the whole credential here; the token that proved it
+          # has no business going any further
+          proxy_set_header Authorization "";
           error_page 401 = @login;
           error_page 403 = @waiting;
         '';
