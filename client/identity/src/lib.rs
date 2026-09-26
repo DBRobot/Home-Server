@@ -429,9 +429,17 @@ pub struct Assertion {
 
 /// What the browser must sign for `entry`: sha256 of its canonical form,
 /// as the webauthn challenge.
+/// What a passkey signs to change an entry: the entry under a label that
+/// says so. The same passkey signs sign-in challenges, and those are the
+/// box's random bytes; the label keeps a signature made for one from ever
+/// counting as the other, and leaves room to sign other things with the
+/// same key later without them meaning this.
 pub fn challenge(entry: &Entry) -> Result<Vec<u8>> {
     use sha2::Digest as _;
-    Ok(sha2::Sha256::digest(canonical(entry)?).to_vec())
+    let mut h = sha2::Sha256::new();
+    h.update(b"commonty entry v1\0");
+    h.update(canonical(entry)?);
+    Ok(h.finalize().to_vec())
 }
 
 fn check_assertion(sig_b64: &str, entry: &Entry) -> Result<()> {
