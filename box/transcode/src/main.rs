@@ -42,6 +42,9 @@ const IDLE: Duration = Duration::from_secs(600);
 const KEEP: usize = 64;
 /// blocks fetched from the bucket in one request: 64 of 64 KiB, a range
 const PIECE: u64 = 64;
+/// ffmpegs at once: each takes cores for as long as its film plays, and
+/// anyone who can reach start could otherwise ask for a hundred
+const MAX_SESSIONS: usize = 4;
 
 use library::crypt::{BLOCK, HEADER, SEALED_BLOCK};
 
@@ -71,9 +74,8 @@ impl Session {
             .header("range", format!("bytes={from}-{to}"))
             .send()
             .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
+            .error_for_status()?;
+        let sealed = capped(sealed, (PIECE * SEALED_BLOCK as u64) as usize).await?;
         let mut plain = Vec::with_capacity(sealed.len());
         for (i, b) in sealed.chunks(SEALED_BLOCK).enumerate() {
             plain.extend(
@@ -103,12 +105,14 @@ struct App {
     ffmpeg: PathBuf,
     plain: std::net::SocketAddr,
     http: reqwest::Client,
+    /// the only url prefix a session may fetch from
+    source: String,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
 
 #[derive(Deserialize)]
 struct Start {
-    /// where the sealed file is, for a few minutes, ranges allowed
+    /// where the sealed file is, for as long as a film plays, ranges allowed
     url: String,
     /// the library's data key, sealed to this box's public key
     key: String,
@@ -121,14 +125,25 @@ async fn key(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
 }
 
 async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
+    if app.sessions.lock().await.len() >= MAX_SESSIONS {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "this box is transcoding all it can; try again when a film ends",
+        )
+            .into_response();
+    }
     let data_key = match library::open_x25519(&app.secret, &s.key) {
         Ok(k) => k,
         Err(_) => {
             return (StatusCode::BAD_REQUEST, "the key is not sealed to this box").into_response();
         }
     };
-    if !s.url.starts_with("https://") && !s.url.starts_with("http://") {
-        return (StatusCode::BAD_REQUEST, "not a url").into_response();
+    // The member sends this url. Anything but the libraries bucket is this
+    // box fetching wherever it is pointed, from inside the network - so
+    // it is the bucket's own prefix or nothing, and redirects are not
+    // followed (the client is built without them).
+    if app.source.is_empty() || !s.url.starts_with(&app.source) {
+        return (StatusCode::BAD_REQUEST, "not a library file").into_response();
     }
     let plain_size = match library::crypt::plain_size(s.size) {
         Ok(p) => p,
@@ -143,7 +158,7 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
         .await
         .and_then(|r| r.error_for_status())
     {
-        Ok(r) => match r.bytes().await {
+        Ok(r) => match capped(r, HEADER).await {
             Ok(b) => b,
             Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
         },
@@ -227,9 +242,13 @@ async fn start(State(app): State<Arc<App>>, Json(s): Json<Start>) -> Response {
 /// the plain bytes of a session's file for ffmpeg: whole, or a range
 async fn plain(
     State(app): State<Arc<App>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    if !same_user(peer) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let Some(sess) = app.sessions.lock().await.get(&id).cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -337,6 +356,51 @@ async fn wipe(s: Arc<Session>) {
     let _ = tokio::fs::remove_dir_all(&s.dir).await;
 }
 
+/// A response, read to at most `cap` bytes: what was asked for and no more.
+async fn capped(mut r: reqwest::Response, cap: usize) -> Result<Vec<u8>> {
+    if r.content_length().is_some_and(|n| n > cap as u64) {
+        anyhow::bail!("the bucket answered with more than was asked for");
+    }
+    let mut out = Vec::with_capacity(cap.min(1 << 20));
+    while let Some(c) = r.chunk().await? {
+        if out.len() + c.len() > cap {
+            anyhow::bail!("the bucket answered with more than was asked for");
+        }
+        out.extend_from_slice(&c);
+    }
+    Ok(out)
+}
+
+/// Is the other end of this loopback connection a process of our own user?
+///
+/// The session id is the only thing guarding a session's plaintext, and it
+/// is on ffmpeg's command line, which every process on the box can read
+/// through /proc. So the listener that serves plaintext asks the kernel who
+/// opened the connection: /proc/net/tcp lists each socket with its owner,
+/// and ffmpeg's is ours - it runs as this service's user. Anyone else with
+/// the id in hand is still someone else.
+fn same_user(peer: std::net::SocketAddr) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    let std::net::SocketAddr::V4(p) = peer else {
+        return false;
+    };
+    let Ok(me) = std::fs::metadata("/proc/self").map(|m| m.uid()) else {
+        return false;
+    };
+    let want = format!(
+        "{:08X}:{:04X}",
+        u32::from_le_bytes(p.ip().octets()),
+        p.port()
+    );
+    let Ok(table) = std::fs::read_to_string("/proc/net/tcp") else {
+        return false;
+    };
+    table.lines().skip(1).any(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        f.get(1) == Some(&want.as_str()) && f.get(7).and_then(|u| u.parse::<u32>().ok()) == Some(me)
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let bind: std::net::SocketAddr = std::env::var("TRANSCODE_BIND")
@@ -362,7 +426,11 @@ async fn main() -> Result<()> {
         root,
         ffmpeg,
         plain: plain_bind,
-        http: reqwest::Client::new(),
+        http: reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(60))
+            .build()?,
+        source: std::env::var("TRANSCODE_SOURCE").unwrap_or_default(),
         sessions: Mutex::new(HashMap::new()),
     });
     let sweeper = app.clone();
@@ -396,7 +464,12 @@ async fn main() -> Result<()> {
     let plain_listener = tokio::net::TcpListener::bind(plain_bind).await?;
     eprintln!("dd-transcode on {bind}, plain for ffmpeg on {plain_bind}");
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(plain_listener, inner).await {
+        if let Err(e) = axum::serve(
+            plain_listener,
+            inner.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        {
             eprintln!("plain listener: {e}");
         }
     });

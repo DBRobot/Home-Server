@@ -15,6 +15,8 @@
       ../modules/library/transcode.nix
     ];
     dd.transcode.enable = true;
+    # the stand-in for the bucket, and the only thing a session may fetch
+    dd.transcode.source = "http://127.0.0.1:8000/";
     environment.systemPackages = [
       pkgs.ffmpeg-headless
       pkgs.curl

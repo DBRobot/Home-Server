@@ -422,15 +422,16 @@ async fn get(g: &Gate, lib: &str, path: &str, headers: &HeaderMap, head: bool) -
         return Ok(StatusCode::METHOD_NOT_ALLOWED.into_response());
     }
     // a device handing a file to a box's compute (transcode) asks for a
-    // url the box can fetch ranges from for a few minutes, with no token
+    // url the box can fetch ranges from for as long as a film plays, with
+    // no token
     if !head && headers.get("x-dd-presign").is_some() {
         if g.stat(&key(lib, path)).await?.is_none() {
             return Ok(StatusCode::NOT_FOUND.into_response());
         }
-        return Ok(
-            axum::Json(serde_json::json!({ "url": g.presign("GET", &key(lib, path)) }))
-                .into_response(),
-        );
+        return Ok(axum::Json(serde_json::json!({
+            "url": g.presign_for("GET", &key(lib, path), crate::library::HANDOFF_SECS)
+        }))
+        .into_response());
     }
     let url = g.presign(if head { "HEAD" } else { "GET" }, &key(lib, path));
     let client = reqwest::Client::new();

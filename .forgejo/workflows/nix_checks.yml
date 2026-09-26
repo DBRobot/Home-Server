@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [console, directory, metrics, backup, release, thanos, members-runner, games, forge, transcode, network, library]
+        test: [console, directory, metrics, backup, release, thanos, members-runner, games, forge, transcode, network, library, pgrestore]
     steps:
       - uses: https://github.com/actions/checkout@v4
       - name: ${{ matrix.test }}

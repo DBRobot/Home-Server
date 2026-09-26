@@ -45,12 +45,26 @@ pub fn rclone() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("rclone"))
 }
 
-/// what rclone stores in place of a password: not a secret, a shape
+/// what rclone stores in place of a password: not a secret, a shape.
+///
+/// Given on stdin, not as an argument: an argument is readable by every
+/// process on the machine through /proc for as long as rclone runs, and
+/// one beginning with a dash is taken for a flag.
 pub fn obscure(rclone: &Path, plain: &str) -> Result<String> {
-    let o = Command::new(rclone)
-        .args(["obscure", plain])
-        .output()
+    use std::io::Write as _;
+    let mut child = Command::new(rclone)
+        .args(["obscure", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("running {}", rclone.display()))?;
+    child
+        .stdin
+        .take()
+        .context("rclone's stdin")?
+        .write_all(plain.as_bytes())?;
+    let o = child.wait_with_output()?;
     if !o.status.success() {
         bail!("rclone obscure: {}", String::from_utf8_lossy(&o.stderr));
     }

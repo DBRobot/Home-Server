@@ -17,6 +17,11 @@ let
 in
 {
   options.dd.transcode.enable = lib.mkEnableOption "transcoding one file at a time for the libraries' players";
+  options.dd.transcode.source = lib.mkOption {
+    type = lib.types.str;
+    default = "https://s3.${base}/libraries/";
+    description = "the only url prefix a session may fetch from: the libraries bucket, as the gate presigns it. A member sends the url, so anything else is this box fetching wherever a member points it.";
+  };
 
   config = lib.mkIf cfg.enable {
     # a label, for honesty: prompts to llama.cpp are the same shape
@@ -32,6 +37,7 @@ in
         TRANSCODE_PLAIN_BIND = "127.0.0.1:${toString (port + 1)}";
         TRANSCODE_DIR = "/run/dd-transcode";
         TRANSCODE_FFMPEG = "${pkgs.ffmpeg-headless}/bin/ffmpeg";
+        TRANSCODE_SOURCE = cfg.source;
       };
       serviceConfig = {
         Type = "simple";

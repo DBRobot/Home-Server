@@ -42,6 +42,15 @@ const DEFAULT_DIRECTORIES: [&str; 2] = [
 struct Keys {
     /// device public keys that may sign a new state, base64
     signers: Vec<Reader>,
+    /// which repository these states are: owner/name, as its url says. In
+    /// the keys, so every state's signature covers it. Without it, one
+    /// device's signature on repository B was as good on repository A: a
+    /// forge could hand a fresh clone of A the history of B, or lay B's
+    /// newer state on top of A's. Absent on states made before this; the
+    /// first push after sets it, and from then no state may change or
+    /// drop it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repo: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -96,6 +105,8 @@ struct Remote {
     url: String,
     /// the directory name of whoever owns it (first path segment)
     owner: String,
+    /// owner/name, as the url says: what every state has to say it is
+    repo: String,
     /// our clone of the backing repository
     store: PathBuf,
     /// the repository git is running us for
@@ -165,6 +176,13 @@ impl Remote {
                 .map(|s| s.rsplit(':').next().unwrap_or(s).to_string())
                 .context("cannot tell the owner from the url")?,
         };
+        let name = url
+            .trim_end_matches('/')
+            .trim_end_matches(".git")
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
         let id = &crypto::sha256_hex(url.as_bytes())[..16];
         let base = git_dir.join("dd").join(id);
         std::fs::create_dir_all(&base)?;
@@ -180,6 +198,7 @@ impl Remote {
             .unwrap_or_else(|| DEFAULT_DIRECTORIES.iter().map(|s| s.to_string()).collect());
         Ok(Self {
             url: url.to_string(),
+            repo: format!("{owner}/{name}"),
             owner,
             store: base.join("store"),
             local_path: base.join("local.json"),
@@ -215,18 +234,29 @@ impl Remote {
                     self.store.to_str().unwrap(),
                 ],
             )?;
-        } else {
-            git(
+        } else if let Err(e) = git(
+            &self.store,
+            &[
+                "fetch",
+                "-q",
+                "--force",
+                "origin",
+                "+refs/heads/dd:refs/heads/dd",
+            ],
+        ) {
+            // the one fetch that may fail: nothing pushed yet, ever. A
+            // forge that cannot be reached, or that stops showing a
+            // branch we have already seen, is not "up to date".
+            let seen = git(
                 &self.store,
-                &[
-                    "fetch",
-                    "-q",
-                    "--force",
-                    "origin",
-                    "+refs/heads/dd:refs/heads/dd",
-                ],
+                &["rev-parse", "-q", "--verify", "refs/heads/dd"],
             )
-            .ok();
+            .is_ok();
+            let there = git(&self.store, &["ls-remote", "--heads", "origin", "dd"])
+                .with_context(|| format!("fetching {}", self.url))?;
+            if seen || !there.is_empty() {
+                return Err(e.context(format!("fetching {}", self.url)));
+            }
         }
         Ok(git(
             &self.store,
@@ -399,6 +429,21 @@ impl Remote {
         let mut last: Option<(Keys, Sig)> = None;
         for c in &commits {
             let (keys, sig) = self.verify_state(c, prev_keys.as_ref())?;
+            match (&keys.repo, prev_keys.as_ref().and_then(|p| p.repo.as_ref())) {
+                (Some(r), _) if *r != self.repo => {
+                    bail!(
+                        "the remote serves a state of {r} as {}: refusing",
+                        self.repo
+                    )
+                }
+                (None, Some(was)) => {
+                    bail!(
+                        "a state of {} stopped saying which repository it is (was {was}): refusing",
+                        self.repo
+                    )
+                }
+                _ => {}
+            }
             if sig.counter <= counter {
                 bail!(
                     "state {} follows state {} on the remote: refusing to go backwards",
@@ -665,7 +710,7 @@ fn do_push(
 ) -> Result<Vec<String>> {
     // first push to an empty remote: this device becomes the first reader
     // and signer, and the repository key is born here
-    let (keys, mut manifest, repo_key) = match state.take().or(remote.refresh()?) {
+    let (mut keys, mut manifest, repo_key) = match state.take().or(remote.refresh()?) {
         Some(s) => s,
         None => {
             let repo_key = crypto::new_repo_key();
@@ -675,6 +720,7 @@ fn do_push(
                     public_key: remote.device.public_b64(),
                     sealed_key: crypto::seal_to(&remote.device.public_b64(), &repo_key)?,
                 }],
+                repo: Some(remote.repo.clone()),
             };
             eprintln!(
                 "dd: new encrypted repository; key held by device {} of {}",
@@ -736,6 +782,8 @@ fn do_push(
     }
     manifest.refs = new_refs;
     manifest.counter += 1;
+    // a repository made before states named themselves names itself now
+    keys.repo.get_or_insert_with(|| remote.repo.clone());
     remote.publish(&keys, &manifest, &repo_key, &new_packs)?;
     Ok(results)
 }

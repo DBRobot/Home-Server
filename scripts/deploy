@@ -16,12 +16,18 @@ set -euo pipefail
 
 host=${1:?host}
 ref=${2:-main}
-case "$host" in
-  node1) addr=admin@10.10.10.2 ;;
-  node2) addr=admin@10.10.10.135 ;;
-  *) echo "unknown host $host" >&2; exit 1 ;;
-esac
+# Where the box is: its tailnet address from the fleet's own list, or
+# DD_ADDR when the tailnet is the thing that is broken (the house LAN, say:
+# DD_ADDR=admin@192.168.1.20). This used to name a direct cable that no
+# longer exists, which left the one way in for when releases fail pointing
+# at nothing.
 repo=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
+addr=${DD_ADDR:-}
+if [ -z "$addr" ]; then
+  tailnet=$(jq -er --arg b "$host" '.[$b].tailnet' "$repo/fleet/boxes.json") \
+    || { echo "no box $host in fleet/boxes.json" >&2; exit 1; }
+  addr=admin@$tailnet
+fi
 
 if ! git -C "$repo" rev-parse --verify -q "refs/heads/$ref" >/dev/null; then
   echo "no local branch $ref" >&2; exit 1
@@ -36,10 +42,22 @@ out=$(nix build --no-link --print-out-paths "git+file://$repo?ref=$ref#nixosConf
 echo "   $out"
 
 echo "== copy what $host lacks"
-missing=$(nix-store -qR "$out" | ssh "$addr" 'xargs -n1 sh -c "test -e \$0 || echo \$0"')
-if [ -n "$missing" ]; then
-  echo "   $(echo "$missing" | wc -l) paths"
-  nix-store --export $missing | zstd -T0 | ssh "$addr" 'zstd -d | sudo nix-store --import >/dev/null'
+# The box answers with the paths it lacks. That answer comes from the box,
+# so it is data: only store paths, only ones from the closure sent to it,
+# and never split into words on a command line here.
+mapfile -t closure < <(nix-store -qR "$out")
+mapfile -t asked < <(printf '%s\n' "${closure[@]}" | ssh "$addr" 'xargs -n1 sh -c "test -e \$0 || echo \$0"')
+declare -A ours=()
+for p in "${closure[@]}"; do ours[$p]=1; done
+missing=()
+for p in "${asked[@]}"; do
+  [[ $p =~ ^/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?=-]+$ ]] && [[ -n ${ours[$p]:-} ]] \
+    || { echo "!! $host asked for $p, which is not in what was built" >&2; exit 1; }
+  missing+=("$p")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "   ${#missing[@]} paths"
+  nix-store --export "${missing[@]}" | zstd -T0 | ssh "$addr" 'zstd -d | sudo nix-store --import >/dev/null'
 else
   echo "   nothing"
 fi

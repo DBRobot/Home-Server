@@ -41,6 +41,8 @@ pub struct Directory {
     /// every peer answered a full pull at least once; until then no first
     /// sight from the network is taken
     synced: AtomicBool,
+    /// held by every write of an entry, from its last check to its rename
+    writing: std::sync::Mutex<()>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,6 +80,7 @@ impl Directory {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             synced,
+            writing: std::sync::Mutex::new(()),
         })
     }
 
@@ -127,6 +130,31 @@ impl Directory {
             }
         }
         Ok(out)
+    }
+
+    /// The write, with the checks made again under the lock: a pull or a
+    /// sign-up awaits the network between reading the entry and writing
+    /// it, and whatever landed meanwhile - a device removed - is what the
+    /// new one has to follow, not what was read before.
+    fn commit(
+        &self,
+        signed: &identity::SignedEntry,
+        grant: impl FnOnce(Option<&identity::SignedEntry>) -> std::result::Result<(), String>,
+    ) -> std::result::Result<(), (StatusCode, String)> {
+        let _w = self.writing.lock().unwrap_or_else(|p| p.into_inner());
+        let current = self.entry(&signed.entry.name).map_err(|e| {
+            eprintln!("directory: {e:#}");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })?;
+        identity::accept(current.as_ref(), signed)
+            .map_err(|e| (StatusCode::FORBIDDEN, format!("refused: {e}")))?;
+        grant(current.as_ref()).map_err(|e| (StatusCode::CONFLICT, e))?;
+        self.claims_free(signed)
+            .map_err(|e| (StatusCode::CONFLICT, e))?;
+        self.store(signed).map_err(|e| {
+            eprintln!("directory: {e:#}");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })
     }
 
     fn store(&self, signed: &identity::SignedEntry) -> Result<()> {
@@ -342,9 +370,23 @@ impl Directory {
                 eprintln!("directory: refused {} from {peer}: {e}", l.name);
                 continue;
             }
-            match identity::accept(ours.as_ref(), &theirs) {
+            // A name this box has never seen, on one peer's word: the same
+            // agreement a sign-up gets - every peer answers, and none holds
+            // the name under another root. Without it a peer that lies can
+            // seed a new box with `david` under its own root before an
+            // honest peer is asked, and the accept rule then refuses the
+            // real one for good, because by then it is a different root.
+            if ours.is_none()
+                && let Err((_, why)) = self.first_sight_allowed(&theirs).await
+            {
+                eprintln!("directory: not yet taking {} from {peer}: {why}", l.name);
+                continue;
+            }
+            match identity::accept(ours.as_ref(), &theirs)
+                .map_err(|e| e.to_string())
+                .and_then(|()| self.commit(&theirs, |_| Ok(())).map_err(|(_, why)| why))
+            {
                 Ok(()) => {
-                    self.store(&theirs)?;
                     taken += 1;
                     eprintln!(
                         "directory: {} version {} from {peer}",
@@ -373,6 +415,9 @@ impl Directory {
             }
             if ok.iter().all(|b| *b) && !self.synced.swap(true, Ordering::Relaxed) {
                 eprintln!("directory: every peer pulled once; new names accepted from now");
+                // the names this round had to leave, now that they can be
+                // checked: at once, not a whole interval later
+                continue;
             }
             tokio::time::sleep(Duration::from_secs(every)).await;
         }
@@ -609,10 +654,8 @@ impl Directory {
             eprintln!("directory: refused new name {name}: {why}");
             return Err((status, why));
         }
-        self.store(&signed).map_err(|e| {
-            eprintln!("directory: {e:#}");
-            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
-        })?;
+        self.commit(&signed, |current| self.check_grant(current, &signed.entry))
+            .inspect_err(|(_, why)| eprintln!("directory: refused update for {name}: {why}"))?;
         eprintln!(
             "directory: {name} version {} ({} device(s), {} passkey(s){})",
             signed.entry.version,
@@ -751,6 +794,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(d.entry("sarah").unwrap().unwrap().entry.version, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pull checks a peer's copy against what it read, then awaits the
+    /// network; a newer one landing meanwhile is what the write answers to.
+    #[tokio::test]
+    async fn a_write_follows_what_landed_while_it_waited() {
+        let dir = scratch("race");
+        let d = Directory::open(dir.clone(), vec![], None).unwrap();
+        let sarah = generate();
+        d.admit(sign(entry("sarah", &sarah, &[], 1), &sarah).unwrap())
+            .await
+            .unwrap();
+
+        let read = d.entry("sarah").unwrap();
+        let from_peer = sign(entry("sarah", &sarah, &[], 6), &sarah).unwrap();
+        identity::accept(read.as_ref(), &from_peer).unwrap();
+
+        // she removes a device while the pull is out on the network
+        d.admit(sign(entry("sarah", &sarah, &[], 7), &sarah).unwrap())
+            .await
+            .unwrap();
+
+        let (status, _) = d.commit(&from_peer, |_| Ok(())).unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(d.entry("sarah").unwrap().unwrap().entry.version, 7);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

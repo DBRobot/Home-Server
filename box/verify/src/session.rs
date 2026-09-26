@@ -75,11 +75,16 @@ impl Sessions {
         let mac = parts.next()?;
         let exp: u64 = parts.next()?.parse().ok()?;
         let user = parts.next()?;
-        if exp < now() || self.mac(user, exp) != mac {
+        if exp < now() || !same(self.mac(user, exp).as_bytes(), mac.as_bytes()) {
             return None;
         }
         Some(user.to_string())
     }
+}
+
+/// equal, in time that does not depend on where they first differ
+pub fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
 pub fn now() -> u64 {

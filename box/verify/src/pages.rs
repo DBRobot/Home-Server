@@ -519,7 +519,7 @@ mod tests {
         // somebody signing in on a phone needs the app before any of this
         for html in [login("commonty.org"), join("commonty.org")] {
             assert!(
-                html.contains("https://commonty.org/download"),
+                html.contains("https://home.commonty.org/_dd/download"),
                 "no way to the app from a page a stranger lands on"
             );
         }

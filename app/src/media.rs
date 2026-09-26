@@ -152,12 +152,18 @@ fn show(app: &AppHandle, url: &str, session: &media::jellyfin::Session) -> Resul
             "LastConnectionMode": 2
         }]
     });
+    let url = tauri::Url::parse(url).map_err(|e| e.to_string())?;
+    let origin = url.origin();
+    // the token is written for the player's own origin and no other, and
+    // the window goes nowhere else: a link in a film's metadata does not
+    // take the member's sign-in with it
     let init = format!(
-        "try {{ localStorage.setItem('jellyfin_credentials', {}); localStorage.setItem('enableAutoLogin', 'true'); }} catch (e) {{}}",
+        "if (location.origin === {}) try {{ localStorage.setItem('jellyfin_credentials', {}); localStorage.setItem('enableAutoLogin', 'true'); }} catch (e) {{}}",
+        serde_json::to_string(&origin.ascii_serialization()).unwrap_or_default(),
         serde_json::to_string(&creds.to_string()).unwrap_or_default()
     );
-    let url = tauri::Url::parse(url).map_err(|e| e.to_string())?;
     WebviewWindowBuilder::new(app, "player", WebviewUrl::External(url))
+        .on_navigation(move |to| to.origin() == origin)
         .initialization_script(init)
         .title("Movies & TV")
         .inner_size(1100.0, 720.0)

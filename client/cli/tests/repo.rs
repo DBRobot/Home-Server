@@ -317,6 +317,15 @@ async fn encrypted_remote_end_to_end() {
     laptop.fails(&work, "git", &["fetch", "origin"], "refusing");
     laptop.git(&backing, &["update-ref", "refs/heads/dd", &head]);
 
+    // the box stops showing the branch, or cannot be reached: not "up to date"
+    laptop.git(&backing, &["update-ref", "-d", "refs/heads/dd"]);
+    laptop.fails(&work, "git", &["fetch", "origin"], "fetching");
+    laptop.git(&backing, &["update-ref", "refs/heads/dd", &head]);
+    let away = backing.with_extension("away");
+    std::fs::rename(&backing, &away).unwrap();
+    laptop.fails(&work, "git", &["fetch", "origin"], "fetching");
+    std::fs::rename(&away, &backing).unwrap();
+
     // the box forges a reader list
     let keys = laptop.git(&backing, &["cat-file", "-p", "dd:keys.json"]);
     let mut forged: serde_json::Value = serde_json::from_str(&keys).unwrap();
@@ -388,5 +397,94 @@ async fn encrypted_remote_end_to_end() {
         "git",
         &["clone", "-q", &url, fresh.to_str().unwrap()],
         "does not cover",
+    );
+}
+
+/// One device's signature is as good on any of its repositories, so each
+/// state says which repository it is. A forge that hands a fresh clone of
+/// one repository the history of another is caught on the first fetch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forge_cannot_pass_one_repository_off_as_another() {
+    ensure_helper();
+    let (addr, _task) = verify::start(verify::Config {
+        home: vec![],
+        fleet: Default::default(),
+        demo_library: None,
+        app_manifest: None,
+        bind: "127.0.0.1:0".parse().unwrap(),
+        dir: scratch("box").join("keys"),
+        peers: vec![],
+        sync_secs: 300,
+        members: None,
+        release_pub: None,
+        web_dir: None,
+        photos: None,
+        library: None,
+        network: None,
+        domain: None,
+        oidc: None,
+    })
+    .await
+    .unwrap();
+    let directory = format!("http://{addr}/_dd/directory");
+    let laptop = device(&directory);
+    let cwd = scratch("cwd");
+    laptop.ok(
+        &cwd,
+        env!("CARGO_BIN_EXE_dd"),
+        &[
+            "identity",
+            "new",
+            "--name",
+            "sarah",
+            "--directory",
+            &directory,
+        ],
+    );
+
+    // two repositories, the same owner and the same device signing both
+    let forge = scratch("forge");
+    let mut urls = vec![];
+    for (name, content) in [("plans", "the plans\n"), ("diary", "the diary\n")] {
+        let backing = forge.join(format!("{name}.git"));
+        laptop.git(
+            &cwd,
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "-b",
+                "dd",
+                backing.to_str().unwrap(),
+            ],
+        );
+        let url = format!("dd::{}", backing.display());
+        let work = scratch(name);
+        laptop.git(&work, &["init", "-q", "-b", "main"]);
+        std::fs::write(work.join("file.txt"), content).unwrap();
+        laptop.git(&work, &["add", "file.txt"]);
+        laptop.git(&work, &["commit", "-q", "-m", name]);
+        laptop.git(&work, &["remote", "add", "origin", &url]);
+        laptop.git(&work, &["push", "-q", "origin", "main"]);
+        urls.push((backing, url));
+    }
+
+    // the forge serves the diary where the plans should be
+    let (plans, plans_url) = &urls[0];
+    let (diary, _) = &urls[1];
+    std::fs::remove_dir_all(plans).unwrap();
+    let copied = Command::new("cp")
+        .args(["-r", diary.to_str().unwrap(), plans.to_str().unwrap()])
+        .status()
+        .unwrap();
+    assert!(copied.success());
+
+    // a fresh clone of "plans" is refused, instead of quietly being the diary
+    let fresh = scratch("fresh");
+    laptop.fails(
+        &fresh,
+        "git",
+        &["clone", "-q", plans_url, "plans"],
+        "refusing",
     );
 }

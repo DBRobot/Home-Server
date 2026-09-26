@@ -111,7 +111,10 @@ impl Issuer {
     /// An authorization code for a user who has just proven a session.
     pub fn code(&self, user: &str, nonce: Option<String>) -> String {
         let code = random_id();
-        self.codes.lock().unwrap().insert(
+        let mut codes = self.codes.lock().unwrap();
+        // codes nobody redeemed go when the next one is made
+        codes.retain(|_, g| now() <= g.issued + 300);
+        codes.insert(
             code.clone(),
             Grant {
                 user: user.to_string(),
@@ -123,7 +126,8 @@ impl Issuer {
     }
 
     pub fn client_ok(&self, id: &str, secret: &str) -> bool {
-        id == self.client_id && secret == self.client_secret
+        crate::session::same(id.as_bytes(), self.client_id.as_bytes())
+            & crate::session::same(secret.as_bytes(), self.client_secret.as_bytes())
     }
 
     /// Redeem a code: an id token plus an opaque access token for userinfo.
@@ -162,7 +166,10 @@ impl Issuer {
         )
         .ok()?;
         let access = random_id();
-        self.tokens.lock().unwrap().insert(access.clone(), grant);
+        let mut tokens = self.tokens.lock().unwrap();
+        tokens.retain(|_, g| now() <= g.issued + 3600);
+        tokens.insert(access.clone(), grant);
+        drop(tokens);
         Some(serde_json::json!({
             "access_token": access,
             "token_type": "Bearer",

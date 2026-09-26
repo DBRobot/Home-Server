@@ -370,11 +370,16 @@ fn status(repo: &str, url: &str) -> Result<()> {
     }
     for (name, b) in boxes.as_object().context("boxes.json is not an object")? {
         let tailnet = b["tailnet"].as_str().unwrap_or("-");
+        // a box's prometheus answers on its own loopback only; the owner
+        // reaches it the way he reaches the box
         let q = |expr: &str| -> Option<serde_json::Value> {
-            let out = Command::new("curl")
-                .args(["-sf", "-m", "5", "--get", "--data-urlencode"])
-                .arg(format!("query={expr}"))
-                .arg(format!("http://{tailnet}:9090/api/v1/query"))
+            let out = Command::new("ssh")
+                .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+                .arg(format!("admin@{tailnet}"))
+                .arg(format!(
+                    "curl -sf -m 5 --get --data-urlencode 'query={expr}' http://127.0.0.1:9090/api/v1/query"
+                ))
+                .stdin(std::process::Stdio::null())
                 .output()
                 .ok()?;
             let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
@@ -495,14 +500,26 @@ fn recorded_builds(
         if git(root, &["rev-parse", &format!("{sha}^{{tree}}")])? != tree {
             continue;
         }
-        let out = Command::new("curl")
-            .args([
-                "-sf",
-                "-H",
-                &format!("Authorization: Bearer {token}"),
-                &format!("{api}/commits/{sha}/statuses?limit=50"),
-            ])
-            .output()?;
+        // the header on stdin, not the command line: an argument is readable
+        // by every process on this machine while curl runs
+        let out = {
+            use std::io::Write as _;
+            let mut c = Command::new("curl")
+                .args([
+                    "-sf",
+                    "-H",
+                    "@-",
+                    &format!("{api}/commits/{sha}/statuses?limit=50"),
+                ])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()?;
+            c.stdin
+                .take()
+                .context("curl's stdin")?
+                .write_all(format!("Authorization: Bearer {token}\n").as_bytes())?;
+            c.wait_with_output()?
+        };
         if !out.status.success() {
             continue;
         }
