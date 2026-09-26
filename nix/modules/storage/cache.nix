@@ -7,7 +7,14 @@
 let
   cfg = config.dd.cache;
   url = "s3://nix-cache?endpoint=127.0.0.1:3900&scheme=http&region=us-east-1";
-  keys = lib.filter (k: k != "") (lib.splitString "\n" (lib.fileContents ../../../fleet/cache-keys.pub));
+  # Only the laptop's. A box's nix installs whatever it substitutes, so a
+  # key in this list is a machine allowed to decide what every box that
+  # reads the cache runs - and node2 is meant to sit in someone else's
+  # house. Boxes still upload what they build, signed with their own key;
+  # nobody has to believe them for the cache to be useful, because the
+  # agent checks the release's hashes and the whole closure under them.
+  all = lib.filter (k: k != "") (lib.splitString "\n" (lib.fileContents ../../../fleet/cache-keys.pub));
+  keys = lib.filter (k: lib.hasPrefix "dd-cache-laptop-" k) all;
 in
 {
   # The nix cache is the nix-cache bucket in the cluster. A box with this
@@ -15,8 +22,8 @@ in
   # whatever it builds, signed with its own key. The laptop signs what it
   # publishes with its key. fleet/cache-keys.pub lists every key a box's
   # nix accepts; the agent does not rely on them, it checks nar hashes from
-  # the signed release, so a poisoned upload can at most mislead CI on the
-  # box that reads it, never a release.
+  # the signed release and every path under it, so a poisoned upload can at
+  # most mislead CI on the box that reads it, never a release.
   options.dd.cache = {
     signingKeyFile = lib.mkOption {
       type = lib.types.str;
