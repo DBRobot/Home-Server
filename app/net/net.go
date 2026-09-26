@@ -77,6 +77,8 @@ func commonty_net_start(dir, control, key, hostname *C.char) *C.char {
 	state := C.GoString(dir)
 	logs := filepath.Join(state, "logs")
 	_ = os.MkdirAll(logs, 0o700)
+	// the node's key lives here: nobody else on the machine lists it
+	_ = os.Chmod(state, 0o700)
 	_ = os.Setenv("TS_LOGS_DIR", logs)
 	_ = os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
 	// the control server is reached through the bridge: the front door
