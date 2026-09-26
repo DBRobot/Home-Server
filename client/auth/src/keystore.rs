@@ -92,12 +92,24 @@ impl FileStore {
             std::fs::create_dir_all(p)?;
         }
         let tmp = self.path.with_extension("tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(m).unwrap_or_default())?;
+        // 0600 from the moment it exists, not after. Writing first and
+        // narrowing second leaves the root key readable for as long as the
+        // write takes, to anyone who happened to be looking.
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+            use std::io::Write as _;
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(&serde_json::to_vec_pretty(m).unwrap_or_default())?;
+            f.sync_all()?;
         }
+        #[cfg(not(unix))]
+        std::fs::write(&tmp, serde_json::to_vec_pretty(m).unwrap_or_default())?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }

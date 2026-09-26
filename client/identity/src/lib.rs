@@ -77,6 +77,13 @@ pub struct Passkey {
     /// the whole credential as webauthn-rs serialises it; opaque here
     pub cred: serde_json::Value,
     pub added: u64,
+    /// The relying party this passkey was made for: the domain the box
+    /// serving the enrolment answers on. An assertion carries a hash of
+    /// it, so recording it here is what lets any box tell a signature made
+    /// for this fleet from one made somewhere else. Absent on passkeys
+    /// enrolled before this, which are checked as they always were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rp_id: Option<String>,
     /// The public half of a key only this passkey can make: the browser
     /// derives it from the passkey's own PRF secret, which never leaves
     /// the tab. Library keys are sealed to it, so any browser holding this
@@ -649,6 +656,7 @@ mod tests {
             cred,
             added: 1,
             library_key: None,
+            rp_id: None,
         };
         let hers_cred = serde_json::json!({ "cred": { "cred": "hers" } });
         let root = passkey_root("AbC", &hers_cred);
@@ -705,6 +713,50 @@ mod tests {
             format!("{e}").contains("does not name this passkey's key"),
             "{e}"
         );
+    }
+
+    /// What an assertion has to say beyond "this key signed something":
+    /// somebody was there, and it was here.
+    #[test]
+    fn an_assertion_must_show_presence_and_the_right_relying_party() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL;
+        use sha2::Digest as _;
+
+        // authData is rpIdHash(32) || flags(1) || counter(4)
+        let auth = |rp: &str, flags: u8| {
+            let mut v = sha2::Sha256::digest(rp.as_bytes()).to_vec();
+            v.push(flags);
+            v.extend_from_slice(&[0, 0, 0, 1]);
+            v
+        };
+        let with_presence = auth("commonty.org", 0b0000_0001);
+        let without = auth("commonty.org", 0b0000_0000);
+        let elsewhere = auth("evil.example", 0b0000_0001);
+
+        assert_eq!(with_presence.len(), 37);
+        assert_eq!(with_presence[32] & 1, 1, "user present");
+        assert_eq!(without[32] & 1, 0, "nobody was there");
+        assert_ne!(
+            with_presence[..32],
+            elsewhere[..32],
+            "a different relying party hashes differently"
+        );
+
+        // and the origin has to be that domain or below it
+        let below = |origin: &str, rp: &str| {
+            let host = origin
+                .strip_prefix("https://")
+                .unwrap_or(origin)
+                .split('/')
+                .next()
+                .unwrap_or_default();
+            host == rp || host.ends_with(&format!(".{rp}"))
+        };
+        assert!(below("https://commonty.org", "commonty.org"));
+        assert!(below("https://home.commonty.org/x", "commonty.org"));
+        assert!(!below("https://commonty.org.evil.example", "commonty.org"));
+        assert!(!below("https://evil.example", "commonty.org"));
+        let _ = B64_URL;
     }
 
     fn dev(k: &SigningKey) -> Device {

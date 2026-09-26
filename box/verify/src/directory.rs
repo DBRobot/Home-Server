@@ -75,6 +75,11 @@ impl Directory {
 
     /// The person's own signed entry, as last accepted by this box.
     pub fn entry(&self, name: &str) -> Result<Option<identity::SignedEntry>> {
+        // the name is a path component here, and this is reached from a PUT
+        // before the accept rule has had a look at it
+        if !identity::valid_name(name) {
+            return Ok(None);
+        }
         let p = self.dir.join(format!("{name}.json"));
         match std::fs::read(&p) {
             Ok(b) => {
@@ -118,6 +123,7 @@ impl Directory {
 
     fn store(&self, signed: &identity::SignedEntry) -> Result<()> {
         let name = &signed.entry.name;
+        anyhow::ensure!(identity::valid_name(name), "bad name");
         let p = self.dir.join(format!("{name}.json"));
         let tmp = self.dir.join(format!(".{name}.tmp"));
         std::fs::write(&tmp, serde_json::to_vec_pretty(signed)?)?;

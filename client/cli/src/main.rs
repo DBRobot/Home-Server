@@ -645,6 +645,13 @@ async fn main() -> Result<()> {
                         .get("library_key")
                         .and_then(|x| x.as_str())
                         .map(str::to_string);
+                    // the box that ran the ceremony says which domain it
+                    // was for; without one the assertion is checked as it
+                    // always was
+                    let rp_id = cred
+                        .get("rp_id")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string);
                     let signed = who::admit_passkey(
                         &directories,
                         &name,
@@ -654,6 +661,7 @@ async fn main() -> Result<()> {
                             cred,
                             added: identity::now(),
                             library_key,
+                            rp_id,
                         },
                     )
                     .await?;

@@ -227,6 +227,7 @@ mod tests {
                 cred: serde_json::Value::Null,
                 added: 0,
                 library_key: Some(device),
+                rp_id: None,
             }],
             grant: None,
             libraries: vec![],

@@ -528,6 +528,10 @@ async fn enrol_finish(
                 cred,
                 added: identity::now(),
                 library_key: library_key.clone(),
+                // which domain this passkey answers for; an assertion
+                // carries a hash of it, and every box can then tell one
+                // made here from one made somewhere else
+                rp_id: Some(app.domain.clone()),
             },
         ),
     );
@@ -668,6 +672,7 @@ async fn join_finish(
             cred,
             added: now,
             library_key: library_key.clone(),
+            rp_id: Some(app.domain.clone()),
         }],
         grant,
         libraries: vec![],
@@ -1095,13 +1100,18 @@ async fn photos_config(State(app): State<Arc<App>>, headers: HeaderMap) -> Respo
         "api": p.api,
         "email": format!("{user}{}", p.email_suffix),
         "rpId": app.domain,
-        "code": p.code,
     });
     if user == pages::DEMO_USER {
+        // the demo has an account already and never makes one, so it has
+        // no use for the code. The code is one value for the whole fleet:
+        // whoever holds it can verify an address at users.<domain> that is
+        // not theirs, and the demo is the one session anybody may open.
         let Some(pw) = &p.demo_password else {
             return StatusCode::FORBIDDEN.into_response();
         };
         cfg["password"] = serde_json::Value::String(pw.clone());
+    } else {
+        cfg["code"] = serde_json::Value::String(p.code.clone());
     }
     Json(cfg).into_response()
 }
