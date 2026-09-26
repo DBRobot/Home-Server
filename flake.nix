@@ -504,7 +504,14 @@
         "clippy"
         "tests"
         "android-sdk"
-      ];
+      ]
+      // {
+        # `dd secret run` falls back to this when sops is not on PATH. The
+        # fleet's age key goes into that process's environment, so it is
+        # this repo's pinned nixpkgs and not whatever unstable is serving
+        # at the moment of use.
+        inherit (pkgs) sops;
+      };
 
       # Boxes booted as vms and driven through the failure cases, so the
       # modules the real hosts import are proven before a host sees them.

@@ -983,11 +983,16 @@ async fn main() -> Result<()> {
                 }
                 SecretCmd::Run { args } => {
                     let key = keys.get(AGE)?.context("no key here - `dd secret init`")?;
-                    // sops from PATH, else through nix, so a fresh machine works
+                    // sops from PATH, else through nix, so a fresh machine
+                    // works. Through nix it is this repo's own pinned sops,
+                    // not whatever nixpkgs-unstable is serving today: the
+                    // fleet's age key goes into that process's environment,
+                    // and an unpinned binary fetched at the moment of use is
+                    // a stranger to hand it to.
                     let (prog, pre): (&str, Vec<&str>) = if which("sops") {
                         ("sops", vec![])
                     } else {
-                        ("nix", vec!["run", "nixpkgs#sops", "--"])
+                        ("nix", vec!["run", ".#sops", "--"])
                     };
                     let status = std::process::Command::new(prog)
                         .args(pre)
