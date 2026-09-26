@@ -70,7 +70,28 @@ impl Box_ {
         release_pub: Option<String>,
         home: Vec<verify::pages::Service>,
     ) -> Self {
-        let dir = scratch("box").join("keys");
+        Self::start_on(
+            scratch("box").join("keys"),
+            full,
+            peers,
+            sync_secs,
+            members,
+            release_pub,
+            home,
+        )
+        .await
+    }
+    /// on a state directory another box already used: the same box, started
+    /// again with a new release
+    async fn start_on(
+        dir: PathBuf,
+        full: bool,
+        peers: Vec<String>,
+        sync_secs: u64,
+        members: Option<verify::Members>,
+        release_pub: Option<String>,
+        home: Vec<verify::pages::Service>,
+    ) -> Self {
         let (addr, _task) = verify::start(verify::Config {
             home,
             members,
@@ -539,9 +560,17 @@ async fn an_account_made_in_a_browser_is_a_passkey_root_and_waits_for_membership
     assert_eq!(status, 200);
     assert!(!cookie.is_empty());
 
-    // the entry: a passkey for a root, no device, no recovery key, and it
-    // verifies on its own
-    let e = entry(&a, "eve").await.unwrap();
+    // No code, so it is held on this box and not published: the directory
+    // has no eve, and nothing a peer could pull.
+    assert!(
+        entry(&a, "eve").await.is_none(),
+        "a sign-up without a code is published"
+    );
+    let held = a.dir.parent().unwrap().join("held").join("eve.json");
+
+    // what is held: a passkey for a root, no device, no recovery key, and
+    // it verifies on its own
+    let e: serde_json::Value = serde_json::from_slice(&std::fs::read(&held).unwrap()).unwrap();
     let root = e["entry"]["root"].as_str().unwrap().to_string();
     assert!(root.starts_with("webauthn:"), "{root}");
     assert!(e["entry"]["devices"].as_array().unwrap().is_empty());
@@ -580,11 +609,22 @@ async fn an_account_made_in_a_browser_is_a_passkey_root_and_waits_for_membership
     let mut mallory = SoftPasskey::new(true);
     assert_eq!(join_in_browser(&a, &mut mallory, "eve").await.0, 409);
 
-    // the member id is of the passkey root; a box released with it lets
-    // eve in, once she logs in there with the same passkey
+    // Following through by the member list: the member id is of the passkey
+    // root, and the box holding her, released with it, publishes her - then
+    // lets her in once she signs in with the same passkey.
     let id = identity::member_id(&root);
-    let b = Box_::start_members(true, vec![a.directory()], 1, Some(vec![id.clone()])).await;
+    let b = Box_::start_on(
+        a.dir.clone(),
+        true,
+        vec![],
+        1,
+        Some(verify::Members::list(vec![id.clone()])),
+        None,
+        vec![],
+    )
+    .await;
     wait_for(|| async { entry(&b, "eve").await.is_some() }).await;
+    assert!(!held.exists(), "published, and the hold is gone");
     let origin = Url::parse("https://localhost").unwrap();
     let http = reqwest::Client::new();
     let r = http
@@ -760,7 +800,11 @@ async fn an_invite_code_lets_one_person_in_once() {
         .unwrap()
         .trim()
         .to_string();
-    let fay_root = entry(&a, "fay").await.unwrap()["entry"]["root"]
+    // held, not published, until she follows through
+    assert!(entry(&a, "fay").await.is_none());
+    let fay_held = a.dir.parent().unwrap().join("held").join("fay.json");
+    let fay_root = serde_json::from_slice::<serde_json::Value>(&std::fs::read(&fay_held).unwrap())
+        .unwrap()["entry"]["root"]
         .as_str()
         .unwrap()
         .to_string();
@@ -788,7 +832,9 @@ async fn an_invite_code_lets_one_person_in_once() {
         .unwrap();
     assert_eq!(r.status(), 200, "{}", r.text().await.unwrap_or_default());
     assert_eq!(get_with_cookie(&a, "/verify", &fay_cookie).await.0, 200);
+    // the code is her follow-through: published now, and the hold is gone
     assert_eq!(entry(&a, "fay").await.unwrap()["entry"]["version"], 2);
+    assert!(!fay_held.exists());
 
     // the owner sees them, and can shut one out again: revoked beats a grant
     let out = owner.dd_ok(&args(&["member", "list", "--repo", &repo], &d));

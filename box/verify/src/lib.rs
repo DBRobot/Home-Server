@@ -217,8 +217,22 @@ fn valid_user(s: &str) -> bool {
 }
 
 impl App {
+    /// The person's entry, or their held sign-up: this box took the hold,
+    /// so it answers for it - the name is taken here, they can sign in, and
+    /// they land on the waiting page, where a code finishes the job.
     fn entry(&self, user: &str) -> Result<Option<identity::SignedEntry>> {
-        self.directory.entry(user)
+        Ok(self
+            .directory
+            .entry(user)?
+            .or_else(|| self.directory.held(user)))
+    }
+
+    /// on the member list by root, and not shut out
+    fn listed(&self, root: &str) -> bool {
+        let id = identity::member_id(root);
+        self.members
+            .as_ref()
+            .is_some_and(|m| m.members.contains(&id) && !m.revoked.contains(&id))
     }
 
     /// Signed in is not let in: the person's root has to be on the member
@@ -850,9 +864,18 @@ async fn join_sign(
         signature,
         recovery_signature: None,
     };
-    // the accept rule checks the assertion against the passkey the entry
-    // carries; a wrong or replayed signature is refused there
-    if let Err((status, why)) = app.directory.admit(signed).await {
+    // With a code, or already named by the member list, it is an entry and
+    // goes to the directory like any other. Without either it is held on
+    // this box until it follows through - the same page either way, the
+    // same sign-in, the same waiting screen for someone not yet in.
+    // The accept rule checks the assertion in both.
+    let earned = signed.entry.grant.is_some() || app.listed(&signed.entry.root);
+    if earned {
+        if let Err((status, why)) = app.directory.admit(signed).await {
+            return (status, why).into_response();
+        }
+        app.directory.unhold(&user);
+    } else if let Err((status, why)) = app.directory.hold(&signed) {
         return (status, why).into_response();
     }
     let mut r = Json(serde_json::json!({ "user": user })).into_response();
@@ -1360,6 +1383,30 @@ pub async fn start(
         app_release: cfg.app_release,
         fleet: cfg.fleet,
     });
+    // A held sign-up follows through when the member list names it: then it
+    // is published like any entry, and the hold goes. (The other way, a code
+    // redeemed on the waiting page, publishes it there and then.) Reading
+    // each one also drops those past their time.
+    {
+        let a = app.clone();
+        tokio::spawn(async move {
+            loop {
+                for name in a.directory.held_names() {
+                    let Some(h) = a.directory.held(&name) else {
+                        continue;
+                    };
+                    if !a.listed(&h.entry.root) {
+                        continue;
+                    }
+                    match a.directory.admit(h).await {
+                        Ok(()) => a.directory.unhold(&name),
+                        Err((_, why)) => eprintln!("directory: publishing held {name}: {why}"),
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(300)).await;
+            }
+        });
+    }
     // Devices of people who are no longer members come off the network. An
     // empty member list is a broken release rather than everyone revoked,
     // and it would take every device off at once, so that is left alone.

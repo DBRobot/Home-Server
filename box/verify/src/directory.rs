@@ -30,6 +30,8 @@ pub struct Directory {
     dir: PathBuf,
     /// signed invites, by the code's public key; next to the entries
     invites: PathBuf,
+    /// sign-ups that have not followed through yet: this box's alone
+    held: PathBuf,
     /// the release key: what signs an invite. None: grants cannot be
     /// checked here and are refused
     release: Option<ed25519_dalek::VerifyingKey>,
@@ -59,10 +61,16 @@ impl Directory {
             .map(|p| p.join("invites"))
             .unwrap_or_else(|| dir.join("invites"));
         std::fs::create_dir_all(&invites)?;
+        let held = dir
+            .parent()
+            .map(|p| p.join("held"))
+            .unwrap_or_else(|| dir.join("held"));
+        std::fs::create_dir_all(&held)?;
         let synced = AtomicBool::new(peers.is_empty());
         Ok(Self {
             dir,
             invites,
+            held,
             release,
             peers,
             http: reqwest::Client::builder()
@@ -157,6 +165,85 @@ impl Directory {
             }
         }
         Ok(())
+    }
+
+    /// A sign-up that has not followed through: no code, and not on the
+    /// member list. It is kept on the box that took it and nowhere else -
+    /// never served from the directory, never pulled by a peer - so a name
+    /// is not claimed across the fleet by someone who may never come back.
+    /// It becomes an entry when it earns one: a code redeemed, or the member
+    /// list naming it. Unfollowed, it is gone after a week and the name is
+    /// free again.
+    pub fn hold(
+        &self,
+        signed: &identity::SignedEntry,
+    ) -> std::result::Result<(), (StatusCode, String)> {
+        let name = &signed.entry.name;
+        if !identity::valid_name(name) {
+            return Err((StatusCode::BAD_REQUEST, "bad name".into()));
+        }
+        if let Err(e) = identity::accept(None, signed) {
+            return Err((StatusCode::FORBIDDEN, format!("refused: {e}")));
+        }
+        let taken = || (StatusCode::CONFLICT, "that name is taken".to_string());
+        if self.entry(name).ok().flatten().is_some() {
+            return Err(taken());
+        }
+        if self
+            .held(name)
+            .is_some_and(|h| h.entry.root != signed.entry.root)
+        {
+            return Err(taken());
+        }
+        let write = || -> Result<()> {
+            let tmp = self.held.join(format!(".{name}.tmp"));
+            std::fs::write(&tmp, serde_json::to_vec_pretty(signed)?)?;
+            std::fs::rename(&tmp, self.held.join(format!("{name}.json")))?;
+            Ok(())
+        };
+        write().map_err(|e| {
+            eprintln!("directory: holding {name}: {e:#}");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })?;
+        eprintln!("directory: holding {name} until it follows through");
+        Ok(())
+    }
+
+    /// a held sign-up, if it is still within its time
+    pub fn held(&self, name: &str) -> Option<identity::SignedEntry> {
+        if !identity::valid_name(name) {
+            return None;
+        }
+        let p = self.held.join(format!("{name}.json"));
+        let e: identity::SignedEntry = serde_json::from_slice(&std::fs::read(&p).ok()?).ok()?;
+        let ttl = if is_guest(name) { GUEST_TTL } else { HELD_TTL };
+        if e.entry.updated + ttl < identity::now() {
+            let _ = std::fs::remove_file(&p);
+            return None;
+        }
+        Some(e)
+    }
+
+    pub fn unhold(&self, name: &str) {
+        if identity::valid_name(name) {
+            let _ = std::fs::remove_file(self.held.join(format!("{name}.json")));
+        }
+    }
+
+    /// every held name still within its time
+    pub fn held_names(&self) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(&self.held) else {
+            return vec![];
+        };
+        rd.flatten()
+            .filter_map(|f| {
+                f.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_suffix(".json"))
+                    .map(str::to_string)
+            })
+            .filter(|n| self.held(n).is_some())
+            .collect()
     }
 
     /// A first sight from the network: may this box take it? Every peer has
@@ -384,6 +471,9 @@ async fn put_entry(
 pub const GUEST_PREFIX: &str = "guest";
 pub const GUEST_TTL: u64 = 15 * 60;
 
+/// how long a sign-up that has not followed through is kept
+pub const HELD_TTL: u64 = 7 * 24 * 3600;
+
 pub fn is_guest(name: &str) -> bool {
     name.starts_with(GUEST_PREFIX)
 }
@@ -576,6 +666,57 @@ mod tests {
             version,
             updated: identity::now(),
         }
+    }
+
+    /// A sign-up without a code stays here: not served, not listed, not a
+    /// claim on the name anywhere else - until it follows through.
+    #[tokio::test]
+    async fn a_sign_up_without_a_code_is_held_and_not_published() {
+        let dir = scratch("held");
+        let d = Directory::open(dir.clone(), vec![], None).unwrap();
+        let eve = generate();
+        let held = sign(entry("eve", &eve, &[], 1), &eve).unwrap();
+
+        d.hold(&held).unwrap();
+        assert!(d.entry("eve").unwrap().is_none(), "not in the directory");
+        assert!(d.held("eve").is_some(), "but held here");
+        assert!(
+            d.list().unwrap().iter().all(|l| l.name != "eve"),
+            "and not listed"
+        );
+        assert_eq!(d.held_names(), vec!["eve".to_string()]);
+
+        // someone else cannot take the name out from under the hold here
+        let mallory = generate();
+        let (status, _) = d
+            .hold(&sign(entry("eve", &mallory, &[], 1), &mallory).unwrap())
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // following through: published, and the hold goes
+        d.admit(held).await.unwrap();
+        d.unhold("eve");
+        assert!(d.entry("eve").unwrap().is_some());
+        assert!(d.held("eve").is_none());
+
+        // and a name already in the directory cannot be held at all
+        let (status, _) = d
+            .hold(&sign(entry("eve", &mallory, &[], 1), &mallory).unwrap())
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // one that never follows through is gone after its time
+        let late = generate();
+        let mut old = entry("zed", &late, &[], 1);
+        old.updated = identity::now() - HELD_TTL - 1;
+        d.hold(&sign(old, &late).unwrap()).unwrap();
+        assert!(d.held("zed").is_none(), "past its time");
+        assert!(
+            d.held_names().is_empty(),
+            "eve followed through and zed expired"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
