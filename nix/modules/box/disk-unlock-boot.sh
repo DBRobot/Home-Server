@@ -19,6 +19,11 @@ KEYS="$w/enrolment"
 # the boot partition, as the boot loader says it booted from
 esp() {
   local v uuid
+  # on the running box it is mounted already
+  if [ -e /boot/dd/unlock/sig.priv ]; then
+    mkdir -p "$KEYS" && cp /boot/dd/unlock/* "$KEYS"/
+    return
+  fi
   v=/sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
   [ -r "$v" ] || return 1
   uuid=$(tail -c +5 "$v" | tr -d '\0' | tr '[:upper:]' '[:lower:]')
