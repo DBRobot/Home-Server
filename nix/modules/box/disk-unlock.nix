@@ -41,6 +41,17 @@ let
       OUT = "/run/dd";
     }
   );
+  # the same, on the running box, as root: the keys in /run/dd again, for
+  # making or opening a dataset by hand (shredded at the next boot's end)
+  now = pkgs.writeShellApplication {
+    name = "dd-unlock-now";
+    runtimeInputs = tools;
+    text = "export TPM2TOOLS_TCTI=device:/dev/tpmrm0\n" + ddScript ./disk-unlock-boot.sh {
+      BOX = box;
+      URL = cfg.url;
+      OUT = "/run/dd";
+    };
+  };
   enrol = pkgs.writeShellApplication {
     name = "dd-unlock-enrol";
     runtimeInputs = tools ++ [
@@ -75,7 +86,12 @@ in
   };
 
   config = lib.mkMerge [
-    { environment.systemPackages = [ enrol ]; }
+    {
+      environment.systemPackages = [
+        enrol
+        now
+      ];
+    }
     (lib.mkIf cfg.enable {
       boot.initrd.systemd.enable = true;
       boot.initrd.systemd.tpm2.enable = true;

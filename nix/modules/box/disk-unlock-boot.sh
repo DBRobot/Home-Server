@@ -21,7 +21,7 @@ esp() {
   local v uuid
   v=/sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
   [ -r "$v" ] || return 1
-  uuid=$(tail -c +5 "$v" | tr -d '\0' | tr 'A-Z' 'a-z')
+  uuid=$(tail -c +5 "$v" | tr -d '\0' | tr '[:upper:]' '[:lower:]')
   mkdir -p "$w/esp" "$KEYS"
   mount -o ro "/dev/disk/by-partuuid/$uuid" "$w/esp" || return 1
   cp "$w/esp/dd/unlock/"* "$KEYS"/ 2>/dev/null
@@ -82,6 +82,9 @@ while [ -z "$share" ]; do
       200) share=$(jq -r '.share // empty' "$w/answer") ;;
       202) say "dd-unlock: this box started somewhere new; a member can let it in from their boxes page"; wait=30 ;;
       403) say "dd-unlock: refused: $(jq -r '.error // empty' "$w/answer" 2>/dev/null)"; wait=300 ;;
+      # nothing kept for this box: asking again changes nothing. Its pools
+      # stay locked; the paper key opens them (dd disk recover)
+      404) say "dd-unlock: the unlock service keeps no half for $BOX; the pools stay locked"; exit 0 ;;
       000) say "dd-unlock: no network yet ($(head -c 120 "$w/err"))" ;;
       *) say "dd-unlock: the unlock service said $code" ;;
     esac
