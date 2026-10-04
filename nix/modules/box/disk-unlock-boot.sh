@@ -21,7 +21,7 @@ esp() {
   local v uuid
   v=/sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
   [ -r "$v" ] || return 1
-  uuid=$(tail -c +5 "$v" | tr -d '\0' | tr 'A-Z' 'a-z')
+  uuid=$(tail -c +5 "$v" | tr -d '\0' | tr '[:upper:]' '[:lower:]')
   mkdir -p "$w/esp" "$KEYS"
   mount -o ro "/dev/disk/by-partuuid/$uuid" "$w/esp" || return 1
   cp "$w/esp/dd/unlock/"* "$KEYS"/ 2>/dev/null
