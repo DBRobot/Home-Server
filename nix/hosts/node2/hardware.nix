@@ -11,6 +11,10 @@
   ];
 
   # the house network: this box's links and its reserved address
+  # the disks' key made in the initrd at every boot, from this box's TPM
+  # and the unlock Worker (modules/box/disk-unlock.nix); enrolled 2026-10-03
+  dd.unlock.enable = true;
+
   dd.home = {
     ssid = "Zyxel05804";
     pskFile = config.sops.templates."wifi.env".path;
